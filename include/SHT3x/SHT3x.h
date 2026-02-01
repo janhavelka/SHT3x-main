@@ -118,6 +118,9 @@ public:
   /// Timestamp of last failed I2C operation
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
+  /// Timestamp of last I2C bus activity (success or expected NACK)
+  uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
+
   /// Most recent error status
   Status lastError() const { return _lastError; }
 
@@ -142,6 +145,17 @@ public:
 
   /// Check if measurement is ready to read
   bool measurementReady() const { return _measurementReady; }
+
+  /// Timestamp of last completed sample (0 if none)
+  uint32_t sampleTimestampMs() const { return _sampleTimestampMs; }
+
+  /// Age of the last sample in milliseconds (0 if none)
+  uint32_t sampleAgeMs(uint32_t nowMs) const {
+    return _sampleTimestampMs == 0 ? 0 : (nowMs - _sampleTimestampMs);
+  }
+
+  /// Best-effort estimate of missed samples (periodic/ART mode)
+  uint32_t missedSamplesEstimate() const { return _missedSamples; }
 
   /// Get measurement result (float)
   /// Returns MEASUREMENT_NOT_READY if not available
@@ -298,6 +312,11 @@ private:
   Status _i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
                               uint8_t* rxBuf, size_t rxLen);
 
+  /// Tracked I2C write-read with optional no-data handling (updates health)
+  Status _i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen,
+                                         uint8_t* rxBuf, size_t rxLen,
+                                         bool allowNoData);
+
   /// Tracked I2C write (updates health)
   Status _i2cWriteTracked(const uint8_t* buf, size_t len);
 
@@ -307,8 +326,10 @@ private:
 
   Status _writeCommand(uint16_t cmd, bool tracked);
   Status _writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked);
-  Status _readAfterCommand(uint8_t* buf, size_t len, bool tracked);
-  Status _readOnly(uint8_t* buf, size_t len, bool tracked);
+  Status _readAfterCommand(uint8_t* buf, size_t len, bool tracked,
+                           bool allowNoData = false);
+  Status _readOnly(uint8_t* buf, size_t len, bool tracked,
+                   bool allowNoData = false);
 
   // =========================================================================
   // Health Management
@@ -318,6 +339,9 @@ private:
   /// Called ONLY from tracked transport wrappers
   Status _updateHealth(const Status& st);
 
+  /// Record any bus activity (including expected NACK)
+  void _recordBusActivity(uint32_t nowMs);
+
   // =========================================================================
   // Internal Helpers
   // =========================================================================
@@ -325,7 +349,7 @@ private:
   Status _ensureCommandDelay();
   Status _waitMs(uint32_t delayMs);
   Status _readStatusRaw(uint16_t& raw, bool tracked);
-  Status _readMeasurementRaw(RawSample& out, bool tracked);
+  Status _readMeasurementRaw(RawSample& out, bool tracked, bool allowNoData);
   Status _fetchPeriodic();
   Status _startSingleShot();
   Status _enterPeriodic(PeriodicRate rate, Repeatability rep, bool art);
@@ -337,6 +361,7 @@ private:
   static uint16_t _commandForAlertRead(AlertLimitKind kind);
   static uint16_t _commandForAlertWrite(AlertLimitKind kind);
   static uint32_t _periodMsForRate(PeriodicRate rate);
+  static bool _timeElapsed(uint32_t now, uint32_t target);
 
   // =========================================================================
   // State
@@ -349,6 +374,7 @@ private:
   // Health counters
   uint32_t _lastOkMs = 0;
   uint32_t _lastErrorMs = 0;
+  uint32_t _lastBusActivityMs = 0;
   Status _lastError = Status::Ok();
   uint8_t _consecutiveFailures = 0;
   uint32_t _totalFailures = 0;
@@ -364,6 +390,11 @@ private:
   uint32_t _periodicStartMs = 0;
   uint32_t _lastFetchMs = 0;
   uint32_t _periodMs = 0;
+  uint32_t _sampleTimestampMs = 0;
+  uint32_t _missedSamples = 0;
+  uint32_t _notReadyStartMs = 0;
+  uint32_t _notReadyCount = 0;
+  uint32_t _lastRecoverMs = 0;
 
   RawSample _rawSample;
   CompensatedSample _compSample;

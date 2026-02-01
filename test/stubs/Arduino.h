@@ -5,13 +5,28 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <string>
 
 // Basic types
 using byte = uint8_t;
 
-// Timing stubs
-inline uint32_t millis() { return 0; }
-inline uint32_t micros() { return 0; }
+// Timing stubs (controllable for tests)
+extern uint32_t gMillis;
+extern uint32_t gMicros;
+extern uint32_t gMillisStep;
+extern uint32_t gMicrosStep;
+
+inline uint32_t millis() {
+  uint32_t value = gMillis;
+  gMillis += gMillisStep;
+  return value;
+}
+
+inline uint32_t micros() {
+  uint32_t value = gMicros;
+  gMicros += gMicrosStep;
+  return value;
+}
 inline void delay(uint32_t ms) { (void)ms; }
 inline void delayMicroseconds(uint32_t us) { (void)us; }
 

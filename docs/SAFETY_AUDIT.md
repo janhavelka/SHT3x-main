@@ -29,18 +29,19 @@ Ensure public API usage cannot crash, hard-hang, or stall the MCU. This audit fo
 
 3) Medium: Periodic Fetch Data NACK treated as I2C error
 - Function: _fetchPeriodic()
-- Risk: Fetching too early can NACK; this is normal but is currently treated as I2C_ERROR and can degrade driver health or go OFFLINE.
-- Proposed change:
-  - Add transport detail mapping for NACK and translate to Err::MEASUREMENT_NOT_READY
-  - Or add Config option to treat fetch NACK as non-fatal in periodic mode
-- Status: Not implemented (requires transport error detail agreement)
+- Risk: Fetching too early can NACK; this is normal but was treated as I2C_ERROR and could degrade driver health or go OFFLINE.
+- Fix implemented:
+  - Added a tracked read path that maps read-no-data (0 bytes) to Err::MEASUREMENT_NOT_READY without health penalty
+  - tick() now backs off by commandDelayMs on MEASUREMENT_NOT_READY to avoid tight retry loops
+- Notes:
+  - The no-data mapping uses the transport detail == 0 convention (Wire returns 0 bytes on NACK)
 
 4) Low: Interface reset does not clear internal measurement state
 - Function: interfaceReset()
 - Risk: After bus recovery, cached state may be stale and next measurement might be inconsistent.
-- Proposed change:
-  - Clear measurement pending flags and require explicit re-init or setMode()
-- Status: Not implemented (behavioral choice; app can call softReset() or begin() after bus reset)
+- Fix implemented:
+  - Clears measurement pending flags and ready timestamp
+  - Resets last fetch time and re-anchors periodic start time if periodic mode is active
 
 5) Low: Callback behavior can still block longer than timeout
 - Functions: i2cWrite / i2cWriteRead callbacks (Config)

@@ -43,7 +43,14 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 
   if (result != 0) {
     // Wire error codes: 1=data too long, 2=NACK addr, 3=NACK data, 4=other, 5=timeout
-    return Status::Error(Err::I2C_ERROR, "I2C write failed", result);
+    switch (result) {
+      case 1: return Status::Error(Err::INVALID_PARAM, "I2C write too long", result);
+      case 2: return Status::Error(Err::I2C_NACK_ADDR, "I2C NACK addr", result);
+      case 3: return Status::Error(Err::I2C_NACK_DATA, "I2C NACK data", result);
+      case 4: return Status::Error(Err::I2C_BUS, "I2C bus error", result);
+      case 5: return Status::Error(Err::I2C_TIMEOUT, "I2C timeout", result);
+      default: return Status::Error(Err::I2C_ERROR, "I2C write failed", result);
+    }
   }
   if (written != len) {
     return Status::Error(Err::I2C_ERROR, "I2C write incomplete", static_cast<int32_t>(written));
@@ -74,7 +81,14 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     uint8_t result = Wire.endTransmission(false);  // Repeated start
 
     if (result != 0) {
-      return Status::Error(Err::I2C_ERROR, "I2C write phase failed", result);
+      switch (result) {
+        case 1: return Status::Error(Err::INVALID_PARAM, "I2C write too long", result);
+        case 2: return Status::Error(Err::I2C_NACK_ADDR, "I2C NACK addr", result);
+        case 3: return Status::Error(Err::I2C_NACK_DATA, "I2C NACK data", result);
+        case 4: return Status::Error(Err::I2C_BUS, "I2C bus error", result);
+        case 5: return Status::Error(Err::I2C_TIMEOUT, "I2C timeout", result);
+        default: return Status::Error(Err::I2C_ERROR, "I2C write phase failed", result);
+      }
     }
     if (written != txLen) {
       return Status::Error(Err::I2C_ERROR, "I2C write incomplete", static_cast<int32_t>(written));
@@ -88,6 +102,9 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   // Read phase
   size_t received = Wire.requestFrom(addr, rxLen);
   if (received != rxLen) {
+    if (received == 0) {
+      return Status::Error(Err::I2C_NACK_READ, "I2C NACK read header", 0);
+    }
     return Status::Error(Err::I2C_ERROR, "I2C read incomplete", static_cast<int32_t>(received));
   }
 

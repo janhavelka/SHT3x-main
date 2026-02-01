@@ -33,13 +33,24 @@ Copy `include/SHT3x/` and `src/` to your project.
 #include "SHT3x/SHT3x.h"
 
 // Transport callbacks
+static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
+  switch (result) {
+    case 0: return SHT3x::Status::Ok();
+    case 1: return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "Write too long", result);
+    case 2: return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_ADDR, msg, result);
+    case 3: return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_DATA, msg, result);
+    case 4: return SHT3x::Status::Error(SHT3x::Err::I2C_BUS, msg, result);
+    case 5: return SHT3x::Status::Error(SHT3x::Err::I2C_TIMEOUT, msg, result);
+    default: return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, msg, result);
+  }
+}
+
 SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                        uint32_t timeoutMs, void* user) {
   Wire.beginTransmission(addr);
   Wire.write(data, len);
-  return Wire.endTransmission() == 0
-    ? SHT3x::Status::Ok()
-    : SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write failed");
+  uint8_t result = Wire.endTransmission();
+  return mapWireError(result, "Write failed");
 }
 
 SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
@@ -47,14 +58,19 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
   if (txLen > 0) {
     Wire.beginTransmission(addr);
     Wire.write(tx, txLen);
-    if (Wire.endTransmission(false) != 0) {
-      return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write failed");
+    uint8_t result = Wire.endTransmission(false);
+    if (result != 0) {
+      return mapWireError(result, "Write failed");
     }
   }
   if (rxLen == 0) {
     return SHT3x::Status::Ok();
   }
-  if (Wire.requestFrom(addr, rxLen) != rxLen) {
+  size_t received = Wire.requestFrom(addr, rxLen);
+  if (received != rxLen) {
+    if (received == 0) {
+      return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_READ, "Read header NACK");
+    }
     return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read failed");
   }
   for (size_t i = 0; i < rxLen; i++) {
@@ -104,6 +120,56 @@ void loop() {
 }
 ```
 
+## Transport Contract (Required)
+
+Your I2C callbacks **must** return specific `Err` codes so the driver can make correct decisions:
+
+- `Err::I2C_NACK_ADDR` – address NACK
+- `Err::I2C_NACK_DATA` – data NACK
+- `Err::I2C_NACK_READ` – read header NACK (used for “not ready” semantics)
+- `Err::I2C_TIMEOUT` – timeout
+- `Err::I2C_BUS` – bus/arbitration error
+- `Err::I2C_ERROR` – unspecified I2C failure
+
+If your transport cannot distinguish these cases, return `Err::I2C_ERROR` and set `Status::detail` to the best available code.
+
+## Expected NACK Semantics
+
+Only **read‑header NACK** (`Err::I2C_NACK_READ`) is treated as “measurement not ready,” and only on periodic Fetch Data reads. All other I2C errors are treated as failures and update health counters.
+
+Use `Config::notReadyTimeoutMs` to bound how long repeated “not ready” NACKs are tolerated before being treated as a fault.
+
+## Blocking Behavior (Max Time)
+
+All public APIs are synchronous and bounded by config timeouts:
+
+- I2C write/read phases: `i2cTimeoutMs`
+- Command spacing gate: `commandDelayMs + i2cTimeoutMs` (guarded)
+- Reset/Break waits: `RESET_DELAY_MS` (2 ms), `BREAK_DELAY_MS` (1 ms), both guarded
+
+The driver has no unbounded loops.
+
+## Recovery Ladder
+
+`recover()` performs a configurable ladder and re‑applies the requested mode:
+
+1. Interface/bus reset (`busReset` callback), then probe
+2. Soft reset, then probe
+3. Hard reset (`hardReset` callback), then probe
+4. General call reset (only if `allowGeneralCallReset` is `true`)
+
+Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`—the orchestrator triggers it.
+
+## Thread‑Safety / ISR‑Safety
+
+The driver is **not** thread‑safe and must be externally serialized. Do not call any public API from an ISR.
+
+## ESP32 Notes
+
+- Default is **no clock stretching**. If you enable stretching, set `i2cTimeoutMs` ≥ worst‑case tMEAS (15.5 ms at low‑Vdd, high repeatability) + margin.
+- On ESP32 Wire, a 0‑byte `requestFrom` commonly indicates a read‑header NACK; the example transport maps this to `Err::I2C_NACK_READ`.
+- Use `Wire.setTimeOut()` and keep bus pull‑ups and clock speed within datasheet limits.
+
 ## Health Monitoring
 
 The driver tracks I2C communication health:
@@ -118,6 +184,8 @@ if (device.state() == SHT3x::DriverState::OFFLINE) {
 // Get statistics
 Serial.printf("Failures: %u consecutive, %lu total\n",
               device.consecutiveFailures(), device.totalFailures());
+Serial.printf("Last bus activity: %lu ms\n",
+              static_cast<unsigned long>(device.lastBusActivityMs()));
 ```
 
 ## Examples

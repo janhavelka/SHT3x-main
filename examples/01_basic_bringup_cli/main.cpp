@@ -64,6 +64,11 @@ const char* errToStr(SHT3x::Err err) {
     case Err::COMMAND_FAILED: return "COMMAND_FAILED";
     case Err::WRITE_CRC_ERROR: return "WRITE_CRC_ERROR";
     case Err::UNSUPPORTED: return "UNSUPPORTED";
+    case Err::I2C_NACK_ADDR: return "I2C_NACK_ADDR";
+    case Err::I2C_NACK_DATA: return "I2C_NACK_DATA";
+    case Err::I2C_NACK_READ: return "I2C_NACK_READ";
+    case Err::I2C_TIMEOUT: return "I2C_TIMEOUT";
+    case Err::I2C_BUS: return "I2C_BUS";
     default: return "UNKNOWN";
   }
 }

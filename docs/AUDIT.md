@@ -20,7 +20,7 @@ Version: 1.0.0 (library.json)
 - Resets internal state and health counters
 - Validates config: callbacks, timeout, address, enums
 - Enforces minimum command spacing (tIDLE >= 1 ms)
-- Probes device by reading status (raw, untracked)
+- Probes device by reading status (tracked; updates lastOk/lastError timestamps pre-init)
 - Applies initial mode:
   - SINGLE_SHOT: no additional command
   - PERIODIC: _enterPeriodic(rate, repeatability, art=false)
@@ -37,6 +37,8 @@ Version: 1.0.0 (library.json)
   - Waits until measurementReadyMs
   - Fetches data (tracked I2C) via Fetch Data command
   - Converts and latches data, clears pending flag
+  - If Fetch Data returns read-header NACK, returns MEASUREMENT_NOT_READY and backs off by commandDelayMs
+  - Optional notReadyTimeoutMs escalates repeated NACKs to a tracked I2C failure
 
 ### requestMeasurement()
 - SINGLE_SHOT:
@@ -52,6 +54,8 @@ Version: 1.0.0 (library.json)
 - Requires measurementReady == true
 - Returns float temperature and humidity
 - Clears measurementReady on success
+- Sample timestamp and age helpers are updated on successful reads
+- Missed sample estimate increments for periodic/ART when fetches are late
 
 ### startPeriodic(rate, repeatability)
 - Validates state, stops prior periodic if needed
@@ -79,8 +83,18 @@ I2C operations are layered:
 
 Health fields:
 - _lastOkMs, _lastErrorMs, _lastError
+- _lastBusActivityMs (includes expected NACKs)
 - _consecutiveFailures, _totalFailures, _totalSuccess
 - DriverState: UNINIT, READY, DEGRADED, OFFLINE
+
+## Recovery
+- recover() uses a configurable ladder:
+  1) Interface reset (busReset callback), then probe
+  2) Soft reset, then probe
+  3) Hard reset (hardReset callback), then probe
+  4) General call reset (opt-in), then probe
+- Restores requested mode (single-shot/periodic/ART) on success
+- Enforced backoff via Config::recoverBackoffMs
 
 ## Command coverage mapping
 All datasheet commands are implemented. Mapping below shows command to API:
@@ -155,3 +169,4 @@ The CLI example exposes all public API calls and helpers:
 - All blocking time is bounded by config timeouts and safety guards
 - Measurement readiness is handled by requestMeasurement() + tick()
 - For periodic mode, user must respect rate and call tick() regularly
+- Transport callbacks must report explicit I2C errors (NACK addr/data/read, timeout, bus error)

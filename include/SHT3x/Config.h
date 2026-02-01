@@ -14,7 +14,12 @@ namespace SHT3x {
 /// @param len      Number of bytes to write
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure
+/// @return Status indicating success or failure. Transport MUST distinguish:
+///         - Err::I2C_NACK_ADDR (address NACK)
+///         - Err::I2C_NACK_DATA (data NACK)
+///         - Err::I2C_TIMEOUT (timeout)
+///         - Err::I2C_BUS (bus/arbitration error)
+///         - Err::I2C_ERROR (unspecified I2C error)
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
@@ -26,7 +31,13 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @param rxLen    Number of bytes to read
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure
+/// @return Status indicating success or failure. Transport MUST distinguish:
+///         - Err::I2C_NACK_ADDR (address NACK)
+///         - Err::I2C_NACK_DATA (data NACK)
+///         - Err::I2C_NACK_READ (read header NACK / no data)
+///         - Err::I2C_TIMEOUT (timeout)
+///         - Err::I2C_BUS (bus/arbitration error)
+///         - Err::I2C_ERROR (unspecified I2C error)
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
@@ -35,6 +46,11 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
 using BusResetFn = Status (*)(void* user);
+
+/// Optional hard reset callback (nRESET pulse)
+/// @param user User context pointer (Config::i2cUser)
+/// @return Status indicating success or failure
+using HardResetFn = Status (*)(void* user);
 
 /// Measurement repeatability
 enum class Repeatability : uint8_t {
@@ -72,6 +88,7 @@ struct Config {
   I2cWriteReadFn i2cWriteRead = nullptr; ///< I2C write-read function pointer
   void* i2cUser = nullptr;               ///< User context for callbacks
   BusResetFn busReset = nullptr;         ///< Optional interface reset callback
+  HardResetFn hardReset = nullptr;       ///< Optional hard reset (nRESET pulse)
 
   // === Device Settings ===
   uint8_t i2cAddress = 0x44;             ///< 0x44 (ADDR=GND) or 0x45 (ADDR=VDD)
@@ -87,11 +104,20 @@ struct Config {
   // === Timing ===
   uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE)
 
+  /// Periodic mode not-ready timeout (0 = disabled)
+  uint32_t notReadyTimeoutMs = 0;
+
+  /// Recovery backoff to avoid bus thrashing (ms)
+  uint32_t recoverBackoffMs = 100;
+
   // === Health Tracking ===
   uint8_t offlineThreshold = 5;                       ///< Consecutive failures before OFFLINE
 
   // === Reset Safety ===
   bool allowGeneralCallReset = false;                 ///< Allow general call reset on the bus
+  bool recoverUseBusReset = true;                     ///< Use bus reset in recover() if callback provided
+  bool recoverUseSoftReset = true;                    ///< Use soft reset in recover()
+  bool recoverUseHardReset = true;                    ///< Use hard reset in recover() if callback provided
 };
 
 } // namespace SHT3x
