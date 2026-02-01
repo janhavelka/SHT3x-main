@@ -176,21 +176,20 @@ void printVerboseState() {
 }
 
 void printConfig() {
-  SHT3x::Mode mode;
-  SHT3x::Repeatability rep;
-  SHT3x::PeriodicRate rate;
-  SHT3x::ClockStretching stretch;
-
-  if (device.getMode(mode).ok() && device.getRepeatability(rep).ok() &&
-      device.getPeriodicRate(rate).ok() && device.getClockStretching(stretch).ok()) {
-    Serial.println("=== Config ===");
-    Serial.printf("  Mode: %s\n", modeToStr(mode));
-    Serial.printf("  Repeatability: %s\n", repToStr(rep));
-    Serial.printf("  Periodic rate: %s mps\n", rateToStr(rate));
-    Serial.printf("  Clock stretching: %s\n", stretchToStr(stretch));
-    Serial.printf("  Est. meas time: %lu ms\n",
-                  static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
+  SHT3x::SettingsSnapshot snap;
+  SHT3x::Status st = device.getSettings(snap);
+  if (!st.ok()) {
+    printStatus(st);
+    return;
   }
+
+  Serial.println("=== Config ===");
+  Serial.printf("  Mode: %s\n", modeToStr(snap.mode));
+  Serial.printf("  Repeatability: %s\n", repToStr(snap.repeatability));
+  Serial.printf("  Periodic rate: %s mps\n", rateToStr(snap.periodicRate));
+  Serial.printf("  Clock stretching: %s\n", stretchToStr(snap.clockStretching));
+  Serial.printf("  Est. meas time: %lu ms\n",
+                static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
   printVerboseState();
 }
 
@@ -535,10 +534,13 @@ void processCommand(const String& cmdLine) {
   }
 
   if (cmd == "mode") {
-    SHT3x::Mode mode;
-    if (device.getMode(mode).ok()) {
-      Serial.printf("Mode: %s\n", modeToStr(mode));
+    SHT3x::SettingsSnapshot snap;
+    SHT3x::Status st = device.readSettings(snap);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
     }
+    Serial.printf("Mode: %s\n", modeToStr(snap.mode));
     printVerboseState();
     return;
   }
@@ -606,10 +608,13 @@ void processCommand(const String& cmdLine) {
   }
 
   if (cmd == "repeat") {
-    SHT3x::Repeatability rep;
-    if (device.getRepeatability(rep).ok()) {
-      Serial.printf("Repeatability: %s\n", repToStr(rep));
+    SHT3x::SettingsSnapshot snap;
+    SHT3x::Status st = device.readSettings(snap);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
     }
+    Serial.printf("Repeatability: %s\n", repToStr(snap.repeatability));
     printVerboseState();
     return;
   }
@@ -629,10 +634,13 @@ void processCommand(const String& cmdLine) {
   }
 
   if (cmd == "rate") {
-    SHT3x::PeriodicRate rate;
-    if (device.getPeriodicRate(rate).ok()) {
-      Serial.printf("Periodic rate: %s mps\n", rateToStr(rate));
+    SHT3x::SettingsSnapshot snap;
+    SHT3x::Status st = device.readSettings(snap);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
     }
+    Serial.printf("Periodic rate: %s mps\n", rateToStr(snap.periodicRate));
     printVerboseState();
     return;
   }
@@ -652,10 +660,13 @@ void processCommand(const String& cmdLine) {
   }
 
   if (cmd == "stretch") {
-    SHT3x::ClockStretching stretch;
-    if (device.getClockStretching(stretch).ok()) {
-      Serial.printf("Clock stretching: %s\n", stretchToStr(stretch));
+    SHT3x::SettingsSnapshot snap;
+    SHT3x::Status st = device.readSettings(snap);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
     }
+    Serial.printf("Clock stretching: %s\n", stretchToStr(snap.clockStretching));
     printVerboseState();
     return;
   }
@@ -1060,6 +1071,7 @@ void setup() {
   gConfig.i2cWriteRead = transport::wireWriteRead;
   gConfig.i2cAddress = 0x44;
   gConfig.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
+  gConfig.transportCapabilities = SHT3x::TransportCapability::NONE;
   gConfig.offlineThreshold = 5;
   gConfigReady = true;
 

@@ -37,7 +37,7 @@ Version: 1.0.0 (library.json)
   - Waits until measurementReadyMs
   - Fetches data (tracked I2C) via Fetch Data command
   - Converts and latches data, clears pending flag
-  - If Fetch Data returns read-header NACK, returns MEASUREMENT_NOT_READY and backs off by commandDelayMs
+  - If Fetch Data returns read-header NACK and transport supports it, returns MEASUREMENT_NOT_READY and backs off by commandDelayMs
   - Optional notReadyTimeoutMs escalates repeated NACKs to a tracked I2C failure
 
 ### requestMeasurement()
@@ -80,6 +80,7 @@ I2C operations are layered:
 - Public API -> register helpers -> tracked wrappers -> raw wrappers -> transport callbacks
 - Only tracked wrappers call _updateHealth()
 - Raw wrappers are used for probe() and diagnostics without health updates
+- Expected-NACK handling is gated by Config::transportCapabilities
 
 Health fields:
 - _lastOkMs, _lastErrorMs, _lastError
@@ -88,12 +89,12 @@ Health fields:
 - DriverState: UNINIT, READY, DEGRADED, OFFLINE
 
 ## Recovery
-- recover() uses a configurable ladder:
+- recover() uses a configurable ladder (comms-only):
   1) Interface reset (busReset callback), then probe
   2) Soft reset, then probe
   3) Hard reset (hardReset callback), then probe
   4) General call reset (opt-in), then probe
-- Restores requested mode (single-shot/periodic/ART) on success
+- Returns to SINGLE_SHOT idle on success (no mode/heater/alert restore)
 - Enforced backoff via Config::recoverBackoffMs
 
 ## Command coverage mapping

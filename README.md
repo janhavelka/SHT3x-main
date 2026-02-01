@@ -89,6 +89,7 @@ void setup() {
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
   cfg.i2cAddress = 0x44;
+  cfg.transportCapabilities = SHT3x::TransportCapability::NONE;
 
   auto status = device.begin(cfg);
   if (!status.ok()) {
@@ -133,9 +134,17 @@ Your I2C callbacks **must** return specific `Err` codes so the driver can make c
 
 If your transport cannot distinguish these cases, return `Err::I2C_ERROR` and set `Status::detail` to the best available code.
 
+Transport capabilities must be declared in `Config::transportCapabilities`:
+
+- `READ_HEADER_NACK` – reliably reports read-header NACK
+- `TIMEOUT` – reliably reports timeouts
+- `BUS_ERROR` – reliably reports bus/arbitration errors
+
+For Arduino Wire adapters, set `transportCapabilities = TransportCapability::NONE` (best effort).
+
 ## Expected NACK Semantics
 
-Only **read‑header NACK** (`Err::I2C_NACK_READ`) is treated as “measurement not ready,” and only on periodic Fetch Data reads. All other I2C errors are treated as failures and update health counters.
+Only **read‑header NACK** (`Err::I2C_NACK_READ`) is treated as “measurement not ready,” and only on periodic Fetch Data reads **when** `transportCapabilities` includes `READ_HEADER_NACK`. All other I2C errors are treated as failures and update health counters.
 
 Use `Config::notReadyTimeoutMs` to bound how long repeated “not ready” NACKs are tolerated before being treated as a fault.
 
@@ -151,7 +160,7 @@ The driver has no unbounded loops.
 
 ## Recovery Ladder
 
-`recover()` performs a configurable ladder and re‑applies the requested mode:
+`recover()` performs a configurable ladder and restores **comms only**:
 
 1. Interface/bus reset (`busReset` callback), then probe
 2. Soft reset, then probe
@@ -159,6 +168,8 @@ The driver has no unbounded loops.
 4. General call reset (only if `allowGeneralCallReset` is `true`)
 
 Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`—the orchestrator triggers it.
+
+After a successful `recover()`, the driver is left in **SINGLE_SHOT** idle mode with measurement state cleared. If you need periodic/ART/heater, re-apply those settings in your orchestrator.
 
 ## Thread‑Safety / ISR‑Safety
 
@@ -169,6 +180,20 @@ The driver is **not** thread‑safe and must be externally serialized. Do not ca
 - Default is **no clock stretching**. If you enable stretching, set `i2cTimeoutMs` ≥ worst‑case tMEAS (15.5 ms at low‑Vdd, high repeatability) + margin.
 - On ESP32 Wire, a 0‑byte `requestFrom` commonly indicates a read‑header NACK; the example transport maps this to `Err::I2C_NACK_READ`.
 - Use `Wire.setTimeOut()` and keep bus pull‑ups and clock speed within datasheet limits.
+
+## Running Tests
+
+Host tests (requires a native compiler like `g++`):
+
+```
+pio test -e native
+```
+
+Firmware build (ESP32-S3 example):
+
+```
+pio run -e ex_bringup_s3
+```
 
 ## Health Monitoring
 
@@ -186,6 +211,19 @@ Serial.printf("Failures: %u consecutive, %lu total\n",
               device.consecutiveFailures(), device.totalFailures());
 Serial.printf("Last bus activity: %lu ms\n",
               static_cast<unsigned long>(device.lastBusActivityMs()));
+```
+
+## Settings Snapshot
+
+Use `getSettings()` for a cached snapshot or `readSettings()` to also attempt a status-register read:
+
+```cpp
+SHT3x::SettingsSnapshot snap;
+if (device.readSettings(snap).ok()) {
+  Serial.printf("Mode: %d, Heater: %d\n",
+                static_cast<int>(snap.mode),
+                snap.statusValid ? static_cast<int>(snap.status.heaterOn) : -1);
+}
 ```
 
 ## Examples

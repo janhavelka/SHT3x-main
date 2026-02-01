@@ -8,6 +8,23 @@
 
 namespace SHT3x {
 
+/// Transport capability flags
+enum class TransportCapability : uint8_t {
+  NONE = 0,
+  READ_HEADER_NACK = 1 << 0,   ///< Transport can reliably report read-header NACK
+  TIMEOUT = 1 << 1,            ///< Transport can reliably report timeouts
+  BUS_ERROR = 1 << 2           ///< Transport can reliably report bus errors
+};
+
+inline constexpr TransportCapability operator|(TransportCapability a, TransportCapability b) {
+  return static_cast<TransportCapability>(
+      static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+
+inline constexpr bool hasCapability(TransportCapability caps, TransportCapability cap) {
+  return (static_cast<uint8_t>(caps) & static_cast<uint8_t>(cap)) != 0;
+}
+
 /// I2C write callback signature
 /// @param addr     I2C device address (7-bit)
 /// @param data     Pointer to data to write
@@ -93,6 +110,7 @@ struct Config {
   // === Device Settings ===
   uint8_t i2cAddress = 0x44;             ///< 0x44 (ADDR=GND) or 0x45 (ADDR=VDD)
   uint32_t i2cTimeoutMs = 50;            ///< I2C transaction timeout in ms
+  TransportCapability transportCapabilities = TransportCapability::NONE; ///< Transport capabilities
 
   // === Measurement Settings ===
   Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Measurement repeatability

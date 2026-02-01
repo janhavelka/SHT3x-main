@@ -49,6 +49,22 @@ struct StatusRegister {
   bool writeCrcError = false;
 };
 
+/// Snapshot of driver configuration and state
+struct SettingsSnapshot {
+  Mode mode = Mode::SINGLE_SHOT;
+  Repeatability repeatability = Repeatability::HIGH_REPEATABILITY;
+  PeriodicRate periodicRate = PeriodicRate::MPS_1;
+  ClockStretching clockStretching = ClockStretching::STRETCH_DISABLED;
+  bool periodicActive = false;
+  bool measurementPending = false;
+  bool measurementReady = false;
+  uint32_t measurementReadyMs = 0;
+  uint32_t sampleTimestampMs = 0;
+  uint32_t missedSamples = 0;
+  StatusRegister status = {};
+  bool statusValid = false;
+};
+
 /// Alert limit selector
 enum class AlertLimitKind : uint8_t {
   HIGH_SET = 0,
@@ -177,6 +193,14 @@ public:
 
   /// Get current operating mode
   Status getMode(Mode& out) const;
+
+  /// Get a snapshot of current settings/state (no I2C)
+  Status getSettings(SettingsSnapshot& out) const;
+
+  /// Get a snapshot of settings/state and attempt to read status register
+  /// statusValid is true only if the status read succeeds. If periodic mode
+  /// blocks status reads, this returns OK with statusValid=false.
+  Status readSettings(SettingsSnapshot& out);
 
   /// Set measurement repeatability
   Status setRepeatability(Repeatability rep);

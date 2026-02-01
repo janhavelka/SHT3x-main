@@ -1,8 +1,7 @@
 /// @file test_basic.cpp
 /// @brief Basic unit tests for SHT3x driver
 
-#include <cstdio>
-#include <cassert>
+#include <unity.h>
 
 // Include stubs first
 #include "Arduino.h"
@@ -27,109 +26,111 @@ using namespace SHT3x;
 // Test Helpers
 // ============================================================================
 
-static int testsPassed = 0;
-static int testsFailed = 0;
-
-#define TEST(name) void test_##name()
-#define RUN_TEST(name) do { \
-  printf("Running %s... ", #name); \
-  test_##name(); \
-  printf("PASSED\n"); \
-  testsPassed++; \
-} catch (...) { \
-  printf("FAILED\n"); \
-  testsFailed++; \
-}
-
-#define ASSERT_TRUE(x) assert(x)
-#define ASSERT_FALSE(x) assert(!(x))
-#define ASSERT_EQ(a, b) assert((a) == (b))
-#define ASSERT_NE(a, b) assert((a) != (b))
-#define ASSERT_NEAR(a, b, eps) assert(((a) > (b) ? (a) - (b) : (b) - (a)) <= (eps))
+void setUp() {}
+void tearDown() {}
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-TEST(status_ok) {
+void test_status_ok() {
   Status st = Status::Ok();
-  ASSERT_TRUE(st.ok());
-  ASSERT_EQ(st.code, Err::OK);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL(Err::OK, st.code);
 }
 
-TEST(status_error) {
+void test_status_error() {
   Status st = Status::Error(Err::I2C_ERROR, "Test error", 42);
-  ASSERT_FALSE(st.ok());
-  ASSERT_EQ(st.code, Err::I2C_ERROR);
-  ASSERT_EQ(st.detail, 42);
+  TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
+  TEST_ASSERT_EQUAL(42, st.detail);
 }
 
-TEST(status_in_progress) {
+void test_status_in_progress() {
   Status st = Status{Err::IN_PROGRESS, 0, "In progress"};
-  ASSERT_FALSE(st.ok());
-  ASSERT_EQ(st.code, Err::IN_PROGRESS);
+  TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
 }
 
-TEST(config_defaults) {
+void test_config_defaults() {
   Config cfg;
-  ASSERT_EQ(cfg.i2cWrite, nullptr);
-  ASSERT_EQ(cfg.i2cWriteRead, nullptr);
-  ASSERT_EQ(cfg.busReset, nullptr);
-  ASSERT_EQ(cfg.hardReset, nullptr);
-  ASSERT_EQ(cfg.i2cAddress, 0x44);
-  ASSERT_EQ(cfg.i2cTimeoutMs, 50u);
-  ASSERT_EQ(cfg.offlineThreshold, 5);
-  ASSERT_EQ(cfg.commandDelayMs, 1u);
-  ASSERT_EQ(cfg.notReadyTimeoutMs, 0u);
-  ASSERT_EQ(cfg.recoverBackoffMs, 100u);
-  ASSERT_EQ(cfg.allowGeneralCallReset, false);
-  ASSERT_EQ(cfg.recoverUseBusReset, true);
-  ASSERT_EQ(cfg.recoverUseSoftReset, true);
-  ASSERT_EQ(cfg.recoverUseHardReset, true);
-  ASSERT_EQ(cfg.lowVdd, false);
-  ASSERT_EQ(static_cast<uint8_t>(cfg.repeatability), static_cast<uint8_t>(Repeatability::HIGH_REPEATABILITY));
-  ASSERT_EQ(static_cast<uint8_t>(cfg.clockStretching), static_cast<uint8_t>(ClockStretching::STRETCH_DISABLED));
-  ASSERT_EQ(static_cast<uint8_t>(cfg.periodicRate), static_cast<uint8_t>(PeriodicRate::MPS_1));
-  ASSERT_EQ(static_cast<uint8_t>(cfg.mode), static_cast<uint8_t>(Mode::SINGLE_SHOT));
+  TEST_ASSERT_EQUAL(nullptr, cfg.i2cWrite);
+  TEST_ASSERT_EQUAL(nullptr, cfg.i2cWriteRead);
+  TEST_ASSERT_EQUAL(nullptr, cfg.busReset);
+  TEST_ASSERT_EQUAL(nullptr, cfg.hardReset);
+  TEST_ASSERT_EQUAL(0x44, cfg.i2cAddress);
+  TEST_ASSERT_EQUAL(50u, cfg.i2cTimeoutMs);
+  TEST_ASSERT_EQUAL(0, static_cast<uint8_t>(cfg.transportCapabilities));
+  TEST_ASSERT_EQUAL(5, cfg.offlineThreshold);
+  TEST_ASSERT_EQUAL(1u, cfg.commandDelayMs);
+  TEST_ASSERT_EQUAL(0u, cfg.notReadyTimeoutMs);
+  TEST_ASSERT_EQUAL(100u, cfg.recoverBackoffMs);
+  TEST_ASSERT_FALSE(cfg.allowGeneralCallReset);
+  TEST_ASSERT_TRUE(cfg.recoverUseBusReset);
+  TEST_ASSERT_TRUE(cfg.recoverUseSoftReset);
+  TEST_ASSERT_TRUE(cfg.recoverUseHardReset);
+  TEST_ASSERT_FALSE(cfg.lowVdd);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Repeatability::HIGH_REPEATABILITY),
+                    static_cast<uint8_t>(cfg.repeatability));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(ClockStretching::STRETCH_DISABLED),
+                    static_cast<uint8_t>(cfg.clockStretching));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(PeriodicRate::MPS_1),
+                    static_cast<uint8_t>(cfg.periodicRate));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Mode::SINGLE_SHOT),
+                    static_cast<uint8_t>(cfg.mode));
 }
 
-TEST(crc8_example) {
+void test_crc8_example() {
   const uint8_t data[2] = {0xBE, 0xEF};
   const uint8_t crc = SHT3x::_crc8(data, 2);
-  ASSERT_EQ(crc, 0x92);
+  TEST_ASSERT_EQUAL(0x92, crc);
 }
 
-TEST(conversions_basic) {
-  ASSERT_NEAR(SHT3x::convertTemperatureC(0), -45.0f, 0.01f);
-  ASSERT_NEAR(SHT3x::convertTemperatureC(65535), 130.0f, 0.02f);
-  ASSERT_NEAR(SHT3x::convertHumidityPct(0), 0.0f, 0.01f);
-  ASSERT_NEAR(SHT3x::convertHumidityPct(65535), 100.0f, 0.02f);
+void test_conversions_basic() {
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, -45.0f, SHT3x::convertTemperatureC(0));
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 130.0f, SHT3x::convertTemperatureC(65535));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, SHT3x::convertHumidityPct(0));
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 100.0f, SHT3x::convertHumidityPct(65535));
 
-  ASSERT_EQ(SHT3x::convertTemperatureC_x100(0), -4500);
-  ASSERT_EQ(SHT3x::convertTemperatureC_x100(65535), 13000);
-  ASSERT_EQ(SHT3x::convertHumidityPct_x100(0), 0u);
-  ASSERT_EQ(SHT3x::convertHumidityPct_x100(65535), 10000u);
+  TEST_ASSERT_EQUAL_INT(-4500, SHT3x::convertTemperatureC_x100(0));
+  TEST_ASSERT_EQUAL_INT(13000, SHT3x::convertTemperatureC_x100(65535));
+  TEST_ASSERT_EQUAL_UINT32(0u, SHT3x::convertHumidityPct_x100(0));
+  TEST_ASSERT_EQUAL_UINT32(10000u, SHT3x::convertHumidityPct_x100(65535));
 }
 
-TEST(alert_limit_roundtrip) {
+void test_alert_limit_roundtrip() {
   const float tIn = 25.3f;
   const float rhIn = 47.8f;
   const uint16_t packed = SHT3x::encodeAlertLimit(tIn, rhIn);
   float tOut = 0.0f;
   float rhOut = 0.0f;
   SHT3x::decodeAlertLimit(packed, tOut, rhOut);
-  ASSERT_NEAR(tOut, tIn, 0.6f);
-  ASSERT_NEAR(rhOut, rhIn, 1.5f);
+  TEST_ASSERT_FLOAT_WITHIN(0.6f, tIn, tOut);
+  TEST_ASSERT_FLOAT_WITHIN(1.5f, rhIn, rhOut);
 }
 
-TEST(time_elapsed_wrap) {
-  ASSERT_FALSE(SHT3x::_timeElapsed(5, 10));
-  ASSERT_TRUE(SHT3x::_timeElapsed(10, 10));
-  ASSERT_TRUE(SHT3x::_timeElapsed(10, 5));
+void test_time_elapsed_wrap() {
+  TEST_ASSERT_FALSE(SHT3x::_timeElapsed(5, 10));
+  TEST_ASSERT_TRUE(SHT3x::_timeElapsed(10, 10));
+  TEST_ASSERT_TRUE(SHT3x::_timeElapsed(10, 5));
 
   const uint32_t nearMax = 0xFFFFFFF0U;
-  ASSERT_TRUE(SHT3x::_timeElapsed(5, nearMax));
-  ASSERT_FALSE(SHT3x::_timeElapsed(nearMax, 5));
+  TEST_ASSERT_TRUE(SHT3x::_timeElapsed(5, nearMax));
+  TEST_ASSERT_FALSE(SHT3x::_timeElapsed(nearMax, 5));
+}
+
+void test_command_delay_guard() {
+  SHT3x device;
+  device._initialized = true;
+  device._config.commandDelayMs = 1;
+  device._config.i2cTimeoutMs = 1;
+  gMicros = 0;
+  gMicrosStep = 0;
+  gMillis = 0;
+  gMillisStep = 0;
+  device._lastCommandUs = micros();
+  Status st = device._ensureCommandDelay();
+  TEST_ASSERT_EQUAL(Err::TIMEOUT, st.code);
 }
 
 struct FakeTransport {
@@ -208,7 +209,7 @@ static Status scriptedWriteRead(uint8_t addr, const uint8_t* txData, size_t txLe
   return st;
 }
 
-TEST(expected_nack_mapping) {
+void test_expected_nack_mapping() {
   FakeTransport ctx;
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
 
@@ -218,6 +219,7 @@ TEST(expected_nack_mapping) {
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
   device._config.commandDelayMs = 1;
+  device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._consecutiveFailures = 0;
@@ -227,12 +229,12 @@ TEST(expected_nack_mapping) {
   gMillisStep = 0;
   uint8_t buf[6] = {};
   Status st = device._i2cWriteReadTrackedAllowNoData(nullptr, 0, buf, sizeof(buf), true);
-  ASSERT_EQ(st.code, Err::MEASUREMENT_NOT_READY);
-  ASSERT_EQ(device._consecutiveFailures, 0);
-  ASSERT_EQ(device._lastBusActivityMs, 123u);
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
+  TEST_ASSERT_EQUAL_UINT8(0, device._consecutiveFailures);
+  TEST_ASSERT_EQUAL_UINT32(123u, device._lastBusActivityMs);
 }
 
-TEST(not_ready_timeout_escalation) {
+void test_not_ready_timeout_escalation() {
   FakeTransport ctx;
   ctx.writeStatus = Status::Ok();
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
@@ -244,6 +246,7 @@ TEST(not_ready_timeout_escalation) {
   device._config.i2cTimeoutMs = 10;
   device._config.commandDelayMs = 1;
   device._config.notReadyTimeoutMs = 5;
+  device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._periodicActive = true;
@@ -253,11 +256,32 @@ TEST(not_ready_timeout_escalation) {
   gMillis = 10;
   gMillisStep = 0;
   Status st = device._fetchPeriodic();
-  ASSERT_NE(st.code, Err::MEASUREMENT_NOT_READY);
-  ASSERT_TRUE(device._consecutiveFailures > 0);
+  TEST_ASSERT_NOT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
+  TEST_ASSERT_TRUE(device._consecutiveFailures > 0);
 }
 
-TEST(recover_transient_failure) {
+void test_nack_mapping_without_capability() {
+  FakeTransport ctx;
+  ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
+
+  SHT3x device;
+  device._config.i2cWrite = fakeWrite;
+  device._config.i2cWriteRead = fakeWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.commandDelayMs = 1;
+  device._config.transportCapabilities = TransportCapability::NONE;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+
+  gMillis = 50;
+  gMillisStep = 0;
+  uint8_t buf[6] = {};
+  Status st = device._i2cWriteReadTrackedAllowNoData(nullptr, 0, buf, sizeof(buf), true);
+  TEST_ASSERT_EQUAL(Err::I2C_NACK_READ, st.code);
+}
+
+void test_recover_transient_failure() {
   ScriptedTransport ctx;
   ctx.readScript[0] = Status::Error(Err::I2C_TIMEOUT, "timeout");
   ctx.readScript[1] = Status::Ok();
@@ -283,10 +307,12 @@ TEST(recover_transient_failure) {
   gMillis = 0;
   gMillisStep = 0;
   Status st = device.recover();
-  ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
+  TEST_ASSERT_FALSE(device._periodicActive);
 }
 
-TEST(recover_permanent_offline) {
+void test_recover_permanent_offline() {
   ScriptedTransport ctx;
   ctx.readScript[0] = Status::Error(Err::I2C_TIMEOUT, "timeout");
   ctx.readScript[1] = Status::Error(Err::I2C_TIMEOUT, "timeout");
@@ -307,23 +333,31 @@ TEST(recover_permanent_offline) {
   gMillis = 0;
   gMillisStep = 0;
   Status st = device.recover();
-  ASSERT_FALSE(st.ok());
-  ASSERT_TRUE(device._consecutiveFailures > 0);
+  TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_TRUE(device._consecutiveFailures > 0);
 }
 
 // ============================================================================
 // Main
 // ============================================================================
 
-int main() {
-  printf("\n=== SHT3x Unit Tests ===\n\n");
-
-  RUN_TEST(status_ok);
-  RUN_TEST(status_error);
-  RUN_TEST(status_in_progress);
-  RUN_TEST(config_defaults);
-
-  printf("\n=== Results: %d passed, %d failed ===\n\n", testsPassed, testsFailed);
-
-  return testsFailed > 0 ? 1 : 0;
+int main(int argc, char** argv) {
+  (void)argc;
+  (void)argv;
+  UNITY_BEGIN();
+  RUN_TEST(test_status_ok);
+  RUN_TEST(test_status_error);
+  RUN_TEST(test_status_in_progress);
+  RUN_TEST(test_config_defaults);
+  RUN_TEST(test_crc8_example);
+  RUN_TEST(test_conversions_basic);
+  RUN_TEST(test_alert_limit_roundtrip);
+  RUN_TEST(test_time_elapsed_wrap);
+  RUN_TEST(test_command_delay_guard);
+  RUN_TEST(test_expected_nack_mapping);
+  RUN_TEST(test_not_ready_timeout_escalation);
+  RUN_TEST(test_nack_mapping_without_capability);
+  RUN_TEST(test_recover_transient_failure);
+  RUN_TEST(test_recover_permanent_offline);
+  return UNITY_END();
 }

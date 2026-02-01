@@ -236,38 +236,25 @@ Status SHT3x::recover() {
   }
   _lastRecoverMs = now;
 
-  const Mode desiredMode = _config.mode;
-  const PeriodicRate desiredRate = _config.periodicRate;
-  const Repeatability desiredRep = _config.repeatability;
-
   auto probeTracked = [this]() -> Status {
     uint16_t statusRaw = 0;
     return _readStatusRaw(statusRaw, true);
   };
 
-  auto restoreMode = [this, desiredMode, desiredRate, desiredRep]() -> Status {
+  auto setSafeBaseline = [this]() {
     _measurementRequested = false;
     _measurementReady = false;
     _measurementReadyMs = 0;
+    _periodicActive = false;
+    _periodicStartMs = 0;
+    _lastFetchMs = 0;
+    _periodMs = 0;
+    _sampleTimestampMs = 0;
+    _missedSamples = 0;
     _notReadyStartMs = 0;
     _notReadyCount = 0;
-    _missedSamples = 0;
-
-    if (desiredMode == Mode::PERIODIC) {
-      _config.periodicRate = desiredRate;
-      _config.repeatability = desiredRep;
-      return _enterPeriodic(desiredRate, desiredRep, false);
-    }
-    if (desiredMode == Mode::ART) {
-      _config.periodicRate = desiredRate;
-      _config.repeatability = desiredRep;
-      return _enterPeriodic(desiredRate, desiredRep, true);
-    }
-
-    _periodicActive = false;
     _mode = Mode::SINGLE_SHOT;
     _config.mode = Mode::SINGLE_SHOT;
-    return Status::Ok();
   };
 
   Status last = Status::Error(Err::I2C_ERROR, "Recovery failed");
@@ -277,7 +264,8 @@ Status SHT3x::recover() {
     if (st.ok()) {
       st = probeTracked();
       if (st.ok()) {
-        return restoreMode();
+        setSafeBaseline();
+        return Status::Ok();
       }
       last = st;
     } else {
@@ -299,7 +287,8 @@ Status SHT3x::recover() {
       if (st.ok()) {
         st = probeTracked();
         if (st.ok()) {
-          return restoreMode();
+          setSafeBaseline();
+          return Status::Ok();
         }
       }
       last = st;
@@ -315,7 +304,8 @@ Status SHT3x::recover() {
       }
       st = probeTracked();
       if (st.ok()) {
-        return restoreMode();
+        setSafeBaseline();
+        return Status::Ok();
       }
     }
     last = st;
@@ -326,7 +316,8 @@ Status SHT3x::recover() {
     if (st.ok()) {
       st = probeTracked();
       if (st.ok()) {
-        return restoreMode();
+        setSafeBaseline();
+        return Status::Ok();
       }
     }
     last = st;
@@ -459,6 +450,44 @@ Status SHT3x::getMode(Mode& out) const {
   }
   out = _mode;
   return Status::Ok();
+}
+
+Status SHT3x::getSettings(SettingsSnapshot& out) const {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+
+  out.mode = _mode;
+  out.repeatability = _config.repeatability;
+  out.periodicRate = _config.periodicRate;
+  out.clockStretching = _config.clockStretching;
+  out.periodicActive = _periodicActive;
+  out.measurementPending = _measurementRequested && !_measurementReady;
+  out.measurementReady = _measurementReady;
+  out.measurementReadyMs = _measurementReadyMs;
+  out.sampleTimestampMs = _sampleTimestampMs;
+  out.missedSamples = _missedSamples;
+  out.status = StatusRegister{};
+  out.statusValid = false;
+  return Status::Ok();
+}
+
+Status SHT3x::readSettings(SettingsSnapshot& out) {
+  Status st = getSettings(out);
+  if (!st.ok()) {
+    return st;
+  }
+
+  Status stStatus = readStatus(out.status);
+  if (stStatus.ok()) {
+    out.statusValid = true;
+    return stStatus;
+  }
+  if (stStatus.code == Err::BUSY) {
+    out.statusValid = false;
+    return Status::Ok();
+  }
+  return stStatus;
 }
 
 Status SHT3x::setRepeatability(Repeatability rep) {
@@ -986,11 +1015,15 @@ Status SHT3x::_i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
 
+  const bool canReportNack = hasCapability(_config.transportCapabilities,
+                                           TransportCapability::READ_HEADER_NACK);
+  const bool allow = allowNoData && canReportNack;
+
   Status st = _i2cWriteReadRaw(txBuf, txLen, rxBuf, rxLen);
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
     return st;
   }
-  if (allowNoData && st.code == Err::I2C_NACK_READ && txLen == 0 && rxLen > 0) {
+  if (allow && st.code == Err::I2C_NACK_READ && txLen == 0 && rxLen > 0) {
     _recordBusActivity(millis());
     return Status::Error(Err::MEASUREMENT_NOT_READY, "No new data", st.detail);
   }
@@ -1233,9 +1266,10 @@ Status SHT3x::_fetchPeriodic() {
     return st;
   }
 
-  bool allowNoData = true;
+  bool allowNoData = hasCapability(_config.transportCapabilities,
+                                   TransportCapability::READ_HEADER_NACK);
   const uint32_t now = millis();
-  if (_config.notReadyTimeoutMs > 0 && _notReadyStartMs != 0) {
+  if (allowNoData && _config.notReadyTimeoutMs > 0 && _notReadyStartMs != 0) {
     const uint32_t deadline = _notReadyStartMs + _config.notReadyTimeoutMs;
     if (_timeElapsed(now, deadline)) {
       allowNoData = false;

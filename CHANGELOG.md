@@ -25,6 +25,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Nothing yet
 
+## [1.2.0] - 2026-02-01
+
+### Added
+- Transport capability flags and Wire-safe NACK gating
+- Unity-based native tests and GitHub Actions CI
+
+### Changed
+- recover() is comms-only (no mode/heater/alert restore)
+- Periodic not-ready handling is gated by transport capabilities
+
+### Fixed
+- Read-header NACK never treated as not-ready unless transport supports it
+
+## [1.1.0] - 2026-02-01
+
+### Added
+- I2C error taxonomy (NACK addr/data/read, timeout, bus error)
+- Periodic not-ready timeout guard and missed sample estimate
+- Sample timestamp and age helper
+- Settings snapshot helper (getSettings/readSettings)
+- Recovery ladder with backoff and optional hard reset callback
+- Host-side unit tests for CRC8, conversions, alert packing, time wrap, NACK mapping, recovery
+
+### Changed
+- begin() now records pre-init bus activity and lastOk/lastError timestamps
+- Expected NACK handling is explicit (read-header NACK only)
+- Interface reset clears pending measurement state
+- Transport callback contract documented with explicit error semantics
+
+### Fixed
+- Health tracking updated for general-call reset and bus activity
+- Periodic fetch no longer masks non-NACK errors as not-ready
+
 ## [1.0.0] - 2026-02-01
 
 ### Added
@@ -45,25 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[1.1.0] - 2026-02-01
-
-### Added
-- I2C error taxonomy (NACK addr/data/read, timeout, bus error)
-- Periodic not-ready timeout guard and missed sample estimate
-- Sample timestamp and age helper
-- Recovery ladder with backoff and optional hard reset callback
-- Host-side unit tests for CRC8, conversions, alert packing, time wrap, NACK mapping, recovery
-
-### Changed
-- begin() now records pre-init bus activity and lastOk/lastError timestamps
-- Expected NACK handling is explicit (read-header NACK only)
-- Interface reset clears pending measurement state
-- Transport callback contract documented with explicit error semantics
-
-### Fixed
-- Health tracking updated for general-call reset and bus activity
-- Periodic fetch no longer masks non-NACK errors as not-ready
-
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
 [1.1.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.1.0
 [1.0.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.0.0

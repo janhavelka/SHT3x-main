@@ -1,6 +1,6 @@
 # SHT3x Driver Robustness Audit Report
 Date: 2026-02-01
-Version: 1.0.0 (library.json)
+Version: 1.2.0 (library.json)
 
 ## Scope
 - Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO
@@ -9,40 +9,39 @@ Version: 1.0.0 (library.json)
 ## Summary (what is true today)
 - All datasheet commands are implemented and exposed via public API (see command map in docs/AUDIT.md).
 - Transport is callback-based; the driver does not touch Wire directly.
-- Health tracking is implemented via tracked wrappers and is used by all public I2C operations, except explicit diagnostics and one expected-NACK read path.
-- Deterministic busy-wait guards exist for command spacing and fixed delays; they return Err::TIMEOUT instead of stalling.
-- Expected NACK for periodic Fetch Data is mapped to Err::MEASUREMENT_NOT_READY without health penalty.
-- Recovery ladder is NOT implemented; recover() currently performs a single status read.
+- Transport contract now includes explicit I2C error taxonomy and capability flags.
+- Health tracking is implemented via tracked wrappers and updated for pre-init bus activity.
+- Expected NACK handling is **capability-gated** (READ_HEADER_NACK required).
+- Periodic not-ready is bounded by notReadyTimeoutMs when enabled.
+- Recovery ladder is implemented and is **comms-only** (does not restore mode/heater/alert settings).
+- Host tests exist (Unity) and CI runs ESP32 build + native tests.
 
 ## A) Health tracking trustworthiness
 ### Status
-Partially compliant with the auditor requirement.
+Mostly compliant.
 
 ### What is implemented
 - Tracked wrappers update health for all normal public I2C operations.
-- General-call reset now uses a tracked wrapper.
-- Explicit diagnostic operations bypass health:
-  - begin() initial probe uses untracked status read (pre-initialization)
-  - probe() uses untracked status read by design
+- Pre-init bus activity updates lastOk/lastError timestamps without changing driver state.
+- lastBusActivityMs records any bus interaction (including expected NACK).
+- General-call reset uses tracked wrapper.
+- Explicit diagnostic operation probe() bypasses health by design.
 
-### What is NOT implemented / gaps
-- Expected-NACK read in periodic fetch returns MEASUREMENT_NOT_READY without updating health counters (no penalty, but also no success update).
-- Health counters do not change during begin() because _updateHealth is gated by _initialized; this is a deliberate design choice from AGENTS.md.
-
-### Recommendation
-If strict policy requires *every* bus transaction to update health, add an internal helper that records a success timestamp/counter for expected NACK without incrementing failure, and optionally allow begin() to record health without changing driver state.
+### Remaining gaps / design choices
+- Expected-NACK reads update lastBusActivityMs but do not increment success/failure counters.
+- probe() remains untracked (explicit diagnostic).
 
 ### Public API -> Health tracking table
 Legend: Yes = updates health on success/failure, No = does not update health, N/A = no I2C
 
 | API | I2C | Health update | Notes |
 | --- | --- | --- | --- |
-| begin | Yes | No | Initial probe uses untracked read; _initialized false by design |
-| tick | Yes | Yes | Reads measurement in SINGLE_SHOT or fetches periodic |
+| begin | Yes | Yes (timestamps) | Pre-init activity updates lastOk/lastError only |
+| tick | Yes | Yes | Reads measurement or fetches periodic |
 | end | No | N/A | State reset only |
-| probe | Yes | No | Explicit diagnostic, no health tracking |
-| recover | Yes | Yes | Status read only |
-| requestMeasurement | Yes/No | Yes | Single-shot writes command; periodic just schedules |
+| probe | Yes | No | Explicit diagnostic |
+| recover | Yes | Yes | Ladder operations tracked |
+| requestMeasurement | Yes/No | Yes | Single-shot writes command; periodic schedules |
 | getMeasurement | No | N/A | Returns cached sample |
 | getRawSample | No | N/A | Returns cached raw sample |
 | getCompensatedSample | No | N/A | Returns cached compensated sample |
@@ -54,6 +53,8 @@ Legend: Yes = updates health on success/failure, No = does not update health, N/
 | getClockStretching | No | N/A | Cache only |
 | setPeriodicRate | Yes | Yes | May restart periodic depending on mode |
 | getPeriodicRate | No | N/A | Cache only |
+| getSettings | No | N/A | Cached snapshot only |
+| readSettings | Yes/No | Yes/No | Attempts status read; returns OK if BUSY |
 | startPeriodic | Yes | Yes | Writes periodic command |
 | startArt | Yes | Yes | Writes ART command |
 | stopPeriodic | Yes | Yes | Writes Break + wait |
@@ -78,15 +79,16 @@ Legend: Yes = updates health on success/failure, No = does not update health, N/
 
 ## B) Expected NACK semantics
 ### Status
-Partially implemented.
+Implemented with capability gating.
 
 ### What is implemented
-- Periodic Fetch Data uses a read path that converts a 0-byte read into Err::MEASUREMENT_NOT_READY without health penalty.
-- tick() does not clear the pending measurement on MEASUREMENT_NOT_READY and backs off by commandDelayMs before retry.
+- Read-header NACK is treated as MEASUREMENT_NOT_READY **only** if `transportCapabilities` includes READ_HEADER_NACK.
+- Periodic not-ready is time-bounded using notReadyTimeoutMs (optional).
+- tick() backs off by commandDelayMs on MEASUREMENT_NOT_READY.
 
-### What is NOT implemented / gaps
-- There is no configurable bound or escalation for repeated MEASUREMENT_NOT_READY in periodic mode.
-- Single-shot no-stretch polling semantics are not implemented; the driver uses fixed tMEAS wait instead.
+### Current behavior summary
+- **Wire (default capabilities NONE):** read-header NACK is not treated as not-ready; ambiguous 0-byte reads are tracked as errors.
+- **Rich transports:** expected NACK can be used safely.
 
 ### State diagrams (simplified)
 
@@ -101,18 +103,18 @@ requestMeasurement -> schedule ready time -> IN_PROGRESS
   tick(now < ready) -> no I2C -> pending
   tick(now >= ready) -> write Fetch Data -> read
     if read OK -> measurementReady=true
-    if read MEASUREMENT_NOT_READY -> pending, ready time += commandDelayMs
+    if read MEASUREMENT_NOT_READY (capability gated) -> pending, ready time += commandDelayMs
 getMeasurement -> returns cached sample, clears ready
 
 ## C) ESP32 transport contract (timeouts, clock stretching)
 ### Status
-Documented in examples; needs explicit contract in docs.
+Documented in README.
 
 ### Known ESP32 risks
 - Clock stretching can fail if controller timeout is too short.
-- Wire.requestFrom() returns 0 bytes on NACK, which is now mapped to MEASUREMENT_NOT_READY for periodic fetch.
+- Wire.requestFrom() returning 0 bytes is ambiguous; capability gating avoids misclassification.
 
-### Recommended contract (to document)
+### Contract summary
 - Default clock stretching is disabled (Config default is STRETCH_DISABLED).
 - If clock stretching is enabled, set Wire timeout >= worst-case tMEAS + margin.
   - Worst case tMEAS: 15.5 ms (high repeatability, low Vdd)
@@ -128,21 +130,20 @@ Implemented with bounded waits and wrap-safe comparisons.
 - tMEAS: estimateMeasurementTimeMs uses worst-case values; low-Vdd path is conservative.
 - Wraparound: comparisons use signed delta (int32_t) for millis/micros.
 - Fixed waits: BREAK_DELAY_MS and RESET_DELAY_MS are applied via _waitMs with timeouts.
+- Guard behavior validated by unit test (command delay guard).
 
 ## E) Recovery ladder and state transitions
 ### Status
-NOT implemented (gap).
+Implemented (comms-only).
 
 ### Current behavior
-- recover() performs a single status read; it does not reset or reconfigure the device.
-
-### Required for full compliance
-Define and implement a ladder, for example:
+recover() performs a ladder:
 1) interfaceReset() if callback exists
 2) softReset()
-3) generalCallReset() if explicitly enabled
-4) re-probe and re-apply current mode (periodic/ART) if configured
-5) transition to OFFLINE after offlineThreshold
+3) hardReset() if callback exists
+4) generalCallReset() if explicitly enabled
+
+On success, the driver returns to SINGLE_SHOT idle with measurement state cleared and **does not restore** prior mode/heater/alert limits.
 
 ## F) Interface reset (SCL toggles)
 ### Status
@@ -154,7 +155,7 @@ Callback-only.
 
 ## G) Alert mode edge cases
 ### Status
-Implemented in code; documentation gap.
+Implemented in code; documentation gap remains.
 
 - Alert limit encoding/decoding matches app note (RH7/T9 packing).
 - CRC for writes is generated; status bits COMMAND_ERROR and WRITE_CRC_ERROR are checked.
@@ -162,7 +163,7 @@ Implemented in code; documentation gap.
 
 ## H) Thread-safety / orchestration assumptions
 ### Status
-Not explicitly documented.
+Documented in README.
 
 - Driver is not thread-safe and not ISR-safe; external serialization is required.
 - I2C callbacks must be atomic with respect to the bus manager.
@@ -176,7 +177,7 @@ All times are upper bounds in terms of configuration, not absolute CPU time.
 - Fixed waits: BREAK_DELAY_MS (1 ms) and RESET_DELAY_MS (2 ms), both guarded
 
 Approximate worst-case per API:
-- begin(): status read (write + read with tIDLE) + optional periodic start
+- begin(): status read (write + read with tIDLE)
 - requestMeasurement(): single-shot write only (tIDLE + write), periodic schedule is non-blocking
 - tick():
   - SINGLE_SHOT read: tIDLE + read
@@ -188,33 +189,32 @@ Approximate worst-case per API:
 - interfaceReset: callback-defined
 
 ## Tests (current state)
-- Current host tests are minimal (Status/Config defaults only).
-- Missing tests requested by auditor:
-  - CRC8 (not directly accessible; would require test hook or friend)
-  - Alert limit encode/decode (public static helpers can be tested)
-  - Conversion math (public static helpers can be tested)
-  - Wraparound logic (can be unit-tested with simulated millis values)
-- Integration test: the CLI example includes a stress command and manual recover command, but no automated recovery stress script.
+- Unity host tests now cover:
+  - CRC8 example (0xBEEF → 0x92)
+  - Conversion helpers (float + fixed-point)
+  - Alert limit encode/decode
+  - Wraparound-safe time comparison
+  - Command delay guard timeout
+  - Expected NACK mapping (with and without capability)
+  - Recovery success/failure behavior
+- GitHub Actions CI runs:
+  - `pio run -e ex_bringup_s3`
+  - `pio test -e native`
 
 ## Fixes applied since docs/AUDIT.md
-- Bounded busy-wait guards in _ensureCommandDelay and _waitMs (no unbounded stalls)
-- generalCallReset now updates health tracking
-- Periodic Fetch Data expected NACK mapped to MEASUREMENT_NOT_READY
-- interfaceReset clears pending measurement state
+- Capability-gated expected NACK handling
+- Pre-init health timestamp tracking and lastBusActivityMs
+- Periodic notReadyTimeoutMs escalation
+- Comms-only recovery ladder with backoff
+- Settings snapshot helper (getSettings/readSettings)
+- Unity host tests + CI workflow
 
 ## Remaining risks / open questions
-- No recovery ladder implementation; recover() is shallow.
-- No escalation for repeated MEASUREMENT_NOT_READY in periodic mode.
-- Health tracking does not update for begin() probe or expected-NACK read (deliberate exceptions).
+- Wire’s error reporting remains best-effort; richer transports should set capability flags.
 - No built-in GPIO bus reset (callback only).
-- Thread-safety contract is not documented in README.
+- Alert mode behavior after reset still under-documented.
 
-## Recommended next steps (if auditor requires full compliance)
-1) Implement recovery ladder in recover() and document state transitions.
-2) Add a configurable NOT_READY retry budget for periodic fetch.
-3) Add unit tests for conversion and alert packing; add a CRC test hook if required.
-4) Add explicit documentation sections to README:
-   - API timing and blocking behavior
-   - Expected NACK semantics
-   - ESP32 I2C timeout requirements
-   - Thread-safety and orchestration assumptions
+## Recommended next steps
+1) If you need full restore after recover(), implement it in the orchestrator (not in the driver).
+2) Add an optional GPIO-based bus reset helper in examples (board-specific).
+3) Expand alert-mode documentation and add a test fixture for limit defaults.

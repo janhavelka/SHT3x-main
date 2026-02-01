@@ -34,7 +34,7 @@ Ensure public API usage cannot crash, hard-hang, or stall the MCU. This audit fo
   - Added a tracked read path that maps read-no-data (0 bytes) to Err::MEASUREMENT_NOT_READY without health penalty
   - tick() now backs off by commandDelayMs on MEASUREMENT_NOT_READY to avoid tight retry loops
 - Notes:
-  - The no-data mapping uses the transport detail == 0 convention (Wire returns 0 bytes on NACK)
+  - Expected-NACK handling is gated by transportCapabilities; Wire defaults to no NACK support
 
 4) Low: Interface reset does not clear internal measurement state
 - Function: interfaceReset()
