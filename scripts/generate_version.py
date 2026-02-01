@@ -7,6 +7,7 @@ Called automatically by PlatformIO before each build.
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -37,13 +38,50 @@ def get_git_info(project_root):
         return "unknown", False
 
 
-def main():
+def _find_project_root(start_dir: Path) -> Path:
+    for candidate in [start_dir] + list(start_dir.parents):
+        if (candidate / "library.json").is_file():
+            return candidate
+    return start_dir
+
+
+def _resolve_project_root():
+    # Prefer PlatformIO PROJECT_DIR, then script location, then cwd.
+    try:
+        if "env" in globals():
+            env_obj = globals()["env"]
+            project_dir = None
+            try:
+                project_dir = env_obj.get("PROJECT_DIR")
+            except Exception:
+                project_dir = None
+            if not project_dir:
+                try:
+                    project_dir = env_obj["PROJECT_DIR"]
+                except Exception:
+                    project_dir = None
+            if not project_dir:
+                try:
+                    project_dir = env_obj.subst("$PROJECT_DIR")
+                except Exception:
+                    project_dir = None
+            if project_dir:
+                return _find_project_root(Path(project_dir))
+    except Exception:
+        pass
+
+    if "__file__" in globals():
+        return _find_project_root(Path(__file__).resolve().parent.parent)
+
+    return _find_project_root(Path.cwd())
+
+
+def generate_version():
     # Find project root (where library.json lives)
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent
+    project_root = _resolve_project_root()
     
     library_json = project_root / "library.json"
-    version_h = project_root / "include" / "BME280" / "Version.h"
+    version_h = project_root / "include" / "SHT3x" / "Version.h"
     
     # Read version from library.json
     with open(library_json, "r", encoding="utf-8") as f:
@@ -80,7 +118,7 @@ def main():
 
 #include <stdint.h>
 
-namespace BME280 {{
+namespace SHT3x {{
 
 /// @brief Major version (breaking changes).
 static constexpr uint16_t VERSION_MAJOR = {major};
@@ -119,7 +157,7 @@ static constexpr const char* GIT_STATUS = "{git_status}";
 /// @note Format: "version (commit, date time)"
 static constexpr const char* VERSION_FULL = "{version} ({git_commit}, {build_timestamp})";
 
-}}  // namespace BME280
+}}  // namespace SHT3x
 '''
     
     # Write Version.h
@@ -131,4 +169,7 @@ static constexpr const char* VERSION_FULL = "{version} ({git_commit}, {build_tim
 
 
 if __name__ == "__main__":
-    main()
+    generate_version()
+else:
+    # When run as a PlatformIO extra_script, __name__ is not "__main__".
+    generate_version()

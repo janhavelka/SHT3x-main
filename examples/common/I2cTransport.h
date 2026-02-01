@@ -5,12 +5,12 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include "BME280/Status.h"
+#include "SHT3x/Status.h"
 
 namespace transport {
 
-using BME280::Status;
-using BME280::Err;
+using SHT3x::Status;
+using SHT3x::Err;
 
 /// Initialize Wire for examples
 /// @param sda SDA pin
@@ -36,11 +36,11 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
   (void)user;
   (void)timeoutMs;
-  
+
   Wire.beginTransmission(addr);
   size_t written = Wire.write(data, len);
   uint8_t result = Wire.endTransmission();
-  
+
   if (result != 0) {
     // Wire error codes: 1=data too long, 2=NACK addr, 3=NACK data, 4=other, 5=timeout
     return Status::Error(Err::I2C_ERROR, "I2C write failed", result);
@@ -48,14 +48,14 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
   if (written != len) {
     return Status::Error(Err::I2C_ERROR, "I2C write incomplete", static_cast<int32_t>(written));
   }
-  
+
   return Status::Ok();
 }
 
 /// I2C write-then-read callback using Wire library
 /// @param addr I2C device address (7-bit)
-/// @param txData Data buffer to write
-/// @param txLen Number of bytes to write
+/// @param txData Data buffer to write (may be nullptr if txLen==0)
+/// @param txLen Number of bytes to write (may be 0 for read-only)
 /// @param rxData Buffer for read data
 /// @param rxLen Number of bytes to read
 /// @param timeoutMs Timeout (used to set Wire timeout)
@@ -66,29 +66,35 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint32_t timeoutMs, void* user) {
   (void)user;
   (void)timeoutMs;
-  
-  // Write phase
-  Wire.beginTransmission(addr);
-  size_t written = Wire.write(txData, txLen);
-  uint8_t result = Wire.endTransmission(false);  // Repeated start
-  
-  if (result != 0) {
-    return Status::Error(Err::I2C_ERROR, "I2C write phase failed", result);
+
+  if (txLen > 0) {
+    // Write phase
+    Wire.beginTransmission(addr);
+    size_t written = Wire.write(txData, txLen);
+    uint8_t result = Wire.endTransmission(false);  // Repeated start
+
+    if (result != 0) {
+      return Status::Error(Err::I2C_ERROR, "I2C write phase failed", result);
+    }
+    if (written != txLen) {
+      return Status::Error(Err::I2C_ERROR, "I2C write incomplete", static_cast<int32_t>(written));
+    }
   }
-  if (written != txLen) {
-    return Status::Error(Err::I2C_ERROR, "I2C write incomplete", static_cast<int32_t>(written));
+
+  if (rxLen == 0) {
+    return Status::Ok();
   }
-  
+
   // Read phase
   size_t received = Wire.requestFrom(addr, rxLen);
   if (received != rxLen) {
     return Status::Error(Err::I2C_ERROR, "I2C read incomplete", static_cast<int32_t>(received));
   }
-  
+
   for (size_t i = 0; i < rxLen; i++) {
     rxData[i] = Wire.read();
   }
-  
+
   return Status::Ok();
 }
 

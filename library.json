@@ -1,12 +1,14 @@
 {
-  "name": "BME280",
+  "name": "SHT3x",
   "version": "1.0.0",
-  "description": "Production-grade BME280 environmental sensor driver.",
+  "description": "Production-grade SHT3x temperature/humidity sensor driver.",
   "keywords": [
-    "bme280",
+    "sht3x",
+    "sht30",
+    "sht31",
+    "sht35",
     "sensor",
     "temperature",
-    "pressure",
     "humidity",
     "i2c",
     "esp32",
@@ -28,13 +30,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/janhavelka/BME280.git"
+    "url": "https://github.com/janhavelka/SHT3x.git"
   },
   "license": "MIT",
   "homepage": "https://www.thymos.cz",
   "frameworks": ["arduino"],
   "platforms": ["espressif32"],
-  "headers": ["BME280/BME280.h"],
+  "headers": ["SHT3x/SHT3x.h"],
   "build": {
     "includeDir": "include",
     "srcDir": "src"

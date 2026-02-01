@@ -1,13 +1,15 @@
-# BME280 Driver Library
+# SHT3x Driver Library
 
-Production-grade BME280 I2C driver for ESP32 (Arduino/PlatformIO).
+Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO).
 
 ## Features
 
 - **Injected I2C transport** - no Wire dependency in library code
+- **CRC validation** - all 16-bit data words verified
+- **Alert mode support** - read/write limits, encode/decode helpers
+- **Periodic + ART modes** - 0.5/1/2/4/10 mps and ART
 - **Health monitoring** - automatic state tracking (READY/DEGRADED/OFFLINE)
 - **Deterministic behavior** - no unbounded loops, no heap allocations
-- **Non-blocking architecture** - tick-based state machine for async operations
 
 ## Installation
 
@@ -17,69 +19,88 @@ Add to `platformio.ini`:
 
 ```ini
 lib_deps = 
-  https://github.com/janhavelka/BME280.git
+  https://github.com/janhavelka/SHT3x.git
 ```
 
 ### Manual
 
-Copy `include/BME280/` and `src/` to your project.
+Copy `include/SHT3x/` and `src/` to your project.
 
 ## Quick Start
 
 ```cpp
 #include <Wire.h>
-#include "BME280/BME280.h"
+#include "SHT3x/SHT3x.h"
 
 // Transport callbacks
-BME280::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
-                             uint32_t timeoutMs, void* user) {
+SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
+                       uint32_t timeoutMs, void* user) {
   Wire.beginTransmission(addr);
   Wire.write(data, len);
-  return Wire.endTransmission() == 0 
-    ? BME280::Status::Ok() 
-    : BME280::Status::Error(BME280::Err::I2C_ERROR, "Write failed");
+  return Wire.endTransmission() == 0
+    ? SHT3x::Status::Ok()
+    : SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write failed");
 }
 
-BME280::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
-                                 uint8_t* rx, size_t rxLen, uint32_t timeoutMs, void* user) {
-  Wire.beginTransmission(addr);
-  Wire.write(tx, txLen);
-  if (Wire.endTransmission(false) != 0) {
-    return BME280::Status::Error(BME280::Err::I2C_ERROR, "Write failed");
+SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
+                           uint8_t* rx, size_t rxLen, uint32_t timeoutMs, void* user) {
+  if (txLen > 0) {
+    Wire.beginTransmission(addr);
+    Wire.write(tx, txLen);
+    if (Wire.endTransmission(false) != 0) {
+      return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write failed");
+    }
+  }
+  if (rxLen == 0) {
+    return SHT3x::Status::Ok();
   }
   if (Wire.requestFrom(addr, rxLen) != rxLen) {
-    return BME280::Status::Error(BME280::Err::I2C_ERROR, "Read failed");
+    return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read failed");
   }
   for (size_t i = 0; i < rxLen; i++) {
     rx[i] = Wire.read();
   }
-  return BME280::Status::Ok();
+  return SHT3x::Status::Ok();
 }
 
-BME280::BME280 device;
+SHT3x::SHT3x device;
 
 void setup() {
   Serial.begin(115200);
   Wire.begin(8, 9);  // SDA, SCL
-  
-  BME280::Config cfg;
+
+  SHT3x::Config cfg;
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
-  cfg.i2cAddress = 0x76;
-  
+  cfg.i2cAddress = 0x44;
+
   auto status = device.begin(cfg);
   if (!status.ok()) {
     Serial.printf("Init failed: %s\n", status.msg);
     return;
   }
-  
+
   Serial.println("Device initialized!");
 }
 
 void loop() {
   device.tick(millis());
-  
-  // Your code here
+
+  // Example: request a single-shot measurement
+  static bool pending = false;
+  if (!pending) {
+    if (device.requestMeasurement().code == SHT3x::Err::IN_PROGRESS) {
+      pending = true;
+    }
+  }
+
+  if (pending && device.measurementReady()) {
+    SHT3x::Measurement m;
+    if (device.getMeasurement(m).ok()) {
+      Serial.printf("T=%.2f C, RH=%.2f %%\n", m.temperatureC, m.humidityPct);
+    }
+    pending = false;
+  }
 }
 ```
 
@@ -89,7 +110,7 @@ The driver tracks I2C communication health:
 
 ```cpp
 // Check state
-if (device.state() == BME280::DriverState::OFFLINE) {
+if (device.state() == SHT3x::DriverState::OFFLINE) {
   Serial.println("Device offline!");
   device.recover();  // Try to reconnect
 }
@@ -98,42 +119,6 @@ if (device.state() == BME280::DriverState::OFFLINE) {
 Serial.printf("Failures: %u consecutive, %lu total\n",
               device.consecutiveFailures(), device.totalFailures());
 ```
-
-### Driver States
-
-| State | Description |
-|-------|-------------|
-| `UNINIT` | `begin()` not called or `end()` called |
-| `READY` | Operational, no recent failures |
-| `DEGRADED` | 1+ failures, below offline threshold |
-| `OFFLINE` | Too many consecutive failures |
-
-## API Reference
-
-### Lifecycle
-
-- `Status begin(const Config& config)` - Initialize driver
-- `void tick(uint32_t nowMs)` - Process pending operations
-- `void end()` - Shutdown driver
-
-### Diagnostics
-
-- `Status probe()` - Check device presence (no health tracking)
-- `Status recover()` - Attempt recovery from DEGRADED/OFFLINE
-
-### State
-
-- `DriverState state()` - Current driver state
-- `bool isOnline()` - True if READY or DEGRADED
-
-### Health
-
-- `uint32_t lastOkMs()` - Timestamp of last success
-- `uint32_t lastErrorMs()` - Timestamp of last failure
-- `Status lastError()` - Most recent error
-- `uint8_t consecutiveFailures()` - Failures since last success
-- `uint32_t totalFailures()` - Lifetime failure count
-- `uint32_t totalSuccess()` - Lifetime success count
 
 ## Examples
 

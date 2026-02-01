@@ -1,7 +1,7 @@
-# AGENTS.md - BME280 Production Embedded Guidelines
+# AGENTS.md - SHT3x Production Embedded Guidelines
 
 ## Role and Target
-You are a professional embedded software engineer building a production-grade BME280 environmental sensor library.
+You are a professional embedded software engineer building a production-grade SHT3x (SHT30/SHT31/SHT35) environmental sensor library.
 
 - Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
 - Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
@@ -12,11 +12,11 @@ You are a professional embedded software engineer building a production-grade BM
 ## Repository Model (Single Library)
 
 ```
-include/BME280/         - Public API headers only (Doxygen)
-  CommandTable.h        - Register addresses and bit masks
+include/SHT3x/         - Public API headers only (Doxygen)
+  CommandTable.h        - Command definitions and bit masks
   Status.h
   Config.h
-  BME280.h
+  SHT3x.h
   Version.h             - Auto-generated (do not edit)
 src/                    - Implementation (.cpp)
 examples/
@@ -33,7 +33,7 @@ AGENTS.md
 Rules:
 - `examples/common/` is NOT part of the library. It simulates project glue and keeps examples self-contained.
 - No board-specific pins/bus in library code; only in `Config`.
-- Public headers only in `include/BME280/`.
+- Public headers only in `include/SHT3x/`.
 - Examples demonstrate usage and may use `examples/common/BoardConfig.h`.
 - Keep the layout boring and predictable.
 
@@ -76,21 +76,34 @@ struct Status {
 
 ---
 
-## BME280 Driver Requirements
+## SHT3x Driver Requirements
 
-- I2C address 0x76 (default) or 0x77 (configurable via SDO pin); check chip ID (0x60) in `begin()`.
-- Read compensation data (calibration coefficients) once in `begin()` and cache in RAM.
+- I2C address 0x44 (default) or 0x45 (ADDR pin high).
+- All commands are 16-bit, MSB-first.
+- Always CRC-check each 16-bit data word returned (measurement, status, serial, alert limits).
+- When writing a 16-bit data word (alert limits), compute and append CRC; treat checksum errors as failures.
+- Enforce minimum command spacing tIDLE >= 1 ms between commands.
 - Support measurement modes:
-  - **Sleep mode**: No measurements, lowest power.
-  - **Forced mode**: Single measurement on demand, returns to sleep.
-  - **Normal mode**: Continuous measurements at configured standby interval.
-- Configurable oversampling (skip, 1x, 2x, 4x, 8x, 16x) for temperature, pressure, humidity.
-- Configurable IIR filter coefficient (off, 2, 4, 8, 16).
-- Configurable standby time for normal mode (0.5ms to 1000ms).
-- Proper measurement time calculation based on oversampling settings.
-- Apply Bosch compensation formulas (32-bit integer or 64-bit for pressure).
-- Burst read all data registers (0xF7-0xFE) in single I2C transaction.
-- Soft reset via register write (0xB6 to 0xE0).
+  - Single-shot (with and without clock stretching)
+  - Periodic (0.5/1/2/4/10 mps)
+  - ART mode (accelerated response time)
+  - Fetch Data readout for periodic modes
+  - Break command to stop periodic mode
+- Implement resets:
+  - Soft reset
+  - Interface reset sequence (SCL toggle) via callback
+  - Optional general call reset (bus-wide)
+- Status register support:
+  - Read status + CRC
+  - Clear status flags
+  - Parse alert, heater, reset, command, and checksum bits
+- Heater enable/disable and status inspection.
+- Alert mode support:
+  - Read/write all four alert limits
+  - Encode/decode limit words (RH7/T9 packing)
+  - Helper to disable alerts (LowSet > HighSet)
+- Serial number (EIC) readout (both stretch and no-stretch commands).
+- Measurement time calculation based on repeatability and VDD range.
 
 ---
 
@@ -98,9 +111,9 @@ struct Status {
 
 The driver follows a **managed synchronous** model with health tracking:
 
-- All public I2C operations are **blocking** (no async state machine needed - BME280 has no EEPROM writes).
-- `tick()` may be used for normal-mode polling or measurement-ready checks.
-- Health is tracked via **tracked transport wrappers** — public API never calls `_updateHealth()` directly.
+- All public I2C operations are **blocking** (no async state machine needed - SHT3x has no EEPROM writes).
+- `tick()` may be used for periodic polling or measurement-ready checks.
+- Health is tracked via **tracked transport wrappers** � public API never calls `_updateHealth()` directly.
 - Recovery is **manual** via `recover()` - the application controls retry strategy.
 
 ### DriverState (4 states only)
@@ -115,11 +128,11 @@ enum class DriverState : uint8_t {
 ```
 
 State transitions:
-- `begin()` success → READY
-- Any I2C failure in READY → DEGRADED
-- Success in DEGRADED/OFFLINE → READY
-- Failures reach `offlineThreshold` → OFFLINE
-- `end()` → UNINIT
+- `begin()` success -> READY
+- Any I2C failure in READY -> DEGRADED
+- Success in DEGRADED/OFFLINE -> READY
+- Failures reach `offlineThreshold` -> OFFLINE
+- `end()` -> UNINIT
 
 ### Transport Wrapper Architecture
 
@@ -127,20 +140,20 @@ All I2C goes through layered wrappers:
 
 ```
 Public API (readMeasurement, setMode, etc.)
-    ↓
-Register helpers (readRegs, writeRegs)
-    ↓
+    ?
+Command helpers (writeCommand/readAfterCommand)
+    ?
 TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
-    ↓  ← _updateHealth() called here ONLY
+    ?  ? _updateHealth() called here ONLY
 RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
-    ↓
+    ?
 Transport callbacks (Config::i2cWrite, i2cWriteRead)
 ```
 
 **Rules:**
 - Public API methods NEVER call `_updateHealth()` directly
-- `readRegs()`/`writeRegs()` use TRACKED wrappers → health updated automatically
-- `probe()` uses RAW wrappers → no health tracking (diagnostic only)
+- Command helpers use TRACKED wrappers -> health updated automatically
+- `probe()` uses RAW wrappers -> no health tracking (diagnostic only)
 - `recover()` tracks probe failures (driver is initialized, so failures count)
 
 ### Health Tracking Rules

@@ -1,0 +1,374 @@
+/// @file SHT3x.h
+/// @brief Main driver class for SHT3x
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include "SHT3x/Status.h"
+#include "SHT3x/Config.h"
+#include "SHT3x/CommandTable.h"
+#include "SHT3x/Version.h"
+
+namespace SHT3x {
+
+/// Driver state for health monitoring
+enum class DriverState : uint8_t {
+  UNINIT,    ///< begin() not called or end() called
+  READY,     ///< Operational, consecutiveFailures == 0
+  DEGRADED,  ///< 1 <= consecutiveFailures < offlineThreshold
+  OFFLINE    ///< consecutiveFailures >= offlineThreshold
+};
+
+/// Measurement result (float)
+struct Measurement {
+  float temperatureC = 0.0f; ///< Temperature in Celsius
+  float humidityPct = 0.0f;  ///< Relative humidity in percent
+};
+
+/// Raw measurement values
+struct RawSample {
+  uint16_t rawTemperature = 0; ///< Raw temperature (16-bit)
+  uint16_t rawHumidity = 0;    ///< Raw humidity (16-bit)
+};
+
+/// Fixed-point converted values (no float)
+struct CompensatedSample {
+  int32_t tempC_x100 = 0;       ///< Temperature * 100 (e.g., 2534 = 25.34 degC)
+  uint32_t humidityPct_x100 = 0; ///< Humidity * 100 (e.g., 4234 = 42.34 %RH)
+};
+
+/// Parsed status register
+struct StatusRegister {
+  uint16_t raw = 0;
+  bool alertPending = false;
+  bool heaterOn = false;
+  bool rhAlert = false;
+  bool tAlert = false;
+  bool resetDetected = false;
+  bool commandError = false;
+  bool writeCrcError = false;
+};
+
+/// Alert limit selector
+enum class AlertLimitKind : uint8_t {
+  HIGH_SET = 0,
+  HIGH_CLEAR = 1,
+  LOW_CLEAR = 2,
+  LOW_SET = 3
+};
+
+/// Decoded alert limit
+struct AlertLimit {
+  uint16_t raw = 0;         ///< Packed 16-bit limit word
+  float temperatureC = 0.0f; ///< Approximate temperature threshold
+  float humidityPct = 0.0f;  ///< Approximate humidity threshold
+};
+
+/// SHT3x driver class
+class SHT3x {
+public:
+  // =========================================================================
+  // Lifecycle
+  // =========================================================================
+
+  /// Initialize the driver with configuration
+  /// @param config Configuration including transport callbacks
+  /// @return Status::Ok() on success, error otherwise
+  Status begin(const Config& config);
+
+  /// Process pending operations (call regularly from loop)
+  /// @param nowMs Current timestamp in milliseconds
+  void tick(uint32_t nowMs);
+
+  /// Shutdown the driver and release resources
+  void end();
+
+  // =========================================================================
+  // Diagnostics
+  // =========================================================================
+
+  /// Check if device is present on the bus (no health tracking)
+  /// @return Status::Ok() if device responds, error otherwise
+  Status probe();
+
+  /// Attempt to recover from DEGRADED/OFFLINE state
+  /// @return Status::Ok() if device now responsive, error otherwise
+  Status recover();
+
+  // =========================================================================
+  // Driver State
+  // =========================================================================
+
+  /// Get current driver state
+  DriverState state() const { return _driverState; }
+
+  /// Check if driver is ready for operations
+  bool isOnline() const {
+    return _driverState == DriverState::READY ||
+           _driverState == DriverState::DEGRADED;
+  }
+
+  // =========================================================================
+  // Health Tracking
+  // =========================================================================
+
+  /// Timestamp of last successful I2C operation
+  uint32_t lastOkMs() const { return _lastOkMs; }
+
+  /// Timestamp of last failed I2C operation
+  uint32_t lastErrorMs() const { return _lastErrorMs; }
+
+  /// Most recent error status
+  Status lastError() const { return _lastError; }
+
+  /// Consecutive failures since last success
+  uint8_t consecutiveFailures() const { return _consecutiveFailures; }
+
+  /// Total failure count (lifetime)
+  uint32_t totalFailures() const { return _totalFailures; }
+
+  /// Total success count (lifetime)
+  uint32_t totalSuccess() const { return _totalSuccess; }
+
+  // =========================================================================
+  // Measurement API
+  // =========================================================================
+
+  /// Request a measurement (non-blocking)
+  /// In SINGLE_SHOT mode: triggers measurement
+  /// In PERIODIC/ART mode: schedules next fetch
+  /// Returns IN_PROGRESS if measurement started, BUSY if already pending
+  Status requestMeasurement();
+
+  /// Check if measurement is ready to read
+  bool measurementReady() const { return _measurementReady; }
+
+  /// Get measurement result (float)
+  /// Returns MEASUREMENT_NOT_READY if not available
+  /// Clears ready flag after successful read
+  Status getMeasurement(Measurement& out);
+
+  /// Get raw measurement values
+  Status getRawSample(RawSample& out) const;
+
+  /// Get fixed-point converted values
+  Status getCompensatedSample(CompensatedSample& out) const;
+
+  // =========================================================================
+  // Configuration
+  // =========================================================================
+
+  /// Set operating mode (SINGLE_SHOT, PERIODIC, ART)
+  Status setMode(Mode mode);
+
+  /// Get current operating mode
+  Status getMode(Mode& out) const;
+
+  /// Set measurement repeatability
+  Status setRepeatability(Repeatability rep);
+
+  /// Get current repeatability
+  Status getRepeatability(Repeatability& out) const;
+
+  /// Set clock stretching mode (single-shot/serial reads)
+  Status setClockStretching(ClockStretching stretch);
+
+  /// Get current clock stretching mode
+  Status getClockStretching(ClockStretching& out) const;
+
+  /// Set periodic rate (used in periodic mode)
+  Status setPeriodicRate(PeriodicRate rate);
+
+  /// Get current periodic rate
+  Status getPeriodicRate(PeriodicRate& out) const;
+
+  /// Start periodic measurements
+  Status startPeriodic(PeriodicRate rate, Repeatability rep);
+
+  /// Start ART (accelerated response time) mode
+  Status startArt();
+
+  /// Stop periodic/ART mode (Break)
+  Status stopPeriodic();
+
+  // =========================================================================
+  // Status / Heater / Resets
+  // =========================================================================
+
+  /// Read raw status register
+  Status readStatus(uint16_t& raw);
+
+  /// Read and parse status register
+  Status readStatus(StatusRegister& out);
+
+  /// Clear status flags
+  Status clearStatus();
+
+  /// Enable/disable heater
+  Status setHeater(bool enable);
+
+  /// Read heater state from status register
+  Status readHeaterStatus(bool& enabled);
+
+  /// Soft reset the device
+  Status softReset();
+
+  /// Interface reset sequence (SCL pulse recovery)
+  Status interfaceReset();
+
+  /// General call reset (bus-wide)
+  Status generalCallReset();
+
+  // =========================================================================
+  // Serial Number
+  // =========================================================================
+
+  /// Read electronic identification code (serial number)
+  Status readSerialNumber(uint32_t& serial,
+                          ClockStretching stretch = ClockStretching::STRETCH_DISABLED);
+
+  // =========================================================================
+  // Alert Limits
+  // =========================================================================
+
+  /// Read raw alert limit word
+  Status readAlertLimitRaw(AlertLimitKind kind, uint16_t& value);
+
+  /// Read and decode alert limit
+  Status readAlertLimit(AlertLimitKind kind, AlertLimit& out);
+
+  /// Write raw alert limit word (CRC is computed internally)
+  Status writeAlertLimitRaw(AlertLimitKind kind, uint16_t value);
+
+  /// Encode and write alert limit from physical values
+  Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
+
+  /// Disable alerts by setting LowSet > HighSet
+  Status disableAlerts();
+
+  // =========================================================================
+  // Helpers
+  // =========================================================================
+
+  /// Encode alert limit word from physical values
+  static uint16_t encodeAlertLimit(float temperatureC, float humidityPct);
+
+  /// Decode alert limit word into physical values
+  static void decodeAlertLimit(uint16_t limit, float& temperatureC, float& humidityPct);
+
+  /// Convert raw temperature to Celsius (float)
+  static float convertTemperatureC(uint16_t raw);
+
+  /// Convert raw humidity to percent (float)
+  static float convertHumidityPct(uint16_t raw);
+
+  /// Convert raw temperature to Celsius * 100
+  static int32_t convertTemperatureC_x100(uint16_t raw);
+
+  /// Convert raw humidity to percent * 100
+  static uint32_t convertHumidityPct_x100(uint16_t raw);
+
+  // =========================================================================
+  // Timing
+  // =========================================================================
+
+  /// Estimate max measurement time based on current repeatability
+  /// Returns time in milliseconds
+  uint32_t estimateMeasurementTimeMs() const;
+
+private:
+  // =========================================================================
+  // Transport Wrappers
+  // =========================================================================
+
+  /// Raw I2C write-read (no health tracking)
+  Status _i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
+                          uint8_t* rxBuf, size_t rxLen);
+
+  /// Raw I2C write (no health tracking)
+  Status _i2cWriteRaw(const uint8_t* buf, size_t len);
+
+  /// Raw I2C write to alternate address (no health tracking)
+  Status _i2cWriteRawAddr(uint8_t addr, const uint8_t* buf, size_t len);
+
+  /// Tracked I2C write to alternate address (updates health)
+  Status _i2cWriteRawAddrTracked(uint8_t addr, const uint8_t* buf, size_t len);
+
+  /// Tracked I2C write-read (updates health)
+  Status _i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
+                              uint8_t* rxBuf, size_t rxLen);
+
+  /// Tracked I2C write (updates health)
+  Status _i2cWriteTracked(const uint8_t* buf, size_t len);
+
+  // =========================================================================
+  // Command Access
+  // =========================================================================
+
+  Status _writeCommand(uint16_t cmd, bool tracked);
+  Status _writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked);
+  Status _readAfterCommand(uint8_t* buf, size_t len, bool tracked);
+  Status _readOnly(uint8_t* buf, size_t len, bool tracked);
+
+  // =========================================================================
+  // Health Management
+  // =========================================================================
+
+  /// Update health counters and state based on operation result
+  /// Called ONLY from tracked transport wrappers
+  Status _updateHealth(const Status& st);
+
+  // =========================================================================
+  // Internal Helpers
+  // =========================================================================
+
+  Status _ensureCommandDelay();
+  Status _waitMs(uint32_t delayMs);
+  Status _readStatusRaw(uint16_t& raw, bool tracked);
+  Status _readMeasurementRaw(RawSample& out, bool tracked);
+  Status _fetchPeriodic();
+  Status _startSingleShot();
+  Status _enterPeriodic(PeriodicRate rate, Repeatability rep, bool art);
+  Status _stopPeriodicInternal();
+
+  static uint8_t _crc8(const uint8_t* data, size_t len);
+  static uint16_t _commandForSingleShot(Repeatability rep, ClockStretching stretch);
+  static uint16_t _commandForPeriodic(Repeatability rep, PeriodicRate rate);
+  static uint16_t _commandForAlertRead(AlertLimitKind kind);
+  static uint16_t _commandForAlertWrite(AlertLimitKind kind);
+  static uint32_t _periodMsForRate(PeriodicRate rate);
+
+  // =========================================================================
+  // State
+  // =========================================================================
+
+  Config _config;
+  bool _initialized = false;
+  DriverState _driverState = DriverState::UNINIT;
+
+  // Health counters
+  uint32_t _lastOkMs = 0;
+  uint32_t _lastErrorMs = 0;
+  Status _lastError = Status::Ok();
+  uint8_t _consecutiveFailures = 0;
+  uint32_t _totalFailures = 0;
+  uint32_t _totalSuccess = 0;
+
+  // Command timing
+  uint32_t _lastCommandUs = 0;
+
+  // Measurement state
+  bool _measurementRequested = false;
+  bool _measurementReady = false;
+  uint32_t _measurementReadyMs = 0;
+  uint32_t _periodicStartMs = 0;
+  uint32_t _lastFetchMs = 0;
+  uint32_t _periodMs = 0;
+
+  RawSample _rawSample;
+  CompensatedSample _compSample;
+  Mode _mode = Mode::SINGLE_SHOT;
+  bool _periodicActive = false;
+};
+
+} // namespace SHT3x

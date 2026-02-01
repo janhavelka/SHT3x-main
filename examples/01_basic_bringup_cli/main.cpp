@@ -1,15 +1,16 @@
 /// @file main.cpp
-/// @brief Basic bringup example for BME280
+/// @brief Basic bringup example for SHT3x
 /// @note This is an EXAMPLE, not part of the library
 
 #include <Arduino.h>
 #include <limits>
+#include <cstdlib>
 #include "common/Log.h"
 #include "common/BoardConfig.h"
 #include "common/I2cTransport.h"
 #include "common/I2cScanner.h"
 
-#include "BME280/BME280.h"
+#include "SHT3x/SHT3x.h"
 
 // ============================================================================
 // Globals
@@ -26,39 +27,16 @@ struct StressStats {
   bool hasSample = false;
   float minTemp = 0.0f;
   float maxTemp = 0.0f;
-  float minPressure = 0.0f;
-  float maxPressure = 0.0f;
   float minHumidity = 0.0f;
   float maxHumidity = 0.0f;
   double sumTemp = 0.0;
-  double sumPressure = 0.0;
   double sumHumidity = 0.0;
-  BME280::Status lastError = BME280::Status::Ok();
+  SHT3x::Status lastError = SHT3x::Status::Ok();
 };
 
-struct ChipSettings {
-  uint8_t ctrlHum = 0;
-  uint8_t ctrlMeas = 0;
-  uint8_t config = 0;
-  uint8_t osrsH = 0;
-  uint8_t osrsT = 0;
-  uint8_t osrsP = 0;
-  uint8_t modeBits = 0;
-  uint8_t filter = 0;
-  uint8_t standby = 0;
-  bool spi3wEnabled = false;
-};
-
-struct InternalSettings {
-  BME280::Oversampling osrsT = BME280::Oversampling::SKIP;
-  BME280::Oversampling osrsP = BME280::Oversampling::SKIP;
-  BME280::Oversampling osrsH = BME280::Oversampling::SKIP;
-  BME280::Filter filter = BME280::Filter::OFF;
-  BME280::Standby standby = BME280::Standby::MS_0_5;
-  BME280::Mode mode = BME280::Mode::SLEEP;
-};
-
-BME280::BME280 device;
+SHT3x::SHT3x device;
+SHT3x::Config gConfig;
+bool gConfigReady = false;
 bool verboseMode = false;
 bool pendingRead = false;
 uint32_t pendingStartMs = 0;
@@ -69,95 +47,86 @@ StressStats stressStats;
 // Helper Functions
 // ============================================================================
 
-const char* errToStr(BME280::Err err) {
-  using namespace BME280;
+const char* errToStr(SHT3x::Err err) {
+  using namespace SHT3x;
   switch (err) {
-    case Err::OK:                  return "OK";
-    case Err::NOT_INITIALIZED:     return "NOT_INITIALIZED";
-    case Err::INVALID_CONFIG:      return "INVALID_CONFIG";
-    case Err::I2C_ERROR:           return "I2C_ERROR";
-    case Err::TIMEOUT:             return "TIMEOUT";
-    case Err::INVALID_PARAM:       return "INVALID_PARAM";
-    case Err::DEVICE_NOT_FOUND:    return "DEVICE_NOT_FOUND";
-    case Err::CHIP_ID_MISMATCH:    return "CHIP_ID_MISMATCH";
-    case Err::CALIBRATION_INVALID: return "CALIBRATION_INVALID";
+    case Err::OK: return "OK";
+    case Err::NOT_INITIALIZED: return "NOT_INITIALIZED";
+    case Err::INVALID_CONFIG: return "INVALID_CONFIG";
+    case Err::I2C_ERROR: return "I2C_ERROR";
+    case Err::TIMEOUT: return "TIMEOUT";
+    case Err::INVALID_PARAM: return "INVALID_PARAM";
+    case Err::DEVICE_NOT_FOUND: return "DEVICE_NOT_FOUND";
+    case Err::CRC_MISMATCH: return "CRC_MISMATCH";
     case Err::MEASUREMENT_NOT_READY: return "MEASUREMENT_NOT_READY";
-    case Err::COMPENSATION_ERROR:  return "COMPENSATION_ERROR";
-    case Err::BUSY:                return "BUSY";
-    case Err::IN_PROGRESS:         return "IN_PROGRESS";
-    default:                       return "UNKNOWN";
+    case Err::BUSY: return "BUSY";
+    case Err::IN_PROGRESS: return "IN_PROGRESS";
+    case Err::COMMAND_FAILED: return "COMMAND_FAILED";
+    case Err::WRITE_CRC_ERROR: return "WRITE_CRC_ERROR";
+    case Err::UNSUPPORTED: return "UNSUPPORTED";
+    default: return "UNKNOWN";
   }
 }
 
-const char* stateToStr(BME280::DriverState st) {
-  using namespace BME280;
+const char* stateToStr(SHT3x::DriverState st) {
+  using namespace SHT3x;
   switch (st) {
-    case DriverState::UNINIT:   return "UNINIT";
-    case DriverState::READY:    return "READY";
+    case DriverState::UNINIT: return "UNINIT";
+    case DriverState::READY: return "READY";
     case DriverState::DEGRADED: return "DEGRADED";
-    case DriverState::OFFLINE:  return "OFFLINE";
-    default:                    return "UNKNOWN";
+    case DriverState::OFFLINE: return "OFFLINE";
+    default: return "UNKNOWN";
   }
 }
 
-const char* modeToStr(BME280::Mode mode) {
-  using namespace BME280;
+const char* modeToStr(SHT3x::Mode mode) {
+  using namespace SHT3x;
   switch (mode) {
-    case Mode::SLEEP:  return "SLEEP";
-    case Mode::FORCED: return "FORCED";
-    case Mode::NORMAL: return "NORMAL";
-    default:           return "UNKNOWN";
-  }
-}
-
-const char* modeBitsToStr(uint8_t modeBits) {
-  switch (modeBits) {
-    case 0: return "SLEEP";
-    case 1: return "FORCED";
-    case 2: return "FORCED";
-    case 3: return "NORMAL";
+    case Mode::SINGLE_SHOT: return "SINGLE_SHOT";
+    case Mode::PERIODIC: return "PERIODIC";
+    case Mode::ART: return "ART";
     default: return "UNKNOWN";
   }
 }
 
-const char* osrsToStr(uint8_t value) {
-  switch (value) {
-    case 0: return "SKIP";
-    case 1: return "X1";
-    case 2: return "X2";
-    case 3: return "X4";
-    case 4: return "X8";
-    case 5: return "X16";
+const char* repToStr(SHT3x::Repeatability rep) {
+  using namespace SHT3x;
+  switch (rep) {
+    case Repeatability::LOW_REPEATABILITY: return "LOW";
+    case Repeatability::MEDIUM_REPEATABILITY: return "MEDIUM";
+    case Repeatability::HIGH_REPEATABILITY: return "HIGH";
     default: return "UNKNOWN";
   }
 }
 
-const char* filterToStr(uint8_t value) {
-  switch (value) {
-    case 0: return "OFF";
-    case 1: return "X2";
-    case 2: return "X4";
-    case 3: return "X8";
-    case 4: return "X16";
+const char* rateToStr(SHT3x::PeriodicRate rate) {
+  using namespace SHT3x;
+  switch (rate) {
+    case PeriodicRate::MPS_0_5: return "0.5";
+    case PeriodicRate::MPS_1: return "1";
+    case PeriodicRate::MPS_2: return "2";
+    case PeriodicRate::MPS_4: return "4";
+    case PeriodicRate::MPS_10: return "10";
     default: return "UNKNOWN";
   }
 }
 
-const char* standbyToStr(uint8_t value) {
-  switch (value) {
-    case 0: return "0.5ms";
-    case 1: return "62.5ms";
-    case 2: return "125ms";
-    case 3: return "250ms";
-    case 4: return "500ms";
-    case 5: return "1000ms";
-    case 6: return "10ms";
-    case 7: return "20ms";
+const char* stretchToStr(SHT3x::ClockStretching stretch) {
+  return (stretch == SHT3x::ClockStretching::STRETCH_ENABLED) ? "ENABLED" : "DISABLED";
+}
+
+const char* alertKindToStr(SHT3x::AlertLimitKind kind) {
+  using namespace SHT3x;
+  switch (kind) {
+    case AlertLimitKind::HIGH_SET: return "HIGH_SET";
+    case AlertLimitKind::HIGH_CLEAR: return "HIGH_CLEAR";
+    case AlertLimitKind::LOW_CLEAR: return "LOW_CLEAR";
+    case AlertLimitKind::LOW_SET: return "LOW_SET";
     default: return "UNKNOWN";
   }
 }
 
-void printStatus(const BME280::Status& st) {
+void printStatus(const SHT3x::Status& st) {
   Serial.printf("  Status: %s (code=%u, detail=%ld)\n",
                 errToStr(st.code),
                 static_cast<unsigned>(st.code),
@@ -170,277 +139,52 @@ void printStatus(const BME280::Status& st) {
 void printDriverHealth() {
   Serial.println("=== Driver State ===");
   Serial.printf("  State: %s\n", stateToStr(device.state()));
+  Serial.printf("  Online: %s\n", device.isOnline() ? "YES" : "NO");
   Serial.printf("  Consecutive failures: %u\n", device.consecutiveFailures());
   Serial.printf("  Total failures: %lu\n", static_cast<unsigned long>(device.totalFailures()));
   Serial.printf("  Total success: %lu\n", static_cast<unsigned long>(device.totalSuccess()));
   Serial.printf("  Last OK at: %lu ms\n", static_cast<unsigned long>(device.lastOkMs()));
   Serial.printf("  Last error at: %lu ms\n", static_cast<unsigned long>(device.lastErrorMs()));
-  if (device.lastError().code != BME280::Err::OK) {
+  if (device.lastError().code != SHT3x::Err::OK) {
     Serial.printf("  Last error: %s\n", errToStr(device.lastError().code));
   }
 }
 
-void printMeasurement(const BME280::Measurement& m) {
-  Serial.printf("Temp: %.2f C, Pressure: %.2f Pa, Humidity: %.2f %%\n",
-                m.temperatureC, m.pressurePa, m.humidityPct);
+void printMeasurement(const SHT3x::Measurement& m) {
+  Serial.printf("Temp: %.2f C, Humidity: %.2f %%\n", m.temperatureC, m.humidityPct);
 }
 
-void printCalibration() {
-  BME280::Calibration calib;
-  BME280::Status st = device.getCalibration(calib);
-  if (!st.ok()) {
-    printStatus(st);
-    return;
-  }
-
-  Serial.println("=== Calibration (Cached) ===");
-  Serial.printf("  T1=%u T2=%d T3=%d\n",
-                static_cast<unsigned>(calib.digT1),
-                static_cast<int>(calib.digT2),
-                static_cast<int>(calib.digT3));
-  Serial.printf("  P1=%u P2=%d P3=%d P4=%d P5=%d P6=%d P7=%d P8=%d P9=%d\n",
-                static_cast<unsigned>(calib.digP1),
-                static_cast<int>(calib.digP2),
-                static_cast<int>(calib.digP3),
-                static_cast<int>(calib.digP4),
-                static_cast<int>(calib.digP5),
-                static_cast<int>(calib.digP6),
-                static_cast<int>(calib.digP7),
-                static_cast<int>(calib.digP8),
-                static_cast<int>(calib.digP9));
-  Serial.printf("  H1=%u H2=%d H3=%u H4=%d H5=%d H6=%d\n",
-                static_cast<unsigned>(calib.digH1),
-                static_cast<int>(calib.digH2),
-                static_cast<unsigned>(calib.digH3),
-                static_cast<int>(calib.digH4),
-                static_cast<int>(calib.digH5),
-                static_cast<int>(calib.digH6));
+void printRawSample(const SHT3x::RawSample& s) {
+  Serial.printf("Raw: T=0x%04X RH=0x%04X\n",
+                static_cast<unsigned>(s.rawTemperature),
+                static_cast<unsigned>(s.rawHumidity));
 }
 
-void printCalibrationRaw() {
-  BME280::CalibrationRaw raw;
-  BME280::Status st = device.readCalibrationRaw(raw);
-  if (!st.ok()) {
-    printStatus(st);
-    return;
-  }
-
-  Serial.println("=== Calibration (Raw Registers) ===");
-  Serial.print("  TP: ");
-  for (size_t i = 0; i < sizeof(raw.tp); ++i) {
-    Serial.printf("%02X", raw.tp[i]);
-    if (i + 1 < sizeof(raw.tp)) {
-      Serial.print(' ');
-    }
-  }
-  Serial.println();
-  Serial.printf("  H1: %02X\n", raw.h1);
-  Serial.print("  H: ");
-  for (size_t i = 0; i < sizeof(raw.h); ++i) {
-    Serial.printf("%02X", raw.h[i]);
-    if (i + 1 < sizeof(raw.h)) {
-      Serial.print(' ');
-    }
-  }
-  Serial.println();
+void printCompSample(const SHT3x::CompensatedSample& s) {
+  Serial.printf("Comp: T=%ld (x100), RH=%lu (x100)\n",
+                static_cast<long>(s.tempC_x100),
+                static_cast<unsigned long>(s.humidityPct_x100));
 }
 
 void printVerboseState() {
   Serial.printf("  Verbose: %s\n", verboseMode ? "ON" : "OFF");
 }
 
-bool readChipSettings(ChipSettings& out) {
-  BME280::Status st = device.readCtrlHum(out.ctrlHum);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.readCtrlMeas(out.ctrlMeas);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.readConfig(out.config);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
+void printConfig() {
+  SHT3x::Mode mode;
+  SHT3x::Repeatability rep;
+  SHT3x::PeriodicRate rate;
+  SHT3x::ClockStretching stretch;
 
-  out.osrsH = (out.ctrlHum & BME280::cmd::MASK_CTRL_HUM_OSRS_H) >>
-              BME280::cmd::BIT_CTRL_HUM_OSRS_H;
-  out.osrsT = (out.ctrlMeas & BME280::cmd::MASK_CTRL_MEAS_OSRS_T) >>
-              BME280::cmd::BIT_CTRL_MEAS_OSRS_T;
-  out.osrsP = (out.ctrlMeas & BME280::cmd::MASK_CTRL_MEAS_OSRS_P) >>
-              BME280::cmd::BIT_CTRL_MEAS_OSRS_P;
-  out.modeBits = (out.ctrlMeas & BME280::cmd::MASK_CTRL_MEAS_MODE) >>
-                 BME280::cmd::BIT_CTRL_MEAS_MODE;
-  out.filter = (out.config & BME280::cmd::MASK_CONFIG_FILTER) >>
-               BME280::cmd::BIT_CONFIG_FILTER;
-  out.standby = (out.config & BME280::cmd::MASK_CONFIG_T_SB) >>
-                BME280::cmd::BIT_CONFIG_T_SB;
-  out.spi3wEnabled = (out.config & BME280::cmd::MASK_CONFIG_SPI3W_EN) != 0;
-  return true;
-}
-
-bool readInternalSettings(InternalSettings& out) {
-  BME280::Status st = device.getMode(out.mode);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.getOversamplingT(out.osrsT);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.getOversamplingP(out.osrsP);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.getOversamplingH(out.osrsH);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.getFilter(out.filter);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  st = device.getStandby(out.standby);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  return true;
-}
-
-void printChipSettings(const ChipSettings& chip) {
-  Serial.println("=== Chip Settings ===");
-  Serial.printf("  ctrl_hum: 0x%02X (osrs_h=%u %s)\n",
-                chip.ctrlHum,
-                static_cast<unsigned>(chip.osrsH),
-                osrsToStr(chip.osrsH));
-  Serial.printf("  ctrl_meas: 0x%02X (osrs_t=%u %s, osrs_p=%u %s, mode=%u %s)\n",
-                chip.ctrlMeas,
-                static_cast<unsigned>(chip.osrsT),
-                osrsToStr(chip.osrsT),
-                static_cast<unsigned>(chip.osrsP),
-                osrsToStr(chip.osrsP),
-                static_cast<unsigned>(chip.modeBits),
-                modeBitsToStr(chip.modeBits));
-  Serial.printf("  config: 0x%02X (standby=%u %s, filter=%u %s, spi3w_en=%u)\n",
-                chip.config,
-                static_cast<unsigned>(chip.standby),
-                standbyToStr(chip.standby),
-                static_cast<unsigned>(chip.filter),
-                filterToStr(chip.filter),
-                chip.spi3wEnabled ? 1u : 0u);
-}
-
-void printInternalSettings(const InternalSettings& internal) {
-  Serial.println("=== Internal Settings ===");
-  Serial.printf("  Mode: %s\n", modeToStr(internal.mode));
-  Serial.printf("  osrs_t: %s (%u)\n",
-                osrsToStr(static_cast<uint8_t>(internal.osrsT)),
-                static_cast<unsigned>(internal.osrsT));
-  Serial.printf("  osrs_p: %s (%u)\n",
-                osrsToStr(static_cast<uint8_t>(internal.osrsP)),
-                static_cast<unsigned>(internal.osrsP));
-  Serial.printf("  osrs_h: %s (%u)\n",
-                osrsToStr(static_cast<uint8_t>(internal.osrsH)),
-                static_cast<unsigned>(internal.osrsH));
-  Serial.printf("  Filter: %s (%u)\n",
-                filterToStr(static_cast<uint8_t>(internal.filter)),
-                static_cast<unsigned>(internal.filter));
-  Serial.printf("  Standby: %s (%u)\n",
-                standbyToStr(static_cast<uint8_t>(internal.standby)),
-                static_cast<unsigned>(internal.standby));
-  printVerboseState();
-}
-
-void printAllSettings() {
-  ChipSettings chip;
-  if (readChipSettings(chip)) {
-    printChipSettings(chip);
-  }
-
-  InternalSettings internal;
-  if (readInternalSettings(internal)) {
-    printInternalSettings(internal);
-  } else {
-    printVerboseState();
-  }
-}
-
-void printModeSettings() {
-  ChipSettings chip;
-  if (readChipSettings(chip)) {
-    Serial.printf("Chip mode: %s (%u)\n",
-                  modeBitsToStr(chip.modeBits),
-                  static_cast<unsigned>(chip.modeBits));
-  }
-
-  InternalSettings internal;
-  if (readInternalSettings(internal)) {
-    Serial.printf("Internal mode: %s\n", modeToStr(internal.mode));
-  }
-  printVerboseState();
-}
-
-void printOsrsSettings() {
-  ChipSettings chip;
-  if (readChipSettings(chip)) {
-    Serial.printf("Chip osrs: T=%s (%u), P=%s (%u), H=%s (%u)\n",
-                  osrsToStr(chip.osrsT), static_cast<unsigned>(chip.osrsT),
-                  osrsToStr(chip.osrsP), static_cast<unsigned>(chip.osrsP),
-                  osrsToStr(chip.osrsH), static_cast<unsigned>(chip.osrsH));
-  }
-
-  InternalSettings internal;
-  if (readInternalSettings(internal)) {
-    Serial.printf("Internal osrs: T=%s (%u), P=%s (%u), H=%s (%u)\n",
-                  osrsToStr(static_cast<uint8_t>(internal.osrsT)),
-                  static_cast<unsigned>(internal.osrsT),
-                  osrsToStr(static_cast<uint8_t>(internal.osrsP)),
-                  static_cast<unsigned>(internal.osrsP),
-                  osrsToStr(static_cast<uint8_t>(internal.osrsH)),
-                  static_cast<unsigned>(internal.osrsH));
-  }
-  printVerboseState();
-}
-
-void printFilterSettings() {
-  ChipSettings chip;
-  if (readChipSettings(chip)) {
-    Serial.printf("Chip filter: %s (%u)\n",
-                  filterToStr(chip.filter),
-                  static_cast<unsigned>(chip.filter));
-  }
-
-  InternalSettings internal;
-  if (readInternalSettings(internal)) {
-    Serial.printf("Internal filter: %s (%u)\n",
-                  filterToStr(static_cast<uint8_t>(internal.filter)),
-                  static_cast<unsigned>(internal.filter));
-  }
-  printVerboseState();
-}
-
-void printStandbySettings() {
-  ChipSettings chip;
-  if (readChipSettings(chip)) {
-    Serial.printf("Chip standby: %s (%u)\n",
-                  standbyToStr(chip.standby),
-                  static_cast<unsigned>(chip.standby));
-  }
-
-  InternalSettings internal;
-  if (readInternalSettings(internal)) {
-    Serial.printf("Internal standby: %s (%u)\n",
-                  standbyToStr(static_cast<uint8_t>(internal.standby)),
-                  static_cast<unsigned>(internal.standby));
+  if (device.getMode(mode).ok() && device.getRepeatability(rep).ok() &&
+      device.getPeriodicRate(rate).ok() && device.getClockStretching(stretch).ok()) {
+    Serial.println("=== Config ===");
+    Serial.printf("  Mode: %s\n", modeToStr(mode));
+    Serial.printf("  Repeatability: %s\n", repToStr(rep));
+    Serial.printf("  Periodic rate: %s mps\n", rateToStr(rate));
+    Serial.printf("  Clock stretching: %s\n", stretchToStr(stretch));
+    Serial.printf("  Est. meas time: %lu ms\n",
+                  static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
   }
   printVerboseState();
 }
@@ -456,27 +200,22 @@ void resetStressStats(int target) {
   stressStats.hasSample = false;
   stressStats.minTemp = std::numeric_limits<float>::max();
   stressStats.maxTemp = std::numeric_limits<float>::lowest();
-  stressStats.minPressure = std::numeric_limits<float>::max();
-  stressStats.maxPressure = std::numeric_limits<float>::lowest();
   stressStats.minHumidity = std::numeric_limits<float>::max();
   stressStats.maxHumidity = std::numeric_limits<float>::lowest();
   stressStats.sumTemp = 0.0;
-  stressStats.sumPressure = 0.0;
   stressStats.sumHumidity = 0.0;
-  stressStats.lastError = BME280::Status::Ok();
+  stressStats.lastError = SHT3x::Status::Ok();
 }
 
-void noteStressError(const BME280::Status& st) {
+void noteStressError(const SHT3x::Status& st) {
   stressStats.errors++;
   stressStats.lastError = st;
 }
 
-void updateStressStats(const BME280::Measurement& m) {
+void updateStressStats(const SHT3x::Measurement& m) {
   if (!stressStats.hasSample) {
     stressStats.minTemp = m.temperatureC;
     stressStats.maxTemp = m.temperatureC;
-    stressStats.minPressure = m.pressurePa;
-    stressStats.maxPressure = m.pressurePa;
     stressStats.minHumidity = m.humidityPct;
     stressStats.maxHumidity = m.humidityPct;
     stressStats.hasSample = true;
@@ -487,12 +226,6 @@ void updateStressStats(const BME280::Measurement& m) {
     if (m.temperatureC > stressStats.maxTemp) {
       stressStats.maxTemp = m.temperatureC;
     }
-    if (m.pressurePa < stressStats.minPressure) {
-      stressStats.minPressure = m.pressurePa;
-    }
-    if (m.pressurePa > stressStats.maxPressure) {
-      stressStats.maxPressure = m.pressurePa;
-    }
     if (m.humidityPct < stressStats.minHumidity) {
       stressStats.minHumidity = m.humidityPct;
     }
@@ -502,7 +235,6 @@ void updateStressStats(const BME280::Measurement& m) {
   }
 
   stressStats.sumTemp += m.temperatureC;
-  stressStats.sumPressure += m.pressurePa;
   stressStats.sumHumidity += m.humidityPct;
   stressStats.success++;
 }
@@ -526,12 +258,9 @@ void finishStressStats() {
 
   if (stressStats.success > 0) {
     const float avgTemp = static_cast<float>(stressStats.sumTemp / stressStats.success);
-    const float avgPressure = static_cast<float>(stressStats.sumPressure / stressStats.success);
     const float avgHumidity = static_cast<float>(stressStats.sumHumidity / stressStats.success);
     Serial.printf("  Temp C: min=%.2f avg=%.2f max=%.2f\n",
                   stressStats.minTemp, avgTemp, stressStats.maxTemp);
-    Serial.printf("  Pressure Pa: min=%.2f avg=%.2f max=%.2f\n",
-                  stressStats.minPressure, avgPressure, stressStats.maxPressure);
     Serial.printf("  Humidity %%: min=%.2f avg=%.2f max=%.2f\n",
                   stressStats.minHumidity, avgHumidity, stressStats.maxHumidity);
   } else {
@@ -552,9 +281,9 @@ void cancelPending() {
   stressStats.active = false;
 }
 
-BME280::Status scheduleMeasurement() {
-  BME280::Status st = device.requestMeasurement();
-  if (st.code == BME280::Err::IN_PROGRESS) {
+SHT3x::Status scheduleMeasurement() {
+  SHT3x::Status st = device.requestMeasurement();
+  if (st.code == SHT3x::Err::IN_PROGRESS) {
     pendingRead = true;
     pendingStartMs = millis();
     if (verboseMode && !stressStats.active) {
@@ -570,8 +299,8 @@ void handleMeasurementReady() {
     return;
   }
 
-  BME280::Measurement m;
-  BME280::Status st = device.getMeasurement(m);
+  SHT3x::Measurement m;
+  SHT3x::Status st = device.getMeasurement(m);
   pendingRead = false;
 
   if (!st.ok()) {
@@ -605,52 +334,136 @@ void handleMeasurementReady() {
   printMeasurement(m);
 }
 
-bool parseOversampling(const String& token, BME280::Oversampling& out) {
-  const int value = token.toInt();
-  if (value < 0 || value > 5) {
-    return false;
+bool parseRepeatability(const String& token, SHT3x::Repeatability& out) {
+  String t = token;
+  t.toLowerCase();
+  if (t == "low") {
+    out = SHT3x::Repeatability::LOW_REPEATABILITY;
+    return true;
   }
-  out = static_cast<BME280::Oversampling>(value);
-  return true;
+  if (t == "med" || t == "medium") {
+    out = SHT3x::Repeatability::MEDIUM_REPEATABILITY;
+    return true;
+  }
+  if (t == "high") {
+    out = SHT3x::Repeatability::HIGH_REPEATABILITY;
+    return true;
+  }
+  return false;
 }
 
-bool parseFilter(const String& token, BME280::Filter& out) {
-  const int value = token.toInt();
-  if (value < 0 || value > 4) {
-    return false;
+bool parseRate(const String& token, SHT3x::PeriodicRate& out) {
+  if (token == "0.5" || token == "0_5") {
+    out = SHT3x::PeriodicRate::MPS_0_5;
+    return true;
   }
-  out = static_cast<BME280::Filter>(value);
-  return true;
+  if (token == "1") {
+    out = SHT3x::PeriodicRate::MPS_1;
+    return true;
+  }
+  if (token == "2") {
+    out = SHT3x::PeriodicRate::MPS_2;
+    return true;
+  }
+  if (token == "4") {
+    out = SHT3x::PeriodicRate::MPS_4;
+    return true;
+  }
+  if (token == "10") {
+    out = SHT3x::PeriodicRate::MPS_10;
+    return true;
+  }
+  return false;
 }
 
-bool parseStandby(const String& token, BME280::Standby& out) {
-  const int value = token.toInt();
-  if (value < 0 || value > 7) {
+bool parseStretch(const String& token, SHT3x::ClockStretching& out) {
+  if (token == "1" || token == "on" || token == "enable") {
+    out = SHT3x::ClockStretching::STRETCH_ENABLED;
+    return true;
+  }
+  if (token == "0" || token == "off" || token == "disable") {
+    out = SHT3x::ClockStretching::STRETCH_DISABLED;
+    return true;
+  }
+  return false;
+}
+
+bool parseAlertKind(const String& token, SHT3x::AlertLimitKind& out) {
+  String t = token;
+  t.toLowerCase();
+  if (t == "hs" || t == "high_set" || t == "highset") {
+    out = SHT3x::AlertLimitKind::HIGH_SET;
+    return true;
+  }
+  if (t == "hc" || t == "high_clear" || t == "highclear") {
+    out = SHT3x::AlertLimitKind::HIGH_CLEAR;
+    return true;
+  }
+  if (t == "lc" || t == "low_clear" || t == "lowclear") {
+    out = SHT3x::AlertLimitKind::LOW_CLEAR;
+    return true;
+  }
+  if (t == "ls" || t == "low_set" || t == "lowset") {
+    out = SHT3x::AlertLimitKind::LOW_SET;
+    return true;
+  }
+  return false;
+}
+
+bool parseU16(const String& token, uint16_t& out) {
+  const char* str = token.c_str();
+  char* end = nullptr;
+  unsigned long value = std::strtoul(str, &end, 0);
+  if (end == str || *end != '\0') {
     return false;
   }
-  out = static_cast<BME280::Standby>(value);
+  if (value > 0xFFFFUL) {
+    return false;
+  }
+  out = static_cast<uint16_t>(value);
   return true;
 }
 
 void printHelp() {
   Serial.println("=== Commands ===");
-  Serial.println("  help                    - Show this help");
-  Serial.println("  scan                    - Scan I2C bus");
-  Serial.println("  read                    - Request and display measurement");
-  Serial.println("  mode [sleep|forced|normal] - Set or show operating mode");
-  Serial.println("  osrs [t|p|h <0..5>]        - Set or show oversampling");
-  Serial.println("  filter [0..4]              - Set or show IIR filter");
-  Serial.println("  standby [0..7]             - Set or show standby time");
-  Serial.println("  settings                  - Show chip + internal settings");
-  Serial.println("  calib [raw]              - Show cached or raw calibration coefficients");
-  Serial.println("  status                  - Read status register");
-  Serial.println("  chipid                  - Read chip ID");
-  Serial.println("  reset                   - Soft reset device");
-  Serial.println("  drv                     - Show driver state and health");
-  Serial.println("  probe                   - Probe device (no health tracking)");
-  Serial.println("  recover                 - Manual recovery attempt");
-  Serial.println("  verbose [0|1]            - Enable/disable verbose output");
-  Serial.println("  stress [N]              - Run N measurement cycles");
+  Serial.println("  help                     - Show this help");
+  Serial.println("  scan                     - Scan I2C bus");
+  Serial.println("  read                     - Request measurement (single-shot or periodic fetch)");
+  Serial.println("  raw                      - Print last raw sample");
+  Serial.println("  comp                     - Print last compensated sample");
+  Serial.println("  meastime                 - Show estimated measurement time");
+  Serial.println("  mode [single|periodic|art]- Set or show operating mode");
+  Serial.println("  start_periodic <rate> <rep> - Start periodic mode");
+  Serial.println("  start_art                - Start ART mode");
+  Serial.println("  stop_periodic            - Stop periodic/ART mode");
+  Serial.println("  repeat [low|med|high]     - Set or show repeatability");
+  Serial.println("  rate [0.5|1|2|4|10]       - Set or show periodic rate");
+  Serial.println("  stretch [0|1]             - Set or show clock stretching");
+  Serial.println("  status                   - Read status register");
+  Serial.println("  status_raw               - Read raw status (16-bit)");
+  Serial.println("  clearstatus              - Clear status flags");
+  Serial.println("  heater [on|off|status]    - Control heater");
+  Serial.println("  serial [stretch|nostretch]- Read serial number");
+  Serial.println("  alert read <hs|hc|lc|ls>  - Read alert limit");
+  Serial.println("  alert write <kind> <T> <RH>- Write alert limit");
+  Serial.println("  alert raw read <kind>     - Read raw alert limit word");
+  Serial.println("  alert raw write <kind> <hex> - Write raw alert limit word");
+  Serial.println("  alert encode <T> <RH>     - Encode alert limit word");
+  Serial.println("  alert decode <hex>        - Decode alert limit word");
+  Serial.println("  alert disable             - Disable alerts (LowSet > HighSet)");
+  Serial.println("  convert <rawT> <rawRH>    - Convert raw values");
+  Serial.println("  reset                    - Soft reset device");
+  Serial.println("  iface_reset              - Interface reset (SCL pulse)");
+  Serial.println("  greset                   - General call reset (bus-wide)");
+  Serial.println("  cfg                      - Show current config");
+  Serial.println("  drv                      - Show driver state and health");
+  Serial.println("  online                   - Show online state");
+  Serial.println("  begin                    - Re-initialize device");
+  Serial.println("  end                      - End driver session");
+  Serial.println("  probe                    - Probe device (no health tracking)");
+  Serial.println("  recover                  - Manual recovery attempt");
+  Serial.println("  verbose [0|1]             - Enable/disable verbose output");
+  Serial.println("  stress [N]               - Run N measurement cycles");
 }
 
 // ============================================================================
@@ -676,30 +489,52 @@ void processCommand(const String& cmdLine) {
 
   if (cmd == "read") {
     cancelPending();
-    const BME280::Status st = scheduleMeasurement();
-    if (st.code != BME280::Err::IN_PROGRESS) {
+    const SHT3x::Status st = scheduleMeasurement();
+    if (st.code != SHT3x::Err::IN_PROGRESS) {
       printStatus(st);
     }
     return;
   }
 
-  if (cmd == "settings" || cmd == "cfg") {
-    printAllSettings();
+  if (cmd == "raw") {
+    SHT3x::RawSample sample;
+    const SHT3x::Status st = device.getRawSample(sample);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
+    }
+    printRawSample(sample);
     return;
   }
 
-  if (cmd == "calib raw") {
-    printCalibrationRaw();
+  if (cmd == "comp") {
+    SHT3x::CompensatedSample sample;
+    const SHT3x::Status st = device.getCompensatedSample(sample);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
+    }
+    printCompSample(sample);
     return;
   }
 
-  if (cmd == "calib") {
-    printCalibration();
+  if (cmd == "meastime") {
+    Serial.printf("Estimated measurement time: %lu ms\n",
+                  static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
+    return;
+  }
+
+  if (cmd == "cfg") {
+    printConfig();
     return;
   }
 
   if (cmd == "mode") {
-    printModeSettings();
+    SHT3x::Mode mode;
+    if (device.getMode(mode).ok()) {
+      Serial.printf("Mode: %s\n", modeToStr(mode));
+    }
+    printVerboseState();
     return;
   }
 
@@ -707,157 +542,461 @@ void processCommand(const String& cmdLine) {
     String arg = cmd.substring(5);
     arg.trim();
 
-    BME280::Mode mode;
-    if (arg == "sleep") {
-      mode = BME280::Mode::SLEEP;
-    } else if (arg == "forced") {
-      mode = BME280::Mode::FORCED;
-    } else if (arg == "normal") {
-      mode = BME280::Mode::NORMAL;
+    SHT3x::Mode mode;
+    if (arg == "single") {
+      mode = SHT3x::Mode::SINGLE_SHOT;
+    } else if (arg == "periodic") {
+      mode = SHT3x::Mode::PERIODIC;
+    } else if (arg == "art") {
+      mode = SHT3x::Mode::ART;
     } else {
       LOGW("Invalid mode: %s", arg.c_str());
       return;
     }
 
     cancelPending();
-    BME280::Status st = device.setMode(mode);
+    SHT3x::Status st = device.setMode(mode);
     printStatus(st);
     return;
   }
 
-  if (cmd == "osrs") {
-    printOsrsSettings();
-    return;
-  }
-
-  if (cmd.startsWith("osrs ")) {
-    String args = cmd.substring(5);
+  if (cmd.startsWith("start_periodic ")) {
+    String args = cmd.substring(15);
     args.trim();
-
     const int split = args.indexOf(' ');
     if (split < 0) {
-      LOGW("Usage: osrs t|p|h <0..5>");
+      LOGW("Usage: start_periodic <rate> <rep>");
+      return;
+    }
+    const String rateStr = args.substring(0, split);
+    String repStr = args.substring(split + 1);
+    repStr.trim();
+
+    SHT3x::PeriodicRate rate;
+    if (!parseRate(rateStr, rate)) {
+      LOGW("Invalid rate");
+      return;
+    }
+    SHT3x::Repeatability rep;
+    if (!parseRepeatability(repStr, rep)) {
+      LOGW("Invalid repeatability");
       return;
     }
 
-    const String which = args.substring(0, split);
-    String value = args.substring(split + 1);
-    value.trim();
-
-    BME280::Oversampling osrs;
-    if (!parseOversampling(value, osrs)) {
-      LOGW("Invalid oversampling value");
-      return;
-    }
-
-    BME280::Status st;
-    if (which == "t") {
-      st = device.setOversamplingT(osrs);
-    } else if (which == "p") {
-      st = device.setOversamplingP(osrs);
-    } else if (which == "h") {
-      st = device.setOversamplingH(osrs);
-    } else {
-      LOGW("Invalid osrs target: %s", which.c_str());
-      return;
-    }
-
+    SHT3x::Status st = device.startPeriodic(rate, rep);
     printStatus(st);
     return;
   }
 
-  if (cmd == "filter") {
-    printFilterSettings();
-    return;
-  }
-
-  if (cmd.startsWith("filter ")) {
-    String value = cmd.substring(7);
-    value.trim();
-
-    BME280::Filter filter;
-    if (!parseFilter(value, filter)) {
-      LOGW("Invalid filter value");
-      return;
-    }
-
-    BME280::Status st = device.setFilter(filter);
+  if (cmd == "start_art") {
+    SHT3x::Status st = device.startArt();
     printStatus(st);
     return;
   }
 
-  if (cmd == "standby") {
-    printStandbySettings();
+  if (cmd == "stop_periodic") {
+    SHT3x::Status st = device.stopPeriodic();
+    printStatus(st);
     return;
   }
 
-  if (cmd.startsWith("standby ")) {
-    String value = cmd.substring(8);
-    value.trim();
+  if (cmd == "repeat") {
+    SHT3x::Repeatability rep;
+    if (device.getRepeatability(rep).ok()) {
+      Serial.printf("Repeatability: %s\n", repToStr(rep));
+    }
+    printVerboseState();
+    return;
+  }
 
-    BME280::Standby standby;
-    if (!parseStandby(value, standby)) {
-      LOGW("Invalid standby value");
+  if (cmd.startsWith("repeat ")) {
+    String arg = cmd.substring(7);
+    arg.trim();
+    SHT3x::Repeatability rep;
+    if (!parseRepeatability(arg, rep)) {
+      LOGW("Invalid repeatability: %s", arg.c_str());
       return;
     }
 
-    BME280::Status st = device.setStandby(standby);
+    SHT3x::Status st = device.setRepeatability(rep);
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "rate") {
+    SHT3x::PeriodicRate rate;
+    if (device.getPeriodicRate(rate).ok()) {
+      Serial.printf("Periodic rate: %s mps\n", rateToStr(rate));
+    }
+    printVerboseState();
+    return;
+  }
+
+  if (cmd.startsWith("rate ")) {
+    String arg = cmd.substring(5);
+    arg.trim();
+    SHT3x::PeriodicRate rate;
+    if (!parseRate(arg, rate)) {
+      LOGW("Invalid rate: %s", arg.c_str());
+      return;
+    }
+
+    SHT3x::Status st = device.setPeriodicRate(rate);
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "stretch") {
+    SHT3x::ClockStretching stretch;
+    if (device.getClockStretching(stretch).ok()) {
+      Serial.printf("Clock stretching: %s\n", stretchToStr(stretch));
+    }
+    printVerboseState();
+    return;
+  }
+
+  if (cmd.startsWith("stretch ")) {
+    String arg = cmd.substring(8);
+    arg.trim();
+    SHT3x::ClockStretching stretch;
+    if (!parseStretch(arg, stretch)) {
+      LOGW("Invalid stretch: %s", arg.c_str());
+      return;
+    }
+
+    SHT3x::Status st = device.setClockStretching(stretch);
     printStatus(st);
     return;
   }
 
   if (cmd == "status") {
-    uint8_t status = 0;
-    BME280::Status st = device.readStatus(status);
+    SHT3x::StatusRegister stReg;
+    SHT3x::Status st = device.readStatus(stReg);
     if (!st.ok()) {
       printStatus(st);
       return;
     }
 
-    const bool measuring = (status & BME280::cmd::MASK_STATUS_MEASURING) != 0;
-    const bool imUpdate = (status & BME280::cmd::MASK_STATUS_IM_UPDATE) != 0;
-    Serial.printf("Status: 0x%02X (measuring=%d, im_update=%d)\n",
-                  status, measuring ? 1 : 0, imUpdate ? 1 : 0);
+    Serial.printf("Status: 0x%04X (alert=%d heater=%d rh_alert=%d t_alert=%d reset=%d cmd_err=%d crc_err=%d)\n",
+                  stReg.raw,
+                  stReg.alertPending ? 1 : 0,
+                  stReg.heaterOn ? 1 : 0,
+                  stReg.rhAlert ? 1 : 0,
+                  stReg.tAlert ? 1 : 0,
+                  stReg.resetDetected ? 1 : 0,
+                  stReg.commandError ? 1 : 0,
+                  stReg.writeCrcError ? 1 : 0);
     return;
   }
 
-  if (cmd == "chipid") {
-    uint8_t id = 0;
-    BME280::Status st = device.readChipId(id);
+  if (cmd == "status_raw") {
+    uint16_t raw = 0;
+    SHT3x::Status st = device.readStatus(raw);
     if (!st.ok()) {
       printStatus(st);
       return;
     }
-    Serial.printf("Chip ID: 0x%02X\n", id);
+    Serial.printf("Status raw: 0x%04X\n", raw);
+    return;
+  }
+
+  if (cmd == "clearstatus") {
+    SHT3x::Status st = device.clearStatus();
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "heater") {
+    bool enabled = false;
+    SHT3x::Status st = device.readHeaterStatus(enabled);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
+    }
+    Serial.printf("Heater: %s\n", enabled ? "ON" : "OFF");
+    return;
+  }
+
+  if (cmd.startsWith("heater ")) {
+    String arg = cmd.substring(7);
+    arg.trim();
+    bool enable = false;
+    if (arg == "on") {
+      enable = true;
+    } else if (arg == "off") {
+      enable = false;
+    } else if (arg == "status") {
+      bool enabled = false;
+      SHT3x::Status st = device.readHeaterStatus(enabled);
+      if (!st.ok()) {
+        printStatus(st);
+        return;
+      }
+      Serial.printf("Heater: %s\n", enabled ? "ON" : "OFF");
+      return;
+    } else {
+      LOGW("Usage: heater on|off|status");
+      return;
+    }
+
+    SHT3x::Status st = device.setHeater(enable);
+    printStatus(st);
+    return;
+  }
+
+  if (cmd.startsWith("serial")) {
+    SHT3x::ClockStretching stretch = SHT3x::ClockStretching::STRETCH_DISABLED;
+    if (cmd.length() > 6) {
+      String arg = cmd.substring(6);
+      arg.trim();
+      if (arg == "stretch") {
+        stretch = SHT3x::ClockStretching::STRETCH_ENABLED;
+      } else if (arg == "nostretch") {
+        stretch = SHT3x::ClockStretching::STRETCH_DISABLED;
+      }
+    }
+    uint32_t sn = 0;
+    SHT3x::Status st = device.readSerialNumber(sn, stretch);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
+    }
+    Serial.printf("Serial: 0x%08lX\n", static_cast<unsigned long>(sn));
+    return;
+  }
+
+  if (cmd.startsWith("alert ")) {
+    String args = cmd.substring(6);
+    args.trim();
+    const int split = args.indexOf(' ');
+    String sub = args;
+    String rest;
+    if (split >= 0) {
+      sub = args.substring(0, split);
+      rest = args.substring(split + 1);
+      rest.trim();
+    }
+
+    if (sub == "read") {
+      SHT3x::AlertLimitKind kind;
+      if (!parseAlertKind(rest, kind)) {
+        LOGW("Usage: alert read <hs|hc|lc|ls>");
+        return;
+      }
+      SHT3x::AlertLimit limit;
+      SHT3x::Status st = device.readAlertLimit(kind, limit);
+      if (!st.ok()) {
+        printStatus(st);
+        return;
+      }
+      Serial.printf("Alert %s: raw=0x%04X T=%.2fC RH=%.2f%%\n",
+                    alertKindToStr(kind), limit.raw,
+                    limit.temperatureC, limit.humidityPct);
+      return;
+    }
+
+    if (sub == "raw") {
+      if (rest.startsWith("read ")) {
+        String kindStr = rest.substring(5);
+        kindStr.trim();
+        SHT3x::AlertLimitKind kind;
+        if (!parseAlertKind(kindStr, kind)) {
+          LOGW("Usage: alert raw read <hs|hc|lc|ls>");
+          return;
+        }
+        uint16_t raw = 0;
+        SHT3x::Status st = device.readAlertLimitRaw(kind, raw);
+        if (!st.ok()) {
+          printStatus(st);
+          return;
+        }
+        Serial.printf("Alert raw %s: 0x%04X\n",
+                      alertKindToStr(kind),
+                      static_cast<unsigned>(raw));
+        return;
+      }
+      if (rest.startsWith("write ")) {
+        String args2 = rest.substring(6);
+        args2.trim();
+        const int split2 = args2.indexOf(' ');
+        if (split2 < 0) {
+          LOGW("Usage: alert raw write <kind> <hex>");
+          return;
+        }
+        const String kindStr = args2.substring(0, split2);
+        String valueStr = args2.substring(split2 + 1);
+        valueStr.trim();
+        SHT3x::AlertLimitKind kind;
+        if (!parseAlertKind(kindStr, kind)) {
+          LOGW("Invalid alert kind");
+          return;
+        }
+        uint16_t raw = 0;
+        if (!parseU16(valueStr, raw)) {
+          LOGW("Invalid raw value");
+          return;
+        }
+        SHT3x::Status st = device.writeAlertLimitRaw(kind, raw);
+        printStatus(st);
+        return;
+      }
+      LOGW("Usage: alert raw read|write ...");
+      return;
+    }
+
+    if (sub == "write") {
+      const int split2 = rest.indexOf(' ');
+      if (split2 < 0) {
+        LOGW("Usage: alert write <kind> <T> <RH>");
+        return;
+      }
+      const String kindStr = rest.substring(0, split2);
+      String rest2 = rest.substring(split2 + 1);
+      rest2.trim();
+      const int split3 = rest2.indexOf(' ');
+      if (split3 < 0) {
+        LOGW("Usage: alert write <kind> <T> <RH>");
+        return;
+      }
+      const String tempStr = rest2.substring(0, split3);
+      const String rhStr = rest2.substring(split3 + 1);
+
+      SHT3x::AlertLimitKind kind;
+      if (!parseAlertKind(kindStr, kind)) {
+        LOGW("Invalid alert kind");
+        return;
+      }
+
+      const float tempC = tempStr.toFloat();
+      const float rh = rhStr.toFloat();
+      SHT3x::Status st = device.writeAlertLimit(kind, tempC, rh);
+      printStatus(st);
+      return;
+    }
+
+    if (sub == "encode") {
+      const int split2 = rest.indexOf(' ');
+      if (split2 < 0) {
+        LOGW("Usage: alert encode <T> <RH>");
+        return;
+      }
+      const float tempC = rest.substring(0, split2).toFloat();
+      const float rh = rest.substring(split2 + 1).toFloat();
+      const uint16_t raw = SHT3x::SHT3x::encodeAlertLimit(tempC, rh);
+      Serial.printf("Alert encoded: 0x%04X\n", static_cast<unsigned>(raw));
+      return;
+    }
+
+    if (sub == "decode") {
+      uint16_t raw = 0;
+      if (!parseU16(rest, raw)) {
+        LOGW("Usage: alert decode <hex>");
+        return;
+      }
+      float tempC = 0.0f;
+      float rh = 0.0f;
+      SHT3x::SHT3x::decodeAlertLimit(raw, tempC, rh);
+      Serial.printf("Alert decoded: T=%.2fC RH=%.2f%%\n", tempC, rh);
+      return;
+    }
+
+    if (sub == "disable") {
+      SHT3x::Status st = device.disableAlerts();
+      printStatus(st);
+      return;
+    }
+
+    LOGW("Usage: alert read|write|raw|encode|decode|disable ...");
+    return;
+  }
+
+  if (cmd.startsWith("convert ")) {
+    String args = cmd.substring(8);
+    args.trim();
+    const int split = args.indexOf(' ');
+    if (split < 0) {
+      LOGW("Usage: convert <rawT> <rawRH>");
+      return;
+    }
+    const String tStr = args.substring(0, split);
+    String rhStr = args.substring(split + 1);
+    rhStr.trim();
+
+    uint16_t rawT = 0;
+    uint16_t rawRh = 0;
+    if (!parseU16(tStr, rawT) || !parseU16(rhStr, rawRh)) {
+      LOGW("Invalid raw values");
+      return;
+    }
+
+    const float tempC = SHT3x::SHT3x::convertTemperatureC(rawT);
+    const float rh = SHT3x::SHT3x::convertHumidityPct(rawRh);
+    const int32_t tempC_x100 = SHT3x::SHT3x::convertTemperatureC_x100(rawT);
+    const uint32_t rh_x100 = SHT3x::SHT3x::convertHumidityPct_x100(rawRh);
+    Serial.printf("Converted: T=%.2fC (%ld) RH=%.2f%% (%lu)\n",
+                  tempC, static_cast<long>(tempC_x100),
+                  rh, static_cast<unsigned long>(rh_x100));
     return;
   }
 
   if (cmd == "reset") {
     cancelPending();
-    BME280::Status st = device.softReset();
+    SHT3x::Status st = device.softReset();
     printStatus(st);
+    return;
+  }
+
+  if (cmd == "iface_reset") {
+    SHT3x::Status st = device.interfaceReset();
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "greset") {
+    SHT3x::Status st = device.generalCallReset();
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "online") {
+    Serial.printf("Online: %s\n", device.isOnline() ? "YES" : "NO");
+    return;
+  }
+
+  if (cmd == "begin") {
+    if (!gConfigReady) {
+      LOGW("Config not ready");
+      return;
+    }
+    cancelPending();
+    SHT3x::Status st = device.begin(gConfig);
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "end") {
+    cancelPending();
+    device.end();
+    LOGI("Driver ended");
     return;
   }
 
   if (cmd == "drv") {
     printDriverHealth();
-    BME280::Mode mode;
-    if (device.getMode(mode).ok()) {
-      Serial.printf("  Mode: %s\n", modeToStr(mode));
-    }
+    printConfig();
     return;
   }
 
   if (cmd == "probe") {
     LOGI("Probing device (no health tracking)...");
-    BME280::Status st = device.probe();
+    SHT3x::Status st = device.probe();
     printStatus(st);
     return;
   }
 
   if (cmd == "recover") {
     LOGI("Attempting recovery...");
-    BME280::Status st = device.recover();
+    SHT3x::Status st = device.recover();
     printStatus(st);
     printDriverHealth();
     return;
@@ -902,7 +1041,7 @@ void processCommand(const String& cmdLine) {
 void setup() {
   log_begin(115200);
 
-  LOGI("=== BME280 Bringup Example ===");
+  LOGI("=== SHT3x Bringup Example ===");
 
   if (!board::initI2c()) {
     LOGE("Failed to initialize I2C");
@@ -912,14 +1051,14 @@ void setup() {
 
   i2c::scan();
 
-  BME280::Config cfg;
-  cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cWriteRead = transport::wireWriteRead;
-  cfg.i2cAddress = 0x76;
-  cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
-  cfg.offlineThreshold = 5;
+  gConfig.i2cWrite = transport::wireWrite;
+  gConfig.i2cWriteRead = transport::wireWriteRead;
+  gConfig.i2cAddress = 0x44;
+  gConfig.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
+  gConfig.offlineThreshold = 5;
+  gConfigReady = true;
 
-  BME280::Status st = device.begin(cfg);
+  SHT3x::Status st = device.begin(gConfig);
   if (!st.ok()) {
     LOGE("Failed to initialize device");
     printStatus(st);
@@ -936,8 +1075,8 @@ void loop() {
   device.tick(millis());
 
   if (stressStats.active && stressRemaining > 0 && !pendingRead) {
-    const BME280::Status st = scheduleMeasurement();
-    if (st.code != BME280::Err::IN_PROGRESS && st.code != BME280::Err::BUSY) {
+    const SHT3x::Status st = scheduleMeasurement();
+    if (st.code != SHT3x::Err::IN_PROGRESS && st.code != SHT3x::Err::BUSY) {
       noteStressError(st);
       stressStats.attempts++;
       stressRemaining--;
