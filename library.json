@@ -1,0 +1,42 @@
+{
+  "name": "BME280",
+  "version": "1.0.0",
+  "description": "Production-grade BME280 environmental sensor driver.",
+  "keywords": [
+    "bme280",
+    "sensor",
+    "temperature",
+    "pressure",
+    "humidity",
+    "i2c",
+    "esp32",
+    "arduino",
+    "platformio"
+  ],
+  "authors": [
+    {
+      "name": "Thymos Solution s.r.o",
+      "email": "info@thymos.cz",
+      "url": "https://www.thymos.cz"
+    },
+    {
+      "name": "Jan Havelka",
+      "email": "info@thymos.cz",
+      "url": "https://www.thymos.cz",
+      "maintainer": true
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/janhavelka/BME280.git"
+  },
+  "license": "MIT",
+  "homepage": "https://www.thymos.cz",
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"],
+  "headers": ["BME280/BME280.h"],
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}
