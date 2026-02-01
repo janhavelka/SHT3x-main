@@ -56,12 +56,8 @@ SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
 SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
                            uint8_t* rx, size_t rxLen, uint32_t timeoutMs, void* user) {
   if (txLen > 0) {
-    Wire.beginTransmission(addr);
-    Wire.write(tx, txLen);
-    uint8_t result = Wire.endTransmission(false);
-    if (result != 0) {
-      return mapWireError(result, "Write failed");
-    }
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
+                                "Combined write+read not supported");
   }
   if (rxLen == 0) {
     return SHT3x::Status::Ok();
@@ -125,28 +121,36 @@ void loop() {
 
 Your I2C callbacks **must** return specific `Err` codes so the driver can make correct decisions:
 
-- `Err::I2C_NACK_ADDR` – address NACK
-- `Err::I2C_NACK_DATA` – data NACK
-- `Err::I2C_NACK_READ` – read header NACK (used for “not ready” semantics)
-- `Err::I2C_TIMEOUT` – timeout
-- `Err::I2C_BUS` – bus/arbitration error
-- `Err::I2C_ERROR` – unspecified I2C failure
+- `Err::I2C_NACK_ADDR` - address NACK
+- `Err::I2C_NACK_DATA` - data NACK
+- `Err::I2C_NACK_READ` - read header NACK (used for "not ready" semantics)
+- `Err::I2C_TIMEOUT` - timeout
+- `Err::I2C_BUS` - bus/arbitration error
+- `Err::I2C_ERROR` - unspecified I2C failure
 
 If your transport cannot distinguish these cases, return `Err::I2C_ERROR` and set `Status::detail` to the best available code.
 
 Transport capabilities must be declared in `Config::transportCapabilities`:
 
-- `READ_HEADER_NACK` – reliably reports read-header NACK
-- `TIMEOUT` – reliably reports timeouts
-- `BUS_ERROR` – reliably reports bus/arbitration errors
+- `READ_HEADER_NACK` - reliably reports read-header NACK
+- `TIMEOUT` - reliably reports timeouts
+- `BUS_ERROR` - reliably reports bus/arbitration errors
 
 For Arduino Wire adapters, set `transportCapabilities = TransportCapability::NONE` (best effort).
+The driver only calls `i2cWriteRead()` with `txLen == 0` and expects a standalone read
+after a prior command write (tIDLE enforced by the driver). Do not implement combined
+write+read with repeated-start for SHT3x flows.
 
 ## Expected NACK Semantics
 
-Only **read‑header NACK** (`Err::I2C_NACK_READ`) is treated as “measurement not ready,” and only on periodic Fetch Data reads **when** `transportCapabilities` includes `READ_HEADER_NACK`. All other I2C errors are treated as failures and update health counters.
+Only **read-header NACK** (`Err::I2C_NACK_READ`) is treated as "measurement not ready,"
+and only on periodic Fetch Data reads **when** `transportCapabilities` includes
+`READ_HEADER_NACK`. All other I2C errors are treated as failures and update health counters.
 
-Use `Config::notReadyTimeoutMs` to bound how long repeated “not ready” NACKs are tolerated before being treated as a fault.
+Use `Config::notReadyTimeoutMs` to bound how long repeated "not ready" NACKs are tolerated
+before being treated as a fault.
+Use `Config::periodicFetchMarginMs` to avoid early Fetch Data reads
+(0 = auto, max(2ms, period/20)).
 
 ## Blocking Behavior (Max Time)
 
@@ -167,19 +171,21 @@ The driver has no unbounded loops.
 3. Hard reset (`hardReset` callback), then probe
 4. General call reset (only if `allowGeneralCallReset` is `true`)
 
-Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`—the orchestrator triggers it.
+Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`--the orchestrator triggers it.
 
 After a successful `recover()`, the driver is left in **SINGLE_SHOT** idle mode with measurement state cleared. If you need periodic/ART/heater, re-apply those settings in your orchestrator.
 
-## Thread‑Safety / ISR‑Safety
+## Thread-Safety / ISR-Safety
 
-The driver is **not** thread‑safe and must be externally serialized. Do not call any public API from an ISR.
+The driver is **not** thread-safe and must be externally serialized. Do not call any public API from an ISR.
 
 ## ESP32 Notes
 
-- Default is **no clock stretching**. If you enable stretching, set `i2cTimeoutMs` ≥ worst‑case tMEAS (15.5 ms at low‑Vdd, high repeatability) + margin.
-- On ESP32 Wire, a 0‑byte `requestFrom` commonly indicates a read‑header NACK; the example transport maps this to `Err::I2C_NACK_READ`.
-- Use `Wire.setTimeOut()` and keep bus pull‑ups and clock speed within datasheet limits.
+- Default is **no clock stretching**. If you enable stretching, set `i2cTimeoutMs` >=
+  worst-case tMEAS (15.5 ms at low-Vdd, high repeatability) + margin.
+- On ESP32 Wire, a 0-byte `requestFrom` is **ambiguous** (could be not-ready or bus fault).
+  Treat it as an error unless your transport can prove read-header NACK.
+- Use `Wire.setTimeOut()` and keep bus pull-ups and clock speed within datasheet limits.
 
 ## Running Tests
 

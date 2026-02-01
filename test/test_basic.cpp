@@ -64,6 +64,7 @@ void test_config_defaults() {
   TEST_ASSERT_EQUAL(5, cfg.offlineThreshold);
   TEST_ASSERT_EQUAL(1u, cfg.commandDelayMs);
   TEST_ASSERT_EQUAL(0u, cfg.notReadyTimeoutMs);
+  TEST_ASSERT_EQUAL(0u, cfg.periodicFetchMarginMs);
   TEST_ASSERT_EQUAL(100u, cfg.recoverBackoffMs);
   TEST_ASSERT_FALSE(cfg.allowGeneralCallReset);
   TEST_ASSERT_TRUE(cfg.recoverUseBusReset);
@@ -209,6 +210,91 @@ static Status scriptedWriteRead(uint8_t addr, const uint8_t* txData, size_t txLe
   return st;
 }
 
+struct TimingTransport {
+  SHT3x* device = nullptr;
+  uint32_t minDelayUs = 0;
+  bool tooSoon = false;
+  bool combinedUsed = false;
+};
+
+static Status timingWrite(uint8_t addr, const uint8_t* data, size_t len,
+                          uint32_t timeoutMs, void* user) {
+  (void)addr;
+  (void)data;
+  (void)len;
+  (void)timeoutMs;
+  (void)user;
+  return Status::Ok();
+}
+
+static Status timingWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
+                              uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                              void* user) {
+  (void)addr;
+  (void)txData;
+  (void)timeoutMs;
+  auto* ctx = static_cast<TimingTransport*>(user);
+  if (txLen > 0 && rxLen > 0) {
+    ctx->combinedUsed = true;
+  }
+  if (ctx->device != nullptr && ctx->device->_lastCommandUs != 0) {
+    const uint32_t now = micros();
+    const uint32_t delta = now - ctx->device->_lastCommandUs;
+    if (delta < ctx->minDelayUs) {
+      ctx->tooSoon = true;
+    }
+  }
+  if (rxData != nullptr && rxLen >= 3) {
+    rxData[0] = 0x00;
+    rxData[1] = 0x00;
+    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    if (rxLen >= 6) {
+      rxData[3] = 0x00;
+      rxData[4] = 0x00;
+      rxData[5] = SHT3x::_crc8(&rxData[3], 2);
+    }
+  }
+  return Status::Ok();
+}
+
+struct CountTransport {
+  uint32_t writes = 0;
+  uint32_t reads = 0;
+};
+
+static Status countWrite(uint8_t addr, const uint8_t* data, size_t len,
+                         uint32_t timeoutMs, void* user) {
+  (void)addr;
+  (void)data;
+  (void)len;
+  (void)timeoutMs;
+  auto* ctx = static_cast<CountTransport*>(user);
+  ctx->writes++;
+  return Status::Ok();
+}
+
+static Status countWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
+                             uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                             void* user) {
+  (void)addr;
+  (void)txData;
+  (void)txLen;
+  (void)timeoutMs;
+  auto* ctx = static_cast<CountTransport*>(user);
+  ctx->reads++;
+  if (rxData != nullptr && rxLen >= 3) {
+    rxData[0] = 0x00;
+    rxData[1] = 0x00;
+    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    if (rxLen >= 6) {
+      rxData[3] = 0x00;
+      rxData[4] = 0x00;
+      rxData[5] = SHT3x::_crc8(&rxData[3], 2);
+    }
+  }
+  return Status::Ok();
+}
+
 void test_expected_nack_mapping() {
   FakeTransport ctx;
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
@@ -279,6 +365,86 @@ void test_nack_mapping_without_capability() {
   uint8_t buf[6] = {};
   Status st = device._i2cWriteReadTrackedAllowNoData(nullptr, 0, buf, sizeof(buf), true);
   TEST_ASSERT_EQUAL(Err::I2C_NACK_READ, st.code);
+}
+
+void test_read_paths_no_combined_and_respect_delay() {
+  TimingTransport ctx;
+  SHT3x device;
+  device._config.i2cWrite = timingWrite;
+  device._config.i2cWriteRead = timingWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.commandDelayMs = 2;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  ctx.device = &device;
+  ctx.minDelayUs = static_cast<uint32_t>(device._config.commandDelayMs) * 1000U;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 0;
+  gMicrosStep = 1000;
+
+  uint16_t statusRaw = 0;
+  ctx.tooSoon = false;
+  ctx.combinedUsed = false;
+  Status st = device.readStatus(statusRaw);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ctx.combinedUsed);
+  TEST_ASSERT_FALSE(ctx.tooSoon);
+
+  uint32_t serial = 0;
+  ctx.tooSoon = false;
+  ctx.combinedUsed = false;
+  st = device.readSerialNumber(serial, ClockStretching::STRETCH_DISABLED);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ctx.combinedUsed);
+  TEST_ASSERT_FALSE(ctx.tooSoon);
+
+  uint16_t alertRaw = 0;
+  ctx.tooSoon = false;
+  ctx.combinedUsed = false;
+  st = device.readAlertLimitRaw(AlertLimitKind::HIGH_SET, alertRaw);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ctx.combinedUsed);
+  TEST_ASSERT_FALSE(ctx.tooSoon);
+}
+
+void test_periodic_fetch_margin_blocks_early_fetch() {
+  CountTransport ctx;
+  SHT3x device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.commandDelayMs = 1;
+  device._config.periodicFetchMarginMs = 0;
+  device._config.transportCapabilities = TransportCapability::NONE;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::PERIODIC;
+  device._periodicActive = true;
+  device._periodMs = 100;
+  device._periodicStartMs = 0;
+  device._lastFetchMs = 0;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 0;
+  gMicrosStep = 1000;
+
+  Status st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+
+  const uint32_t margin = device._periodicFetchMarginMs();
+  const uint32_t expectedReady =
+      device._periodicStartMs + device.estimateMeasurementTimeMs() + margin;
+  TEST_ASSERT_EQUAL_UINT32(expectedReady, device._measurementReadyMs);
+
+  device.tick(expectedReady - 1);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+
+  device.tick(expectedReady);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
 }
 
 void test_recover_transient_failure() {
@@ -357,6 +523,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_expected_nack_mapping);
   RUN_TEST(test_not_ready_timeout_escalation);
   RUN_TEST(test_nack_mapping_without_capability);
+  RUN_TEST(test_read_paths_no_combined_and_respect_delay);
+  RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_recover_transient_failure);
   RUN_TEST(test_recover_permanent_offline);
   return UNITY_END();

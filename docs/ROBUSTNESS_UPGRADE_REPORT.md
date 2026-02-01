@@ -41,7 +41,7 @@ This upgrade tightens the I2C transport contract, improves health tracking fidel
 
 ### Tests
 - Added unit tests: CRC8, conversions, alert limit pack/unpack, time wrap logic, expected NACK mapping, recovery paths.
-  - File: `test/native/test_basic.cpp`
+  - File: `test/test_basic.cpp`
 - Native test env added to PlatformIO.
   - File: `platformio.ini`
 

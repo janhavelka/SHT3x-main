@@ -35,7 +35,7 @@ Version: 1.2.0
 
 ### 4) Tests + CI
 - Native tests converted to Unity and runnable via pio test -e native.
-  - File: test/native/test_basic.cpp
+  - File: test/test_basic.cpp
 - GitHub Actions workflow added for ESP32 build + native tests.
   - File: .github/workflows/ci.yml
 - README updated with test commands.

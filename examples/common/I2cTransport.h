@@ -59,10 +59,10 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
   return Status::Ok();
 }
 
-/// I2C write-then-read callback using Wire library
+/// I2C read callback using Wire library (read-only for SHT3x)
 /// @param addr I2C device address (7-bit)
-/// @param txData Data buffer to write (may be nullptr if txLen==0)
-/// @param txLen Number of bytes to write (may be 0 for read-only)
+/// @param txData Unused for SHT3x (txLen must be 0)
+/// @param txLen Number of bytes to write (must be 0 for SHT3x reads)
 /// @param rxData Buffer for read data
 /// @param rxLen Number of bytes to read
 /// @param timeoutMs Timeout (used to set Wire timeout)
@@ -75,24 +75,7 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   (void)timeoutMs;
 
   if (txLen > 0) {
-    // Write phase
-    Wire.beginTransmission(addr);
-    size_t written = Wire.write(txData, txLen);
-    uint8_t result = Wire.endTransmission(false);  // Repeated start
-
-    if (result != 0) {
-      switch (result) {
-        case 1: return Status::Error(Err::INVALID_PARAM, "I2C write too long", result);
-        case 2: return Status::Error(Err::I2C_NACK_ADDR, "I2C NACK addr", result);
-        case 3: return Status::Error(Err::I2C_NACK_DATA, "I2C NACK data", result);
-        case 4: return Status::Error(Err::I2C_BUS, "I2C bus error", result);
-        case 5: return Status::Error(Err::I2C_TIMEOUT, "I2C timeout", result);
-        default: return Status::Error(Err::I2C_ERROR, "I2C write phase failed", result);
-      }
-    }
-    if (written != txLen) {
-      return Status::Error(Err::I2C_ERROR, "I2C write incomplete", static_cast<int32_t>(written));
-    }
+    return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");
   }
 
   if (rxLen == 0) {

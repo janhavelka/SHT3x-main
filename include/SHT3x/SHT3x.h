@@ -370,6 +370,9 @@ private:
   // Internal Helpers
   // =========================================================================
 
+  uint32_t _periodicFetchMarginMs() const;
+  uint32_t _periodicReadyMs(uint32_t nowMs) const;
+  uint32_t _periodicRetryMs(uint32_t nowMs) const;
   Status _ensureCommandDelay();
   Status _waitMs(uint32_t delayMs);
   Status _readStatusRaw(uint16_t& raw, bool tracked);

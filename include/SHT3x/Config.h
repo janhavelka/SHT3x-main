@@ -40,10 +40,10 @@ inline constexpr bool hasCapability(TransportCapability caps, TransportCapabilit
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
-/// I2C write-then-read callback signature
+/// I2C read callback signature (read-only for SHT3x)
 /// @param addr     I2C device address (7-bit)
-/// @param txData   Pointer to data to write (may be nullptr if txLen==0)
-/// @param txLen    Number of bytes to write (may be 0 for read-only)
+/// @param txData   Unused for SHT3x (txLen must be 0)
+/// @param txLen    Number of bytes to write (MUST be 0 for SHT3x reads)
 /// @param rxData   Pointer to buffer for read data
 /// @param rxLen    Number of bytes to read
 /// @param timeoutMs Maximum time to wait for completion
@@ -55,6 +55,9 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 ///         - Err::I2C_TIMEOUT (timeout)
 ///         - Err::I2C_BUS (bus/arbitration error)
 ///         - Err::I2C_ERROR (unspecified I2C error)
+/// @note The driver issues command writes via i2cWrite() and then calls
+///       i2cWriteRead() with txLen==0 to perform the read after a tIDLE delay.
+///       Combined write+read (repeated-start) is not allowed for SHT3x flows.
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
@@ -124,6 +127,9 @@ struct Config {
 
   /// Periodic mode not-ready timeout (0 = disabled)
   uint32_t notReadyTimeoutMs = 0;
+
+  /// Periodic fetch margin (ms) to avoid early fetches (0 = auto, max(2, period/20))
+  uint32_t periodicFetchMarginMs = 0;
 
   /// Recovery backoff to avoid bus thrashing (ms)
   uint32_t recoverBackoffMs = 100;

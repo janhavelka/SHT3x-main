@@ -37,7 +37,7 @@ Version: 1.0.0 (library.json)
   - Waits until measurementReadyMs
   - Fetches data (tracked I2C) via Fetch Data command
   - Converts and latches data, clears pending flag
-  - If Fetch Data returns read-header NACK and transport supports it, returns MEASUREMENT_NOT_READY and backs off by commandDelayMs
+  - If Fetch Data returns read-header NACK and transport supports it, returns MEASUREMENT_NOT_READY and backs off to the next periodic window (period + fetch margin)
   - Optional notReadyTimeoutMs escalates repeated NACKs to a tracked I2C failure
 
 ### requestMeasurement()
@@ -47,7 +47,7 @@ Version: 1.0.0 (library.json)
   - Returns IN_PROGRESS
 - PERIODIC / ART:
   - Validates periodic active
-  - Schedules next fetch window using periodic interval
+  - Schedules next fetch window using periodic interval plus periodicFetchMarginMs
   - Returns IN_PROGRESS
 
 ### getMeasurement(Measurement&)

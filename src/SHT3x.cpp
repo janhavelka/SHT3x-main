@@ -178,9 +178,7 @@ void SHT3x::tick(uint32_t nowMs) {
 
     Status st = _fetchPeriodic();
     if (!st.ok()) {
-      if (st.code == Err::MEASUREMENT_NOT_READY) {
-        _measurementReadyMs = nowMs + _config.commandDelayMs;
-      }
+      _measurementReadyMs = _periodicRetryMs(nowMs);
       return;
     }
 
@@ -354,15 +352,7 @@ Status SHT3x::requestMeasurement() {
     }
 
     const uint32_t now = millis();
-    uint32_t readyMs = 0;
-    if (_lastFetchMs == 0) {
-      readyMs = _periodicStartMs + estimateMeasurementTimeMs();
-    } else {
-      readyMs = _lastFetchMs + _periodMs;
-    }
-    if (static_cast<int32_t>(now - readyMs) >= 0) {
-      readyMs = now;
-    }
+    uint32_t readyMs = _periodicReadyMs(now);
 
     _measurementRequested = true;
     _measurementReadyMs = readyMs;
@@ -959,10 +949,53 @@ uint32_t SHT3x::estimateMeasurementTimeMs() const {
   return baseMs + MEASUREMENT_MARGIN_MS;
 }
 
+uint32_t SHT3x::_periodicFetchMarginMs() const {
+  uint32_t margin = _config.periodicFetchMarginMs;
+  if (margin == 0) {
+    if (_periodMs == 0) {
+      return 2;
+    }
+    margin = _periodMs / 20;
+    if (margin < 2) {
+      margin = 2;
+    }
+  }
+  return margin;
+}
+
+uint32_t SHT3x::_periodicReadyMs(uint32_t nowMs) const {
+  if (_periodMs == 0) {
+    return nowMs;
+  }
+
+  uint32_t readyMs = 0;
+  if (_lastFetchMs == 0) {
+    readyMs = _periodicStartMs + estimateMeasurementTimeMs();
+  } else {
+    readyMs = _lastFetchMs + _periodMs;
+  }
+  readyMs += _periodicFetchMarginMs();
+
+  if (_timeElapsed(nowMs, readyMs)) {
+    return nowMs;
+  }
+  return readyMs;
+}
+
+uint32_t SHT3x::_periodicRetryMs(uint32_t nowMs) const {
+  if (_periodMs == 0) {
+    return nowMs + _config.commandDelayMs;
+  }
+  return nowMs + _periodMs + _periodicFetchMarginMs();
+}
+
 Status SHT3x::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
                                uint8_t* rxBuf, size_t rxLen) {
   if (_config.i2cWriteRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C write-read not set");
+  }
+  if (txLen > 0 && rxLen > 0) {
+    return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");
   }
   return _config.i2cWriteRead(_config.i2cAddress, txBuf, txLen, rxBuf, rxLen,
                               _config.i2cTimeoutMs, _config.i2cUser);
