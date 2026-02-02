@@ -6,6 +6,7 @@
 // Include stubs first
 #include "Arduino.h"
 #include "Wire.h"
+#include "examples/common/I2cTransport.h"
 
 // Stub implementations
 SerialClass Serial;
@@ -364,7 +365,41 @@ void test_nack_mapping_without_capability() {
   gMillisStep = 0;
   uint8_t buf[6] = {};
   Status st = device._i2cWriteReadTrackedAllowNoData(nullptr, 0, buf, sizeof(buf), true);
-  TEST_ASSERT_EQUAL(Err::I2C_NACK_READ, st.code);
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
+}
+
+void test_periodic_fetch_expected_nack_no_failure() {
+  FakeTransport ctx;
+  ctx.writeStatus = Status::Ok();
+  ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
+
+  SHT3x device;
+  device._config.i2cWrite = fakeWrite;
+  device._config.i2cWriteRead = fakeWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.commandDelayMs = 1;
+  device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._periodicActive = true;
+  device._periodMs = 100;
+  device._consecutiveFailures = 0;
+
+  Status st = device._fetchPeriodic();
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
+  TEST_ASSERT_EQUAL_UINT8(0, device._consecutiveFailures);
+}
+
+void test_example_adapter_ambiguous_zero_bytes() {
+  Wire._setRequestFromResult(0);
+  uint8_t buf[3] = {};
+  Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 10, nullptr);
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
+  Wire._clearRequestFromOverride();
+
+  st = transport::wireWriteRead(0x44, buf, 1, buf, sizeof(buf), 10, nullptr);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
 
 void test_read_paths_no_combined_and_respect_delay() {
@@ -523,6 +558,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_expected_nack_mapping);
   RUN_TEST(test_not_ready_timeout_escalation);
   RUN_TEST(test_nack_mapping_without_capability);
+  RUN_TEST(test_periodic_fetch_expected_nack_no_failure);
+  RUN_TEST(test_example_adapter_ambiguous_zero_bytes);
   RUN_TEST(test_read_paths_no_combined_and_respect_delay);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_recover_transient_failure);

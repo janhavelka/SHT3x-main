@@ -86,7 +86,8 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   size_t received = Wire.requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {
-      return Status::Error(Err::I2C_NACK_READ, "I2C NACK read header", 0);
+      return Status::Error(Err::I2C_ERROR, "I2C read returned 0 bytes",
+                           static_cast<int32_t>(received));
     }
     return Status::Error(Err::I2C_ERROR, "I2C read incomplete", static_cast<int32_t>(received));
   }

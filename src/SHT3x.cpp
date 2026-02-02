@@ -997,8 +997,17 @@ Status SHT3x::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
   if (txLen > 0 && rxLen > 0) {
     return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");
   }
-  return _config.i2cWriteRead(_config.i2cAddress, txBuf, txLen, rxBuf, rxLen,
-                              _config.i2cTimeoutMs, _config.i2cUser);
+  Status st = _config.i2cWriteRead(_config.i2cAddress, txBuf, txLen, rxBuf, rxLen,
+                                   _config.i2cTimeoutMs, _config.i2cUser);
+  if (st.code == Err::I2C_NACK_READ &&
+      !hasCapability(_config.transportCapabilities,
+                     TransportCapability::READ_HEADER_NACK)) {
+    const int32_t detail = (st.detail != 0)
+        ? st.detail
+        : static_cast<int32_t>(Err::I2C_NACK_READ);
+    return Status::Error(Err::I2C_ERROR, "Read-header NACK unsupported", detail);
+  }
+  return st;
 }
 
 Status SHT3x::_i2cWriteRaw(const uint8_t* buf, size_t len) {

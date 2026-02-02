@@ -65,7 +65,8 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
   size_t received = Wire.requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {
-      return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_READ, "Read header NACK");
+      return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read returned 0 bytes",
+                                  static_cast<int32_t>(received));
     }
     return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read failed");
   }
@@ -136,10 +137,15 @@ Transport capabilities must be declared in `Config::transportCapabilities`:
 - `TIMEOUT` - reliably reports timeouts
 - `BUS_ERROR` - reliably reports bus/arbitration errors
 
+`Err::I2C_NACK_READ` is only valid when the transport can **prove** a read-header NACK
+and declares `TransportCapability::READ_HEADER_NACK`.
+
 For Arduino Wire adapters, set `transportCapabilities = TransportCapability::NONE` (best effort).
 The driver only calls `i2cWriteRead()` with `txLen == 0` and expects a standalone read
 after a prior command write (tIDLE enforced by the driver). Do not implement combined
 write+read with repeated-start for SHT3x flows.
+With Wire, a 0-byte `requestFrom()` must be treated as an ambiguous error
+(return `Err::I2C_ERROR`), not a read-header NACK.
 
 ## Expected NACK Semantics
 

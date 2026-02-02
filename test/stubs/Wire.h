@@ -23,9 +23,10 @@ public:
   
   size_t requestFrom(uint8_t addr, size_t len) { 
     (void)addr;
-    _rxLen = len;
+    const size_t result = _useRequestFromOverride ? _requestFromResult : len;
+    _rxLen = result;
     _rxIdx = 0;
-    return len;
+    return result;
   }
   
   int available() { return _rxLen - _rxIdx; }
@@ -43,6 +44,16 @@ public:
     }
   }
 
+  void _setRequestFromResult(size_t result) {
+    _useRequestFromOverride = true;
+    _requestFromResult = result;
+  }
+
+  void _clearRequestFromOverride() {
+    _useRequestFromOverride = false;
+    _requestFromResult = 0;
+  }
+
 private:
   uint8_t _addr = 0;
   uint8_t _txBuf[64] = {};
@@ -50,6 +61,8 @@ private:
   uint8_t _rxBuf[64] = {};
   size_t _rxLen = 0;
   size_t _rxIdx = 0;
+  bool _useRequestFromOverride = false;
+  size_t _requestFromResult = 0;
 };
 
 extern TwoWire Wire;
