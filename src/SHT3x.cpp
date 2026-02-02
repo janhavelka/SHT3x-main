@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <cstring>
 #include <limits>
+#include <cmath>
 
 namespace SHT3x {
 namespace {
@@ -454,6 +455,14 @@ Status SHT3x::setRepeatability(Repeatability rep) {
     }
     return st;
   }
+  if (_mode == Mode::ART) {
+    Status st = startArt();
+    if (st.ok()) {
+      _cachedSettings.repeatability = rep;
+      _hasCachedSettings = true;
+    }
+    return st;
+  }
 
   _cachedSettings.repeatability = rep;
   _hasCachedSettings = true;
@@ -508,6 +517,14 @@ Status SHT3x::setPeriodicRate(PeriodicRate rate) {
 
   if (_mode == Mode::PERIODIC) {
     Status st = startPeriodic(rate, _config.repeatability);
+    if (st.ok()) {
+      _cachedSettings.periodicRate = rate;
+      _hasCachedSettings = true;
+    }
+    return st;
+  }
+  if (_mode == Mode::ART) {
+    Status st = startArt();
     if (st.ok()) {
       _cachedSettings.periodicRate = rate;
       _hasCachedSettings = true;
@@ -869,6 +886,9 @@ Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
 }
 
 Status SHT3x::writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct) {
+  if (!std::isfinite(temperatureC) || !std::isfinite(humidityPct)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid alert limit value");
+  }
   const uint16_t packed = encodeAlertLimit(temperatureC, humidityPct);
   return writeAlertLimitRaw(kind, packed);
 }
@@ -882,6 +902,12 @@ Status SHT3x::disableAlerts() {
 }
 
 uint16_t SHT3x::encodeAlertLimit(float temperatureC, float humidityPct) {
+  if (!std::isfinite(temperatureC)) {
+    temperatureC = -45.0f;
+  }
+  if (!std::isfinite(humidityPct)) {
+    humidityPct = 0.0f;
+  }
   if (humidityPct < 0.0f) {
     humidityPct = 0.0f;
   }

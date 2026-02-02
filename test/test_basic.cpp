@@ -483,6 +483,22 @@ void test_cache_updates_only_on_success() {
   TEST_ASSERT_TRUE(device._cachedSettings.heaterEnabled);
 }
 
+void test_write_alert_limit_rejects_nan() {
+  SHT3x device;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._config.i2cWrite = fakeWrite;
+  device._config.i2cWriteRead = fakeWriteRead;
+  device._config.i2cTimeoutMs = 10;
+  device._cachedSettings = CachedSettings{};
+  device._hasCachedSettings = true;
+
+  float nanValue = std::numeric_limits<float>::quiet_NaN();
+  Status st = device.writeAlertLimit(AlertLimitKind::HIGH_SET, nanValue, 50.0f);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+  TEST_ASSERT_FALSE(device._cachedSettings.alertValid[0]);
+}
+
 void test_reset_to_defaults_clears_cache() {
   LogTransport ctx;
   SHT3x device;
@@ -561,6 +577,31 @@ void test_reset_and_restore_applies_cached_settings() {
   TEST_ASSERT_TRUE(sawAlert);
   TEST_ASSERT_TRUE(sawPeriodic);
   TEST_ASSERT_TRUE(alertIdx < periodicIdx);
+}
+
+void test_setters_restart_art_mode() {
+  LogTransport ctx;
+  SHT3x device;
+  device._config.i2cWrite = logWrite;
+  device._config.i2cWriteRead = logWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::ART;
+  device._periodicActive = true;
+
+  ctx.count = 0;
+  Status st = device.setRepeatability(Repeatability::LOW_REPEATABILITY);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(ctx.count > 0);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_ART, ctx.commands[ctx.count - 1]);
+
+  ctx.count = 0;
+  st = device.setPeriodicRate(PeriodicRate::MPS_10);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(ctx.count > 0);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_ART, ctx.commands[ctx.count - 1]);
 }
 
 void test_read_paths_no_combined_and_respect_delay() {
@@ -724,8 +765,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_drains_partial_read);
   RUN_TEST(test_cache_updates_only_on_success);
+  RUN_TEST(test_write_alert_limit_rejects_nan);
   RUN_TEST(test_reset_to_defaults_clears_cache);
   RUN_TEST(test_reset_and_restore_applies_cached_settings);
+  RUN_TEST(test_setters_restart_art_mode);
   RUN_TEST(test_read_paths_no_combined_and_respect_delay);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_recover_transient_failure);

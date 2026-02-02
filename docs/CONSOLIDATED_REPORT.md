@@ -17,7 +17,7 @@ Scope: Library behavior, transport contract, recovery/reset modes, and test cove
 - For SHT3x protocol reads, callbacks must not perform combined write+read (no repeated-start).
 
 ## 3) Reset/Recover Modes
-- `recover()` remains comms-only using the ladder (bus reset ? soft reset ? hard reset ? general call), leaving SINGLE_SHOT idle.
+- `recover()` remains comms-only using the ladder (bus reset -> soft reset -> hard reset -> general call), leaving SINGLE_SHOT idle.
 - `resetToDefaults()` resets and clears cached settings to library defaults (no restore).
 - `resetAndRestore()` resets and reapplies cached settings from RAM.
 
@@ -41,22 +41,28 @@ After reset, restore is applied in this order:
 5) alert limits (per register)
 6) mode (PERIODIC/ART restart if cached)
 
-## 6) Wire Adapter Policy (Manager-Owned)
+## 6) Additional User-Proofing
+- Changing repeatability or periodic rate while in ART restarts ART to ensure settings take effect.
+- NaN/Inf alert-limit inputs are rejected by writeAlertLimit() (INVALID_PARAM).
+
+## 7) Wire Adapter Policy (Manager-Owned)
 - Example adapter callbacks do **not** change Wire clock/timeout per call.
 - STOP is explicit for command writes to enforce tIDLE.
 - Partial reads are drained before returning error.
 
-## 7) Tests Added/Updated (Native)
+## 8) Tests Added/Updated (Native)
 - Cache correctness: updates only on success.
 - resetToDefaults(): clears cache and returns SINGLE_SHOT baseline.
 - resetAndRestore(): reapplies cached settings and restart order (alerts before periodic).
+- ART restarts on repeatability/periodic rate changes.
 - Adapter behavior: no per-call timeout/clock changes, STOP usage, partial-read draining.
+- NaN alert-limit inputs rejected test.
 
-## 8) Known Medium/Low Risks
+## 9) Known Medium/Low Risks
 - Partial-success ambiguity on operations that could include verification reads. Current policy treats verification failure as overall failure; cache does not update.
 - Future adapters could ignore the transport contract; tests guard example behavior but external integrations must follow README.
 
-## 9) Example Usage Pattern
+## 10) Example Usage Pattern
 ```cpp
 sensor.setRepeatability(SHT3x::Repeatability::MEDIUM_REPEATABILITY);
 sensor.setHeater(true);
