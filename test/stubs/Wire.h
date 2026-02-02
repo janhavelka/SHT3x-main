@@ -9,7 +9,8 @@ class TwoWire {
 public:
   void begin(int sda = -1, int scl = -1) { (void)sda; (void)scl; }
   void setClock(uint32_t freq) { (void)freq; }
-  void setTimeOut(uint32_t timeoutMs) { (void)timeoutMs; }
+  void setTimeOut(uint32_t timeoutMs) { _timeoutMs = timeoutMs; }
+  uint32_t getTimeOut() const { return _timeoutMs; }
   
   void beginTransmission(uint8_t addr) { _addr = addr; _txLen = 0; }
   size_t write(uint8_t data) { _txBuf[_txLen++] = data; return 1; }
@@ -19,7 +20,7 @@ public:
     }
     return len;
   }
-  uint8_t endTransmission(bool stop = true) { (void)stop; return 0; }
+  uint8_t endTransmission(bool stop = true) { _lastStop = stop; return 0; }
   
   size_t requestFrom(uint8_t addr, size_t len) { 
     (void)addr;
@@ -32,6 +33,7 @@ public:
   int available() { return _rxLen - _rxIdx; }
   int read() { 
     if (_rxIdx < _rxLen) {
+      _readCalls++;
       return _rxBuf[_rxIdx++];
     }
     return -1;
@@ -54,6 +56,10 @@ public:
     _requestFromResult = 0;
   }
 
+  bool _lastStopWasTrue() const { return _lastStop; }
+  uint32_t _readCallCount() const { return _readCalls; }
+  void _clearReadCallCount() { _readCalls = 0; }
+
 private:
   uint8_t _addr = 0;
   uint8_t _txBuf[64] = {};
@@ -61,6 +67,9 @@ private:
   uint8_t _rxBuf[64] = {};
   size_t _rxLen = 0;
   size_t _rxIdx = 0;
+  uint32_t _timeoutMs = 0;
+  bool _lastStop = true;
+  uint32_t _readCalls = 0;
   bool _useRequestFromOverride = false;
   size_t _requestFromResult = 0;
 };

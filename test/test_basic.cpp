@@ -402,6 +402,25 @@ void test_example_adapter_ambiguous_zero_bytes() {
   TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
 
+void test_wire_adapter_timeout_and_stop() {
+  uint8_t buf[2] = {0x00, 0x00};
+  Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, nullptr);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT32(33u, Wire.getTimeOut());
+  TEST_ASSERT_TRUE(Wire._lastStopWasTrue());
+}
+
+void test_wire_adapter_drains_partial_read() {
+  Wire._setRequestFromResult(2);
+  Wire._clearReadCallCount();
+  uint8_t buf[6] = {};
+  Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, nullptr);
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
+  TEST_ASSERT_EQUAL_UINT32(20u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());
+  Wire._clearRequestFromOverride();
+}
+
 void test_read_paths_no_combined_and_respect_delay() {
   TimingTransport ctx;
   SHT3x device;
@@ -560,6 +579,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_nack_mapping_without_capability);
   RUN_TEST(test_periodic_fetch_expected_nack_no_failure);
   RUN_TEST(test_example_adapter_ambiguous_zero_bytes);
+  RUN_TEST(test_wire_adapter_timeout_and_stop);
+  RUN_TEST(test_wire_adapter_drains_partial_read);
   RUN_TEST(test_read_paths_no_combined_and_respect_delay);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_recover_transient_failure);

@@ -35,14 +35,15 @@ inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
   (void)user;
-  (void)timeoutMs;
+  Wire.setTimeOut(timeoutMs);
 
   Wire.beginTransmission(addr);
   size_t written = Wire.write(data, len);
-  uint8_t result = Wire.endTransmission();
+  uint8_t result = Wire.endTransmission(true);
 
   if (result != 0) {
-    // Wire error codes: 1=data too long, 2=NACK addr, 3=NACK data, 4=other, 5=timeout
+    // Arduino Wire error codes (core-dependent): 1=data too long, 2=NACK addr, 3=NACK data,
+    // 4=other, 5=timeout (ESP32 Arduino core).
     switch (result) {
       case 1: return Status::Error(Err::INVALID_PARAM, "I2C write too long", result);
       case 2: return Status::Error(Err::I2C_NACK_ADDR, "I2C NACK addr", result);
@@ -72,7 +73,7 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint8_t* rxData, size_t rxLen,
                             uint32_t timeoutMs, void* user) {
   (void)user;
-  (void)timeoutMs;
+  Wire.setTimeOut(timeoutMs);
 
   if (txLen > 0) {
     return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");
@@ -88,6 +89,9 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     if (received == 0) {
       return Status::Error(Err::I2C_ERROR, "I2C read returned 0 bytes",
                            static_cast<int32_t>(received));
+    }
+    for (size_t i = 0; i < received; i++) {
+      (void)Wire.read();
     }
     return Status::Error(Err::I2C_ERROR, "I2C read incomplete", static_cast<int32_t>(received));
   }

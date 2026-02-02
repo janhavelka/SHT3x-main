@@ -34,6 +34,9 @@ Copy `include/SHT3x/` and `src/` to your project.
 
 // Transport callbacks
 static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
+  // Arduino Wire error codes are core-dependent. The mapping below matches ESP32 Arduino core.
+  // If your core does not distinguish bus/timeout reliably, map unknown codes to I2C_ERROR
+  // and carry the raw code in Status::detail.
   switch (result) {
     case 0: return SHT3x::Status::Ok();
     case 1: return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "Write too long", result);
@@ -47,9 +50,10 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
 
 SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                        uint32_t timeoutMs, void* user) {
+  Wire.setTimeOut(timeoutMs);
   Wire.beginTransmission(addr);
   Wire.write(data, len);
-  uint8_t result = Wire.endTransmission();
+  uint8_t result = Wire.endTransmission(true);
   return mapWireError(result, "Write failed");
 }
 
@@ -62,11 +66,15 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
   if (rxLen == 0) {
     return SHT3x::Status::Ok();
   }
+  Wire.setTimeOut(timeoutMs);
   size_t received = Wire.requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {
       return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read returned 0 bytes",
                                   static_cast<int32_t>(received));
+    }
+    for (size_t i = 0; i < received; i++) {
+      (void)Wire.read();
     }
     return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read failed");
   }
@@ -81,6 +89,8 @@ SHT3x::SHT3x device;
 void setup() {
   Serial.begin(115200);
   Wire.begin(8, 9);  // SDA, SCL
+  Wire.setClock(400000);
+  Wire.setTimeOut(50);
 
   SHT3x::Config cfg;
   cfg.i2cWrite = i2cWrite;
@@ -146,6 +156,9 @@ after a prior command write (tIDLE enforced by the driver). Do not implement com
 write+read with repeated-start for SHT3x flows.
 With Wire, a 0-byte `requestFrom()` must be treated as an ambiguous error
 (return `Err::I2C_ERROR`), not a read-header NACK.
+Wire cannot prove read-header NACK, so expected-NACK semantics are disabled.
+If you change `Wire.setTimeOut(timeoutMs)` per call, ensure the adapter is single-threaded
+or externally serialized so the timeout change is safe.
 
 ## Expected NACK Semantics
 
