@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Nothing yet
 
+## [1.3.0] - 2026-02-02
+
+### Added
+- resetToDefaults() and resetAndRestore() APIs with RAM-only settings restore
+- Cached settings tracking for mode/repeatability/periodic rate/heater/alert limits
+- Manager-owned Wire policy and consolidated report
+- Additional native tests covering restore behavior and adapter rules
+
+### Changed
+- Wire adapters no longer mutate global Wire timeout/clock in callbacks
+- ART mode restarts when repeatability/periodic rate changes
+- Periodic fetch scheduling uses an explicit margin to avoid early fetches
+
+### Fixed
+- Wire 0-byte reads treated as ambiguous errors with guardrails
+- Combined write+read is rejected for SHT3x protocol reads (tIDLE enforced)
+- NaN/Inf alert-limit inputs are rejected
+
 ## [1.2.0] - 2026-02-01
 
 ### Added
@@ -78,7 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
 [1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
 [1.1.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.1.0
 [1.0.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.0.0
