@@ -20,6 +20,11 @@ static constexpr uint32_t MEASUREMENT_MARGIN_MS = 1;
 static constexpr uint32_t ART_PERIOD_MS = 250;
 static constexpr uint32_t MAX_SPIN_ITERS = 500000;
 
+static CachedSettings defaultCachedSettings() {
+  CachedSettings settings;
+  return settings;
+}
+
 static bool isValidRepeatability(Repeatability rep) {
   return rep == Repeatability::LOW_REPEATABILITY || rep == Repeatability::MEDIUM_REPEATABILITY ||
          rep == Repeatability::HIGH_REPEATABILITY;
@@ -93,6 +98,8 @@ Status SHT3x::begin(const Config& config) {
   _mode = Mode::SINGLE_SHOT;
   _periodicActive = false;
   _lastCommandUs = 0;
+  _cachedSettings = defaultCachedSettings();
+  _hasCachedSettings = false;
 
   if (config.i2cWrite == nullptr || config.i2cWriteRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C callbacks not set");
@@ -143,6 +150,8 @@ Status SHT3x::begin(const Config& config) {
 
   _initialized = true;
   _driverState = DriverState::READY;
+  _syncCacheFromConfig();
+  _hasCachedSettings = true;
 
   return Status::Ok();
 }
@@ -226,102 +235,44 @@ Status SHT3x::recover() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-
-  const uint32_t now = millis();
-  if (_config.recoverBackoffMs > 0 &&
-      !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
-    return Status::Error(Err::BUSY, "Recovery backoff active");
+  Status st = _performRecoveryLadder();
+  if (!st.ok()) {
+    return st;
   }
-  _lastRecoverMs = now;
+  _setSafeBaseline();
+  return Status::Ok();
+}
 
-  auto probeTracked = [this]() -> Status {
-    uint16_t statusRaw = 0;
-    return _readStatusRaw(statusRaw, true);
-  };
-
-  auto setSafeBaseline = [this]() {
-    _measurementRequested = false;
-    _measurementReady = false;
-    _measurementReadyMs = 0;
-    _periodicActive = false;
-    _periodicStartMs = 0;
-    _lastFetchMs = 0;
-    _periodMs = 0;
-    _sampleTimestampMs = 0;
-    _missedSamples = 0;
-    _notReadyStartMs = 0;
-    _notReadyCount = 0;
-    _mode = Mode::SINGLE_SHOT;
-    _config.mode = Mode::SINGLE_SHOT;
-  };
-
-  Status last = Status::Error(Err::I2C_ERROR, "Recovery failed");
-
-  if (_config.recoverUseBusReset && _config.busReset != nullptr) {
-    Status st = interfaceReset();
-    if (st.ok()) {
-      st = probeTracked();
-      if (st.ok()) {
-        setSafeBaseline();
-        return Status::Ok();
-      }
-      last = st;
-    } else {
-      last = st;
-    }
+Status SHT3x::resetToDefaults() {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-
-  if (_config.recoverUseSoftReset) {
-    Status stStop = Status::Ok();
-    if (_periodicActive) {
-      stStop = _stopPeriodicInternal();
-      if (!stStop.ok()) {
-        last = stStop;
-      }
-    }
-
-    if (stStop.ok()) {
-      Status st = softReset();
-      if (st.ok()) {
-        st = probeTracked();
-        if (st.ok()) {
-          setSafeBaseline();
-          return Status::Ok();
-        }
-      }
-      last = st;
-    }
+  Status st = _performRecoveryLadder();
+  if (!st.ok()) {
+    return st;
   }
+  _setSafeBaseline();
+  _setDefaultsToConfigAndCache();
+  return Status::Ok();
+}
 
-  if (_config.recoverUseHardReset && _config.hardReset != nullptr) {
-    Status st = _config.hardReset(_config.i2cUser);
-    if (st.ok()) {
-      st = _waitMs(RESET_DELAY_MS);
-      if (!st.ok()) {
-        return st;
-      }
-      st = probeTracked();
-      if (st.ok()) {
-        setSafeBaseline();
-        return Status::Ok();
-      }
-    }
-    last = st;
+Status SHT3x::resetAndRestore() {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-
-  if (_config.allowGeneralCallReset) {
-    Status st = generalCallReset();
-    if (st.ok()) {
-      st = probeTracked();
-      if (st.ok()) {
-        setSafeBaseline();
-        return Status::Ok();
-      }
-    }
-    last = st;
+  if (!_hasCachedSettings) {
+    return Status::Error(Err::INVALID_PARAM, "No cached settings");
   }
-
-  return last;
+  Status st = _performRecoveryLadder();
+  if (!st.ok()) {
+    return st;
+  }
+  _setSafeBaseline();
+  st = _applyCachedSettingsAfterReset();
+  if (!st.ok()) {
+    return st;
+  }
+  return Status::Ok();
 }
 
 Status SHT3x::requestMeasurement() {
@@ -424,6 +375,8 @@ Status SHT3x::setMode(Mode mode) {
     }
     _mode = Mode::SINGLE_SHOT;
     _config.mode = Mode::SINGLE_SHOT;
+    _cachedSettings.mode = Mode::SINGLE_SHOT;
+    _hasCachedSettings = true;
     return Status::Ok();
   }
 
@@ -494,9 +447,16 @@ Status SHT3x::setRepeatability(Repeatability rep) {
   _config.repeatability = rep;
 
   if (_mode == Mode::PERIODIC) {
-    return startPeriodic(_config.periodicRate, rep);
+    Status st = startPeriodic(_config.periodicRate, rep);
+    if (st.ok()) {
+      _cachedSettings.repeatability = rep;
+      _hasCachedSettings = true;
+    }
+    return st;
   }
 
+  _cachedSettings.repeatability = rep;
+  _hasCachedSettings = true;
   return Status::Ok();
 }
 
@@ -520,6 +480,8 @@ Status SHT3x::setClockStretching(ClockStretching stretch) {
   }
 
   _config.clockStretching = stretch;
+  _cachedSettings.clockStretching = stretch;
+  _hasCachedSettings = true;
   return Status::Ok();
 }
 
@@ -545,9 +507,16 @@ Status SHT3x::setPeriodicRate(PeriodicRate rate) {
   _config.periodicRate = rate;
 
   if (_mode == Mode::PERIODIC) {
-    return startPeriodic(rate, _config.repeatability);
+    Status st = startPeriodic(rate, _config.repeatability);
+    if (st.ok()) {
+      _cachedSettings.periodicRate = rate;
+      _hasCachedSettings = true;
+    }
+    return st;
   }
 
+  _cachedSettings.periodicRate = rate;
+  _hasCachedSettings = true;
   return Status::Ok();
 }
 
@@ -567,7 +536,14 @@ Status SHT3x::startPeriodic(PeriodicRate rate, Repeatability rep) {
     return Status::Error(Err::INVALID_PARAM, "Invalid periodic settings");
   }
 
-  return _enterPeriodic(rate, rep, false);
+  Status st = _enterPeriodic(rate, rep, false);
+  if (st.ok()) {
+    _cachedSettings.mode = Mode::PERIODIC;
+    _cachedSettings.repeatability = rep;
+    _cachedSettings.periodicRate = rate;
+    _hasCachedSettings = true;
+  }
+  return st;
 }
 
 Status SHT3x::startArt() {
@@ -575,7 +551,14 @@ Status SHT3x::startArt() {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
 
-  return _enterPeriodic(_config.periodicRate, _config.repeatability, true);
+  Status st = _enterPeriodic(_config.periodicRate, _config.repeatability, true);
+  if (st.ok()) {
+    _cachedSettings.mode = Mode::ART;
+    _cachedSettings.repeatability = _config.repeatability;
+    _cachedSettings.periodicRate = _config.periodicRate;
+    _hasCachedSettings = true;
+  }
+  return st;
 }
 
 Status SHT3x::stopPeriodic() {
@@ -583,7 +566,12 @@ Status SHT3x::stopPeriodic() {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
 
-  return _stopPeriodicInternal();
+  Status st = _stopPeriodicInternal();
+  if (st.ok()) {
+    _cachedSettings.mode = Mode::SINGLE_SHOT;
+    _hasCachedSettings = true;
+  }
+  return st;
 }
 
 Status SHT3x::readStatus(uint16_t& raw) {
@@ -634,7 +622,12 @@ Status SHT3x::setHeater(bool enable) {
     return Status::Error(Err::BUSY, "Stop periodic mode before changing heater");
   }
 
-  return _writeCommand(enable ? cmd::CMD_HEATER_ENABLE : cmd::CMD_HEATER_DISABLE, true);
+  Status st = _writeCommand(enable ? cmd::CMD_HEATER_ENABLE : cmd::CMD_HEATER_DISABLE, true);
+  if (st.ok()) {
+    _cachedSettings.heaterEnabled = enable;
+    _hasCachedSettings = true;
+  }
+  return st;
 }
 
 Status SHT3x::readHeaterStatus(bool& enabled) {
@@ -866,6 +859,12 @@ Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
     return Status::Error(Err::COMMAND_FAILED, "Command rejected");
   }
 
+  const uint8_t idx = static_cast<uint8_t>(kind);
+  if (idx < 4) {
+    _cachedSettings.alertRaw[idx] = value;
+    _cachedSettings.alertValid[idx] = true;
+    _hasCachedSettings = true;
+  }
   return Status::Ok();
 }
 
@@ -987,6 +986,157 @@ uint32_t SHT3x::_periodicRetryMs(uint32_t nowMs) const {
     return nowMs + _config.commandDelayMs;
   }
   return nowMs + _periodMs + _periodicFetchMarginMs();
+}
+
+void SHT3x::_setSafeBaseline() {
+  _measurementRequested = false;
+  _measurementReady = false;
+  _measurementReadyMs = 0;
+  _periodicActive = false;
+  _periodicStartMs = 0;
+  _lastFetchMs = 0;
+  _periodMs = 0;
+  _sampleTimestampMs = 0;
+  _missedSamples = 0;
+  _notReadyStartMs = 0;
+  _notReadyCount = 0;
+  _mode = Mode::SINGLE_SHOT;
+  _config.mode = Mode::SINGLE_SHOT;
+}
+
+void SHT3x::_setDefaultsToConfigAndCache() {
+  Config defaults;
+  _config.repeatability = defaults.repeatability;
+  _config.periodicRate = defaults.periodicRate;
+  _config.clockStretching = defaults.clockStretching;
+  _config.mode = defaults.mode;
+  _mode = defaults.mode;
+
+  _cachedSettings = defaultCachedSettings();
+  _hasCachedSettings = true;
+}
+
+void SHT3x::_syncCacheFromConfig() {
+  _cachedSettings.mode = _mode;
+  _cachedSettings.repeatability = _config.repeatability;
+  _cachedSettings.periodicRate = _config.periodicRate;
+  _cachedSettings.clockStretching = _config.clockStretching;
+}
+
+Status SHT3x::_applyCachedSettingsAfterReset() {
+  Status st = setRepeatability(_cachedSettings.repeatability);
+  if (!st.ok()) {
+    return st;
+  }
+  st = setClockStretching(_cachedSettings.clockStretching);
+  if (!st.ok()) {
+    return st;
+  }
+  st = setPeriodicRate(_cachedSettings.periodicRate);
+  if (!st.ok()) {
+    return st;
+  }
+  st = setHeater(_cachedSettings.heaterEnabled);
+  if (!st.ok()) {
+    return st;
+  }
+
+  for (size_t i = 0; i < 4; ++i) {
+    if (!_cachedSettings.alertValid[i]) {
+      continue;
+    }
+    const auto kind = static_cast<AlertLimitKind>(i);
+    st = writeAlertLimitRaw(kind, _cachedSettings.alertRaw[i]);
+    if (!st.ok()) {
+      return st;
+    }
+  }
+
+  if (_cachedSettings.mode == Mode::PERIODIC) {
+    return startPeriodic(_cachedSettings.periodicRate, _cachedSettings.repeatability);
+  }
+  if (_cachedSettings.mode == Mode::ART) {
+    return startArt();
+  }
+  return Status::Ok();
+}
+
+Status SHT3x::_performRecoveryLadder() {
+  const uint32_t now = millis();
+  if (_config.recoverBackoffMs > 0 &&
+      !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
+    return Status::Error(Err::BUSY, "Recovery backoff active");
+  }
+  _lastRecoverMs = now;
+
+  auto probeTracked = [this]() -> Status {
+    uint16_t statusRaw = 0;
+    return _readStatusRaw(statusRaw, true);
+  };
+
+  Status last = Status::Error(Err::I2C_ERROR, "Recovery failed");
+
+  if (_config.recoverUseBusReset && _config.busReset != nullptr) {
+    Status st = interfaceReset();
+    if (st.ok()) {
+      st = probeTracked();
+      if (st.ok()) {
+        return Status::Ok();
+      }
+      last = st;
+    } else {
+      last = st;
+    }
+  }
+
+  if (_config.recoverUseSoftReset) {
+    Status stStop = Status::Ok();
+    if (_periodicActive) {
+      stStop = _stopPeriodicInternal();
+      if (!stStop.ok()) {
+        last = stStop;
+      }
+    }
+
+    if (stStop.ok()) {
+      Status st = softReset();
+      if (st.ok()) {
+        st = probeTracked();
+        if (st.ok()) {
+          return Status::Ok();
+        }
+      }
+      last = st;
+    }
+  }
+
+  if (_config.recoverUseHardReset && _config.hardReset != nullptr) {
+    Status st = _config.hardReset(_config.i2cUser);
+    if (st.ok()) {
+      st = _waitMs(RESET_DELAY_MS);
+      if (!st.ok()) {
+        return st;
+      }
+      st = probeTracked();
+      if (st.ok()) {
+        return Status::Ok();
+      }
+    }
+    last = st;
+  }
+
+  if (_config.allowGeneralCallReset) {
+    Status st = generalCallReset();
+    if (st.ok()) {
+      st = probeTracked();
+      if (st.ok()) {
+        return Status::Ok();
+      }
+    }
+    last = st;
+  }
+
+  return last;
 }
 
 Status SHT3x::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,

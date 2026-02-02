@@ -19,6 +19,7 @@ using SHT3x::Err;
 /// @param timeoutMs Wire timeout in milliseconds
 /// @return true if initialized
 inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
+  // Example-only convenience. In a managed bus, the manager should own these settings.
   Wire.begin(sda, scl);
   Wire.setClock(freqHz);
   Wire.setTimeOut(timeoutMs);
@@ -29,16 +30,17 @@ inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
 /// @param addr I2C device address (7-bit)
 /// @param data Data buffer to write
 /// @param len Number of bytes to write
-/// @param timeoutMs Timeout (used to set Wire timeout)
+/// @param timeoutMs Timeout requested by the driver (manager-owned in shared buses)
 /// @param user User context (unused)
 /// @return Status indicating success or failure
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
   (void)user;
-  Wire.setTimeOut(timeoutMs);
+  (void)timeoutMs;
 
   Wire.beginTransmission(addr);
   size_t written = Wire.write(data, len);
+  // SHT3x requires STOP between command write and read header.
   uint8_t result = Wire.endTransmission(true);
 
   if (result != 0) {
@@ -66,14 +68,14 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 /// @param txLen Number of bytes to write (must be 0 for SHT3x reads)
 /// @param rxData Buffer for read data
 /// @param rxLen Number of bytes to read
-/// @param timeoutMs Timeout (used to set Wire timeout)
+/// @param timeoutMs Timeout requested by the driver (manager-owned in shared buses)
 /// @param user User context (unused)
 /// @return Status indicating success or failure
 inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint8_t* rxData, size_t rxLen,
                             uint32_t timeoutMs, void* user) {
   (void)user;
-  Wire.setTimeOut(timeoutMs);
+  (void)timeoutMs;
 
   if (txLen > 0) {
     return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");

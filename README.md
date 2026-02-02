@@ -50,7 +50,7 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
 
 SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                        uint32_t timeoutMs, void* user) {
-  Wire.setTimeOut(timeoutMs);
+  (void)timeoutMs;  // Manager-owned in shared buses
   Wire.beginTransmission(addr);
   Wire.write(data, len);
   uint8_t result = Wire.endTransmission(true);
@@ -66,7 +66,7 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
   if (rxLen == 0) {
     return SHT3x::Status::Ok();
   }
-  Wire.setTimeOut(timeoutMs);
+  (void)timeoutMs;  // Manager-owned in shared buses
   size_t received = Wire.requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {
@@ -157,8 +157,10 @@ write+read with repeated-start for SHT3x flows.
 With Wire, a 0-byte `requestFrom()` must be treated as an ambiguous error
 (return `Err::I2C_ERROR`), not a read-header NACK.
 Wire cannot prove read-header NACK, so expected-NACK semantics are disabled.
-If you change `Wire.setTimeOut(timeoutMs)` per call, ensure the adapter is single-threaded
-or externally serialized so the timeout change is safe.
+`timeoutMs` passed to callbacks is a requested bound; in a managed bus the I2CManager
+owns the actual Wire timeout and may ignore per-call changes.
+I2CManager owns Wire clock/timeout configuration; library code must not mutate global
+Wire settings.
 
 ## Expected NACK Semantics
 
@@ -193,6 +195,34 @@ The driver has no unbounded loops.
 Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`--the orchestrator triggers it.
 
 After a successful `recover()`, the driver is left in **SINGLE_SHOT** idle mode with measurement state cleared. If you need periodic/ART/heater, re-apply those settings in your orchestrator.
+
+Two explicit reset APIs are available:
+
+- `resetToDefaults()` resets the sensor and clears cached settings to library defaults (no restore).
+- `resetAndRestore()` resets the sensor and restores cached settings from RAM (no NVM on SHT3x).
+SHT3x settings are volatile; restore uses RAM cache only.
+
+Cached settings (RAM only):
+- mode (SINGLE_SHOT / PERIODIC / ART)
+- repeatability
+- periodicRate
+- clockStretching
+- heaterEnabled
+- alert limits (raw, per register)
+
+Example usage:
+```cpp
+sensor.setRepeatability(SHT3x::Repeatability::MEDIUM_REPEATABILITY);
+sensor.setHeater(true);
+sensor.writeAlertLimitRaw(SHT3x::AlertLimitKind::HIGH_SET, 0x2222);
+sensor.startPeriodic(SHT3x::PeriodicRate::MPS_2,
+                     SHT3x::Repeatability::MEDIUM_REPEATABILITY);
+
+// On fault:
+sensor.resetToDefaults();   // app must reconfigure
+// or
+sensor.resetAndRestore();   // restores cached settings
+```
 
 ## Thread-Safety / ISR-Safety
 

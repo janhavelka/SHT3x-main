@@ -81,6 +81,7 @@ I2C operations are layered:
 - Only tracked wrappers call _updateHealth()
 - Raw wrappers are used for probe() and diagnostics without health updates
 - Expected-NACK handling is gated by Config::transportCapabilities
+- In managed buses, the I2CManager owns Wire clock/timeout; driver callbacks receive timeoutMs as a requested bound.
 
 Health fields:
 - _lastOkMs, _lastErrorMs, _lastError
@@ -88,7 +89,7 @@ Health fields:
 - _consecutiveFailures, _totalFailures, _totalSuccess
 - DriverState: UNINIT, READY, DEGRADED, OFFLINE
 
-## Recovery
+## Recovery and Reset
 - recover() uses a configurable ladder (comms-only):
   1) Interface reset (busReset callback), then probe
   2) Soft reset, then probe
@@ -96,6 +97,13 @@ Health fields:
   4) General call reset (opt-in), then probe
 - Returns to SINGLE_SHOT idle on success (no mode/heater/alert restore)
 - Enforced backoff via Config::recoverBackoffMs
+- resetToDefaults(): performs the same ladder, clears pending measurement state, and resets cached settings to defaults.
+- resetAndRestore(): performs the same ladder, then reapplies cached settings from RAM (repeatability, periodic rate, heater, alert limits, mode).
+- Cached settings are updated only after successful apply operations and are volatile (no sensor NVM).
+- Cached fields: mode, repeatability, periodicRate, clockStretching, heaterEnabled, alertRaw/alertValid.
+- Example usage:
+  - apply settings once, then call resetToDefaults() to return to defaults (app reconfigures)
+  - or call resetAndRestore() to reapply cached settings after reset
 
 ## Command coverage mapping
 All datasheet commands are implemented. Mapping below shows command to API:

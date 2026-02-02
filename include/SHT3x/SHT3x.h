@@ -65,6 +65,17 @@ struct SettingsSnapshot {
   bool statusValid = false;
 };
 
+/// Cached sensor settings for restore-after-reset (RAM only)
+struct CachedSettings {
+  Mode mode = Mode::SINGLE_SHOT;
+  Repeatability repeatability = Repeatability::HIGH_REPEATABILITY;
+  PeriodicRate periodicRate = PeriodicRate::MPS_1;
+  ClockStretching clockStretching = ClockStretching::STRETCH_DISABLED;
+  bool heaterEnabled = false;
+  bool alertValid[4] = {false, false, false, false};
+  uint16_t alertRaw[4] = {0, 0, 0, 0};
+};
+
 /// Alert limit selector
 enum class AlertLimitKind : uint8_t {
   HIGH_SET = 0,
@@ -110,6 +121,12 @@ public:
   /// Attempt to recover from DEGRADED/OFFLINE state
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
+
+  /// Reset sensor to defaults (no restore)
+  Status resetToDefaults();
+
+  /// Reset sensor and restore cached settings
+  Status resetAndRestore();
 
   // =========================================================================
   // Driver State
@@ -196,6 +213,12 @@ public:
 
   /// Get a snapshot of current settings/state (no I2C)
   Status getSettings(SettingsSnapshot& out) const;
+
+  /// Get cached settings for restore-after-reset
+  CachedSettings getCachedSettings() const { return _cachedSettings; }
+
+  /// Check if cached settings are available
+  bool hasCachedSettings() const { return _hasCachedSettings; }
 
   /// Get a snapshot of settings/state and attempt to read status register
   /// statusValid is true only if the status read succeeds. If periodic mode
@@ -381,6 +404,11 @@ private:
   Status _startSingleShot();
   Status _enterPeriodic(PeriodicRate rate, Repeatability rep, bool art);
   Status _stopPeriodicInternal();
+  Status _applyCachedSettingsAfterReset();
+  Status _performRecoveryLadder();
+  void _setSafeBaseline();
+  void _setDefaultsToConfigAndCache();
+  void _syncCacheFromConfig();
 
   static uint8_t _crc8(const uint8_t* data, size_t len);
   static uint16_t _commandForSingleShot(Repeatability rep, ClockStretching stretch);
@@ -422,6 +450,9 @@ private:
   uint32_t _notReadyStartMs = 0;
   uint32_t _notReadyCount = 0;
   uint32_t _lastRecoverMs = 0;
+
+  CachedSettings _cachedSettings = {};
+  bool _hasCachedSettings = false;
 
   RawSample _rawSample;
   CompensatedSample _compSample;

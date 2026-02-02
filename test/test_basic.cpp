@@ -274,6 +274,42 @@ static Status countWrite(uint8_t addr, const uint8_t* data, size_t len,
   return Status::Ok();
 }
 
+struct LogTransport {
+  Status writeStatus = Status::Ok();
+  Status writeReadStatus = Status::Ok();
+  uint16_t commands[32] = {};
+  size_t count = 0;
+};
+
+static Status logWrite(uint8_t addr, const uint8_t* data, size_t len,
+                       uint32_t timeoutMs, void* user) {
+  (void)addr;
+  (void)timeoutMs;
+  auto* ctx = static_cast<LogTransport*>(user);
+  if (len >= 2 && ctx->count < 32) {
+    const uint16_t cmd = static_cast<uint16_t>((data[0] << 8) | data[1]);
+    ctx->commands[ctx->count++] = cmd;
+  }
+  return ctx->writeStatus;
+}
+
+static Status logWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
+                           uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                           void* user) {
+  (void)addr;
+  (void)txData;
+  (void)txLen;
+  (void)timeoutMs;
+  auto* ctx = static_cast<LogTransport*>(user);
+  Status st = ctx->writeReadStatus;
+  if (st.ok() && rxData != nullptr && rxLen == 3) {
+    rxData[0] = 0x00;
+    rxData[1] = 0x00;
+    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+  }
+  return st;
+}
+
 static Status countWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                              uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                              void* user) {
@@ -403,22 +439,128 @@ void test_example_adapter_ambiguous_zero_bytes() {
 }
 
 void test_wire_adapter_timeout_and_stop() {
+  Wire.setTimeOut(123);
+  Wire._clearClockSetCount();
   uint8_t buf[2] = {0x00, 0x00};
   Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, nullptr);
   TEST_ASSERT_TRUE(st.ok());
-  TEST_ASSERT_EQUAL_UINT32(33u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(0u, Wire._clockSetCount());
   TEST_ASSERT_TRUE(Wire._lastStopWasTrue());
 }
 
 void test_wire_adapter_drains_partial_read() {
+  Wire.setTimeOut(123);
   Wire._setRequestFromResult(2);
   Wire._clearReadCallCount();
   uint8_t buf[6] = {};
   Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, nullptr);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
-  TEST_ASSERT_EQUAL_UINT32(20u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());
   Wire._clearRequestFromOverride();
+}
+
+void test_cache_updates_only_on_success() {
+  LogTransport ctx;
+  SHT3x device;
+  device._config.i2cWrite = logWrite;
+  device._config.i2cWriteRead = logWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._cachedSettings = CachedSettings{};
+  device._hasCachedSettings = true;
+
+  Status st = device.setHeater(true);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(device._cachedSettings.heaterEnabled);
+
+  ctx.writeStatus = Status::Error(Err::I2C_ERROR, "fail");
+  st = device.setHeater(false);
+  TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_TRUE(device._cachedSettings.heaterEnabled);
+}
+
+void test_reset_to_defaults_clears_cache() {
+  LogTransport ctx;
+  SHT3x device;
+  device._config.i2cWrite = logWrite;
+  device._config.i2cWriteRead = logWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.recoverUseBusReset = false;
+  device._config.recoverUseSoftReset = true;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+
+  device._cachedSettings.mode = Mode::PERIODIC;
+  device._cachedSettings.repeatability = Repeatability::LOW_REPEATABILITY;
+  device._cachedSettings.periodicRate = PeriodicRate::MPS_4;
+  device._cachedSettings.clockStretching = ClockStretching::STRETCH_ENABLED;
+  device._cachedSettings.heaterEnabled = true;
+  device._cachedSettings.alertValid[0] = true;
+  device._cachedSettings.alertRaw[0] = 0x1234;
+  device._hasCachedSettings = true;
+
+  Status st = device.resetToDefaults();
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
+  TEST_ASSERT_FALSE(device._periodicActive);
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._cachedSettings.mode);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Repeatability::HIGH_REPEATABILITY),
+                    static_cast<uint8_t>(device._cachedSettings.repeatability));
+  TEST_ASSERT_FALSE(device._cachedSettings.heaterEnabled);
+  TEST_ASSERT_FALSE(device._cachedSettings.alertValid[0]);
+}
+
+void test_reset_and_restore_applies_cached_settings() {
+  LogTransport ctx;
+  SHT3x device;
+  device._config.i2cWrite = logWrite;
+  device._config.i2cWriteRead = logWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.recoverUseBusReset = false;
+  device._config.recoverUseSoftReset = true;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+
+  device._cachedSettings.mode = Mode::PERIODIC;
+  device._cachedSettings.repeatability = Repeatability::MEDIUM_REPEATABILITY;
+  device._cachedSettings.periodicRate = PeriodicRate::MPS_2;
+  device._cachedSettings.clockStretching = ClockStretching::STRETCH_DISABLED;
+  device._cachedSettings.heaterEnabled = true;
+  device._cachedSettings.alertValid[static_cast<uint8_t>(AlertLimitKind::HIGH_SET)] = true;
+  device._cachedSettings.alertRaw[static_cast<uint8_t>(AlertLimitKind::HIGH_SET)] = 0x2222;
+  device._hasCachedSettings = true;
+
+  Status st = device.resetAndRestore();
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(device._periodicActive);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+
+  const uint16_t periodicCmd = SHT3x::_commandForPeriodic(
+      device._cachedSettings.repeatability,
+      device._cachedSettings.periodicRate);
+  bool sawAlert = false;
+  bool sawPeriodic = false;
+  size_t alertIdx = 0;
+  size_t periodicIdx = 0;
+  for (size_t i = 0; i < ctx.count; ++i) {
+    if (ctx.commands[i] == cmd::CMD_ALERT_WRITE_HIGH_SET) {
+      sawAlert = true;
+      alertIdx = i;
+    }
+    if (ctx.commands[i] == periodicCmd) {
+      sawPeriodic = true;
+      periodicIdx = i;
+    }
+  }
+  TEST_ASSERT_TRUE(sawAlert);
+  TEST_ASSERT_TRUE(sawPeriodic);
+  TEST_ASSERT_TRUE(alertIdx < periodicIdx);
 }
 
 void test_read_paths_no_combined_and_respect_delay() {
@@ -581,6 +723,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_example_adapter_ambiguous_zero_bytes);
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_drains_partial_read);
+  RUN_TEST(test_cache_updates_only_on_success);
+  RUN_TEST(test_reset_to_defaults_clears_cache);
+  RUN_TEST(test_reset_and_restore_applies_cached_settings);
   RUN_TEST(test_read_paths_no_combined_and_respect_delay);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_recover_transient_failure);
