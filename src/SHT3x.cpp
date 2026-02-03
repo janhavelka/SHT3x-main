@@ -99,6 +99,7 @@ Status SHT3x::begin(const Config& config) {
   _mode = Mode::SINGLE_SHOT;
   _periodicActive = false;
   _lastCommandUs = 0;
+  _lastCommandValid = false;
   _cachedSettings = defaultCachedSettings();
   _hasCachedSettings = false;
 
@@ -213,6 +214,7 @@ void SHT3x::tick(uint32_t nowMs) {
 void SHT3x::end() {
   _initialized = false;
   _driverState = DriverState::UNINIT;
+  _lastCommandValid = false;
 }
 
 Status SHT3x::probe() {
@@ -1089,7 +1091,7 @@ Status SHT3x::_applyCachedSettingsAfterReset() {
 
 Status SHT3x::_performRecoveryLadder() {
   const uint32_t now = millis();
-  if (_config.recoverBackoffMs > 0 &&
+  if (_config.recoverBackoffMs > 0 && _lastRecoverMs != 0 &&
       !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
     return Status::Error(Err::BUSY, "Recovery backoff active");
   }
@@ -1273,6 +1275,7 @@ Status SHT3x::_writeCommand(uint16_t cmd, bool tracked) {
   }
 
   _lastCommandUs = micros();
+  _lastCommandValid = true;
   return Status::Ok();
 }
 
@@ -1296,6 +1299,7 @@ Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked) {
   }
 
   _lastCommandUs = micros();
+  _lastCommandValid = true;
   return Status::Ok();
 }
 
@@ -1377,7 +1381,7 @@ void SHT3x::_recordBusActivity(uint32_t nowMs) {
 }
 
 Status SHT3x::_ensureCommandDelay() {
-  if (_lastCommandUs == 0) {
+  if (!_lastCommandValid) {
     return Status::Ok();
   }
 

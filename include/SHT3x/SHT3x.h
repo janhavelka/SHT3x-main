@@ -437,6 +437,7 @@ private:
 
   // Command timing
   uint32_t _lastCommandUs = 0;
+  bool _lastCommandValid = false;
 
   // Measurement state
   bool _measurementRequested = false;

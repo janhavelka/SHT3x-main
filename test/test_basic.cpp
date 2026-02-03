@@ -132,6 +132,7 @@ void test_command_delay_guard() {
   gMillis = 0;
   gMillisStep = 0;
   device._lastCommandUs = micros();
+  device._lastCommandValid = true;
   Status st = device._ensureCommandDelay();
   TEST_ASSERT_EQUAL(Err::TIMEOUT, st.code);
 }
@@ -512,6 +513,11 @@ void test_reset_to_defaults_clears_cache() {
   device._initialized = true;
   device._driverState = DriverState::READY;
 
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
+
   device._cachedSettings.mode = Mode::PERIODIC;
   device._cachedSettings.repeatability = Repeatability::LOW_REPEATABILITY;
   device._cachedSettings.periodicRate = PeriodicRate::MPS_4;
@@ -543,6 +549,11 @@ void test_reset_and_restore_applies_cached_settings() {
   device._config.recoverUseSoftReset = true;
   device._initialized = true;
   device._driverState = DriverState::READY;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
 
   device._cachedSettings.mode = Mode::PERIODIC;
   device._cachedSettings.repeatability = Repeatability::MEDIUM_REPEATABILITY;
@@ -591,6 +602,11 @@ void test_setters_restart_art_mode() {
   device._driverState = DriverState::READY;
   device._mode = Mode::ART;
   device._periodicActive = true;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
 
   ctx.count = 0;
   Status st = device.setRepeatability(Repeatability::LOW_REPEATABILITY);
@@ -709,7 +725,9 @@ void test_recover_transient_failure() {
   device._driverState = DriverState::READY;
 
   gMillis = 0;
-  gMillisStep = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
   Status st = device.recover();
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
@@ -735,7 +753,9 @@ void test_recover_permanent_offline() {
   device._driverState = DriverState::READY;
 
   gMillis = 0;
-  gMillisStep = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
   Status st = device.recover();
   TEST_ASSERT_FALSE(st.ok());
   TEST_ASSERT_TRUE(device._consecutiveFailures > 0);
