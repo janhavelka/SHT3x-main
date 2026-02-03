@@ -22,6 +22,7 @@ uint32_t gMicrosStep = 0;
 #undef private
 
 using namespace SHT3x;
+using SHT3xDevice = SHT3x::SHT3x;
 
 // ============================================================================
 // Test Helpers
@@ -84,45 +85,45 @@ void test_config_defaults() {
 
 void test_crc8_example() {
   const uint8_t data[2] = {0xBE, 0xEF};
-  const uint8_t crc = SHT3x::_crc8(data, 2);
+  const uint8_t crc = SHT3xDevice::_crc8(data, 2);
   TEST_ASSERT_EQUAL(0x92, crc);
 }
 
 void test_conversions_basic() {
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, -45.0f, SHT3x::convertTemperatureC(0));
-  TEST_ASSERT_FLOAT_WITHIN(0.02f, 130.0f, SHT3x::convertTemperatureC(65535));
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, SHT3x::convertHumidityPct(0));
-  TEST_ASSERT_FLOAT_WITHIN(0.02f, 100.0f, SHT3x::convertHumidityPct(65535));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, -45.0f, SHT3xDevice::convertTemperatureC(0));
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 130.0f, SHT3xDevice::convertTemperatureC(65535));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, SHT3xDevice::convertHumidityPct(0));
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 100.0f, SHT3xDevice::convertHumidityPct(65535));
 
-  TEST_ASSERT_EQUAL_INT(-4500, SHT3x::convertTemperatureC_x100(0));
-  TEST_ASSERT_EQUAL_INT(13000, SHT3x::convertTemperatureC_x100(65535));
-  TEST_ASSERT_EQUAL_UINT32(0u, SHT3x::convertHumidityPct_x100(0));
-  TEST_ASSERT_EQUAL_UINT32(10000u, SHT3x::convertHumidityPct_x100(65535));
+  TEST_ASSERT_EQUAL_INT(-4500, SHT3xDevice::convertTemperatureC_x100(0));
+  TEST_ASSERT_EQUAL_INT(13000, SHT3xDevice::convertTemperatureC_x100(65535));
+  TEST_ASSERT_EQUAL_UINT32(0u, SHT3xDevice::convertHumidityPct_x100(0));
+  TEST_ASSERT_EQUAL_UINT32(10000u, SHT3xDevice::convertHumidityPct_x100(65535));
 }
 
 void test_alert_limit_roundtrip() {
   const float tIn = 25.3f;
   const float rhIn = 47.8f;
-  const uint16_t packed = SHT3x::encodeAlertLimit(tIn, rhIn);
+  const uint16_t packed = SHT3xDevice::encodeAlertLimit(tIn, rhIn);
   float tOut = 0.0f;
   float rhOut = 0.0f;
-  SHT3x::decodeAlertLimit(packed, tOut, rhOut);
+  SHT3xDevice::decodeAlertLimit(packed, tOut, rhOut);
   TEST_ASSERT_FLOAT_WITHIN(0.6f, tIn, tOut);
   TEST_ASSERT_FLOAT_WITHIN(1.5f, rhIn, rhOut);
 }
 
 void test_time_elapsed_wrap() {
-  TEST_ASSERT_FALSE(SHT3x::_timeElapsed(5, 10));
-  TEST_ASSERT_TRUE(SHT3x::_timeElapsed(10, 10));
-  TEST_ASSERT_TRUE(SHT3x::_timeElapsed(10, 5));
+  TEST_ASSERT_FALSE(SHT3xDevice::_timeElapsed(5, 10));
+  TEST_ASSERT_TRUE(SHT3xDevice::_timeElapsed(10, 10));
+  TEST_ASSERT_TRUE(SHT3xDevice::_timeElapsed(10, 5));
 
   const uint32_t nearMax = 0xFFFFFFF0U;
-  TEST_ASSERT_TRUE(SHT3x::_timeElapsed(5, nearMax));
-  TEST_ASSERT_FALSE(SHT3x::_timeElapsed(nearMax, 5));
+  TEST_ASSERT_TRUE(SHT3xDevice::_timeElapsed(5, nearMax));
+  TEST_ASSERT_FALSE(SHT3xDevice::_timeElapsed(nearMax, 5));
 }
 
 void test_command_delay_guard() {
-  SHT3x device;
+  SHT3xDevice device;
   device._initialized = true;
   device._config.commandDelayMs = 1;
   device._config.i2cTimeoutMs = 1;
@@ -161,10 +162,10 @@ static Status fakeWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   if (ctx->writeReadStatus.ok() && rxData != nullptr && rxLen == 6) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
-    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
     rxData[3] = 0x00;
     rxData[4] = 0x00;
-    rxData[5] = SHT3x::_crc8(&rxData[3], 2);
+    rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
   }
   return ctx->writeReadStatus;
 }
@@ -206,13 +207,13 @@ static Status scriptedWriteRead(uint8_t addr, const uint8_t* txData, size_t txLe
   if (st.ok() && rxData != nullptr && rxLen == 3) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
-    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
   }
   return st;
 }
 
 struct TimingTransport {
-  SHT3x* device = nullptr;
+  SHT3xDevice* device = nullptr;
   uint32_t minDelayUs = 0;
   bool tooSoon = false;
   bool combinedUsed = false;
@@ -248,11 +249,11 @@ static Status timingWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   if (rxData != nullptr && rxLen >= 3) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
-    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
     if (rxLen >= 6) {
       rxData[3] = 0x00;
       rxData[4] = 0x00;
-      rxData[5] = SHT3x::_crc8(&rxData[3], 2);
+      rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
     }
   }
   return Status::Ok();
@@ -305,7 +306,7 @@ static Status logWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   if (st.ok() && rxData != nullptr && rxLen == 3) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
-    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
   }
   return st;
 }
@@ -322,11 +323,11 @@ static Status countWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   if (rxData != nullptr && rxLen >= 3) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
-    rxData[2] = SHT3x::_crc8(&rxData[0], 2);
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
     if (rxLen >= 6) {
       rxData[3] = 0x00;
       rxData[4] = 0x00;
-      rxData[5] = SHT3x::_crc8(&rxData[3], 2);
+      rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
     }
   }
   return Status::Ok();
@@ -336,7 +337,7 @@ void test_expected_nack_mapping() {
   FakeTransport ctx;
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
 
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = fakeWrite;
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
@@ -362,7 +363,7 @@ void test_not_ready_timeout_escalation() {
   ctx.writeStatus = Status::Ok();
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
 
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = fakeWrite;
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
@@ -387,7 +388,7 @@ void test_nack_mapping_without_capability() {
   FakeTransport ctx;
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
 
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = fakeWrite;
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
@@ -409,7 +410,7 @@ void test_periodic_fetch_expected_nack_no_failure() {
   ctx.writeStatus = Status::Ok();
   ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
 
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = fakeWrite;
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
@@ -463,7 +464,7 @@ void test_wire_adapter_drains_partial_read() {
 
 void test_cache_updates_only_on_success() {
   LogTransport ctx;
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = logWrite;
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
@@ -484,7 +485,7 @@ void test_cache_updates_only_on_success() {
 }
 
 void test_write_alert_limit_rejects_nan() {
-  SHT3x device;
+  SHT3xDevice device;
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._config.i2cWrite = fakeWrite;
@@ -501,7 +502,7 @@ void test_write_alert_limit_rejects_nan() {
 
 void test_reset_to_defaults_clears_cache() {
   LogTransport ctx;
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = logWrite;
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
@@ -533,7 +534,7 @@ void test_reset_to_defaults_clears_cache() {
 
 void test_reset_and_restore_applies_cached_settings() {
   LogTransport ctx;
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = logWrite;
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
@@ -557,7 +558,7 @@ void test_reset_and_restore_applies_cached_settings() {
   TEST_ASSERT_TRUE(device._periodicActive);
   TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
 
-  const uint16_t periodicCmd = SHT3x::_commandForPeriodic(
+  const uint16_t periodicCmd = SHT3xDevice::_commandForPeriodic(
       device._cachedSettings.repeatability,
       device._cachedSettings.periodicRate);
   bool sawAlert = false;
@@ -581,7 +582,7 @@ void test_reset_and_restore_applies_cached_settings() {
 
 void test_setters_restart_art_mode() {
   LogTransport ctx;
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = logWrite;
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
@@ -606,7 +607,7 @@ void test_setters_restart_art_mode() {
 
 void test_read_paths_no_combined_and_respect_delay() {
   TimingTransport ctx;
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = timingWrite;
   device._config.i2cWriteRead = timingWriteRead;
   device._config.i2cUser = &ctx;
@@ -649,7 +650,7 @@ void test_read_paths_no_combined_and_respect_delay() {
 
 void test_periodic_fetch_margin_blocks_early_fetch() {
   CountTransport ctx;
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = countWrite;
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
@@ -695,7 +696,7 @@ void test_recover_transient_failure() {
     return Status::Ok();
   };
 
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = scriptedWrite;
   device._config.i2cWriteRead = scriptedWriteRead;
   device._config.i2cUser = &ctx;
@@ -722,7 +723,7 @@ void test_recover_permanent_offline() {
   ctx.readScript[2] = Status::Error(Err::I2C_TIMEOUT, "timeout");
   ctx.readCount = 3;
 
-  SHT3x device;
+  SHT3xDevice device;
   device._config.i2cWrite = scriptedWrite;
   device._config.i2cWriteRead = scriptedWriteRead;
   device._config.i2cUser = &ctx;
