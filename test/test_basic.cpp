@@ -379,7 +379,9 @@ void test_not_ready_timeout_escalation() {
   device._notReadyStartMs = 1;
 
   gMillis = 10;
-  gMillisStep = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
   Status st = device._fetchPeriodic();
   TEST_ASSERT_NOT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
   TEST_ASSERT_TRUE(device._consecutiveFailures > 0);
@@ -424,6 +426,10 @@ void test_periodic_fetch_expected_nack_no_failure() {
   device._periodMs = 100;
   device._consecutiveFailures = 0;
 
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
   Status st = device._fetchPeriodic();
   TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
   TEST_ASSERT_EQUAL_UINT8(0, device._consecutiveFailures);
