@@ -160,13 +160,15 @@ static Status fakeWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   (void)txLen;
   (void)timeoutMs;
   auto* ctx = static_cast<FakeTransport*>(user);
-  if (ctx->writeReadStatus.ok() && rxData != nullptr && rxLen == 6) {
+  if (ctx->writeReadStatus.ok() && rxData != nullptr && rxLen >= 3) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
     rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
-    rxData[3] = 0x00;
-    rxData[4] = 0x00;
-    rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
+    if (rxLen >= 6) {
+      rxData[3] = 0x00;
+      rxData[4] = 0x00;
+      rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
+    }
   }
   return ctx->writeReadStatus;
 }
@@ -332,6 +334,98 @@ static Status countWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     }
   }
   return Status::Ok();
+}
+
+void test_begin_rejects_oversized_timing_config() {
+  FakeTransport ctx;
+  Config cfg;
+  cfg.i2cWrite = fakeWrite;
+  cfg.i2cWriteRead = fakeWriteRead;
+  cfg.i2cUser = &ctx;
+
+  SHT3xDevice device;
+  cfg.i2cTimeoutMs = 60001;
+  Status st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+
+  cfg.i2cTimeoutMs = 50;
+  cfg.commandDelayMs = 1001;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+
+  cfg.commandDelayMs = 1;
+  cfg.notReadyTimeoutMs = 600001;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+
+  cfg.notReadyTimeoutMs = 0;
+  cfg.periodicFetchMarginMs = 60001;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+
+  cfg.periodicFetchMarginMs = 0;
+  cfg.recoverBackoffMs = 600001;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+}
+
+void test_single_shot_pending_blocks_unrelated_commands() {
+  CountTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::SINGLE_SHOT;
+  device._measurementRequested = true;
+  device._measurementReady = false;
+  device._periodicActive = false;
+
+  uint16_t statusRaw = 0;
+  Status st = device.readStatus(statusRaw);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  uint32_t serial = 0;
+  st = device.readSerialNumber(serial);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  st = device.probe();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_raw_transport_rejects_invalid_buffers() {
+  FakeTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = fakeWrite;
+  device._config.i2cWriteRead = fakeWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+
+  uint8_t byte = 0x00;
+  uint8_t rx[3] = {};
+
+  Status st = device._i2cWriteRaw(nullptr, 1);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = device._i2cWriteRaw(&byte, 0);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = device._i2cWriteReadRaw(nullptr, 1, rx, 0);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = device._i2cWriteReadRaw(nullptr, 0, nullptr, 1);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = device._i2cWriteReadRaw(nullptr, 0, nullptr, 0);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
 
 void test_expected_nack_mapping() {
@@ -767,6 +861,82 @@ void test_recover_permanent_offline() {
   TEST_ASSERT_TRUE(device._consecutiveFailures > 0);
 }
 
+void test_recover_backoff_enforced_at_zero_ms() {
+  ScriptedTransport ctx;
+  ctx.readScript[0] = Status::Error(Err::I2C_TIMEOUT, "timeout");
+  ctx.readCount = 1;
+
+  SHT3xDevice device;
+  device._config.i2cWrite = scriptedWrite;
+  device._config.i2cWriteRead = scriptedWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.recoverBackoffMs = 100;
+  device._config.recoverUseBusReset = false;
+  device._config.recoverUseSoftReset = false;
+  device._config.recoverUseHardReset = false;
+  device._config.allowGeneralCallReset = false;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 0;
+  gMicrosStep = 1000;
+
+  Status st = device.recover();
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+
+  st = device.recover();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+}
+
+void test_periodic_fetch_margin_is_clamped() {
+  SHT3xDevice device;
+  device._periodMs = 100;
+  device._config.periodicFetchMarginMs = 1000;
+  TEST_ASSERT_EQUAL_UINT32(100u, device._periodicFetchMarginMs());
+}
+
+void test_end_clears_runtime_state() {
+  SHT3xDevice device;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._measurementRequested = true;
+  device._measurementReady = true;
+  device._measurementReadyMs = 123;
+  device._periodicActive = true;
+  device._periodicStartMs = 456;
+  device._lastFetchMs = 789;
+  device._periodMs = 100;
+  device._sampleTimestampMs = 111;
+  device._missedSamples = 12;
+  device._notReadyStartMs = 222;
+  device._notReadyCount = 333;
+  device._lastRecoverMs = 444;
+  device._lastRecoverValid = true;
+  device._lastCommandValid = true;
+
+  device.end();
+
+  TEST_ASSERT_FALSE(device._initialized);
+  TEST_ASSERT_EQUAL(DriverState::UNINIT, device._driverState);
+  TEST_ASSERT_FALSE(device._measurementRequested);
+  TEST_ASSERT_FALSE(device._measurementReady);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._measurementReadyMs);
+  TEST_ASSERT_FALSE(device._periodicActive);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._periodicStartMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._lastFetchMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._periodMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._sampleTimestampMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._missedSamples);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._notReadyStartMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._notReadyCount);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._lastRecoverMs);
+  TEST_ASSERT_FALSE(device._lastRecoverValid);
+  TEST_ASSERT_FALSE(device._lastCommandValid);
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -784,6 +954,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_alert_limit_roundtrip);
   RUN_TEST(test_time_elapsed_wrap);
   RUN_TEST(test_command_delay_guard);
+  RUN_TEST(test_begin_rejects_oversized_timing_config);
+  RUN_TEST(test_single_shot_pending_blocks_unrelated_commands);
+  RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_expected_nack_mapping);
   RUN_TEST(test_not_ready_timeout_escalation);
   RUN_TEST(test_nack_mapping_without_capability);
@@ -800,5 +973,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_recover_transient_failure);
   RUN_TEST(test_recover_permanent_offline);
+  RUN_TEST(test_recover_backoff_enforced_at_zero_ms);
+  RUN_TEST(test_periodic_fetch_margin_is_clamped);
+  RUN_TEST(test_end_clears_runtime_state);
   return UNITY_END();
 }

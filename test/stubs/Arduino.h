@@ -29,6 +29,7 @@ inline uint32_t micros() {
 }
 inline void delay(uint32_t ms) { (void)ms; }
 inline void delayMicroseconds(uint32_t us) { (void)us; }
+inline void yield() {}
 
 // Serial stub
 class SerialClass {

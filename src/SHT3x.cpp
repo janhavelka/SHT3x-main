@@ -20,6 +20,19 @@ static constexpr uint16_t MIN_COMMAND_DELAY_MS = 1;
 static constexpr uint32_t MEASUREMENT_MARGIN_MS = 1;
 static constexpr uint32_t ART_PERIOD_MS = 250;
 static constexpr uint32_t MAX_SPIN_ITERS = 500000;
+static constexpr uint32_t MAX_I2C_TIMEOUT_MS = 60000;
+static constexpr uint16_t MAX_COMMAND_DELAY_MS = 1000;
+static constexpr uint32_t MAX_NOT_READY_TIMEOUT_MS = 600000;
+static constexpr uint32_t MAX_PERIODIC_FETCH_MARGIN_MS = 60000;
+static constexpr uint32_t MAX_RECOVER_BACKOFF_MS = 600000;
+
+static uint32_t saturatingAddU32(uint32_t a, uint32_t b) {
+  const uint32_t maxU32 = std::numeric_limits<uint32_t>::max();
+  if (a > (maxU32 - b)) {
+    return maxU32;
+  }
+  return static_cast<uint32_t>(a + b);
+}
 
 static CachedSettings defaultCachedSettings() {
   CachedSettings settings;
@@ -94,6 +107,7 @@ Status SHT3x::begin(const Config& config) {
   _notReadyStartMs = 0;
   _notReadyCount = 0;
   _lastRecoverMs = 0;
+  _lastRecoverValid = false;
   _rawSample = RawSample{};
   _compSample = CompensatedSample{};
   _mode = Mode::SINGLE_SHOT;
@@ -109,6 +123,9 @@ Status SHT3x::begin(const Config& config) {
   if (config.i2cTimeoutMs == 0) {
     return Status::Error(Err::INVALID_CONFIG, "I2C timeout must be > 0");
   }
+  if (config.i2cTimeoutMs > MAX_I2C_TIMEOUT_MS) {
+    return Status::Error(Err::INVALID_CONFIG, "I2C timeout too large");
+  }
   if (config.i2cAddress != cmd::I2C_ADDR_LOW &&
       config.i2cAddress != cmd::I2C_ADDR_HIGH) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid I2C address");
@@ -118,6 +135,18 @@ Status SHT3x::begin(const Config& config) {
       !isValidPeriodicRate(config.periodicRate) ||
       !isValidMode(config.mode)) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid configuration value");
+  }
+  if (config.commandDelayMs > MAX_COMMAND_DELAY_MS) {
+    return Status::Error(Err::INVALID_CONFIG, "Command delay too large");
+  }
+  if (config.notReadyTimeoutMs > MAX_NOT_READY_TIMEOUT_MS) {
+    return Status::Error(Err::INVALID_CONFIG, "Not-ready timeout too large");
+  }
+  if (config.periodicFetchMarginMs > MAX_PERIODIC_FETCH_MARGIN_MS) {
+    return Status::Error(Err::INVALID_CONFIG, "Periodic fetch margin too large");
+  }
+  if (config.recoverBackoffMs > MAX_RECOVER_BACKOFF_MS) {
+    return Status::Error(Err::INVALID_CONFIG, "Recover backoff too large");
   }
 
   _config = config;
@@ -199,7 +228,7 @@ void SHT3x::tick(uint32_t nowMs) {
         uint32_t missed = elapsed / _periodMs;
         if (missed > 0) {
           missed -= 1;
-          _missedSamples += missed;
+          _missedSamples = saturatingAddU32(_missedSamples, missed);
         }
       }
     }
@@ -212,6 +241,19 @@ void SHT3x::tick(uint32_t nowMs) {
 }
 
 void SHT3x::end() {
+  _measurementRequested = false;
+  _measurementReady = false;
+  _measurementReadyMs = 0;
+  _periodicActive = false;
+  _periodicStartMs = 0;
+  _lastFetchMs = 0;
+  _periodMs = 0;
+  _sampleTimestampMs = 0;
+  _missedSamples = 0;
+  _notReadyStartMs = 0;
+  _notReadyCount = 0;
+  _lastRecoverMs = 0;
+  _lastRecoverValid = false;
   _initialized = false;
   _driverState = DriverState::UNINIT;
   _lastCommandValid = false;
@@ -220,6 +262,9 @@ void SHT3x::end() {
 Status SHT3x::probe() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
   }
 
   uint16_t statusRaw = 0;
@@ -551,6 +596,9 @@ Status SHT3x::startPeriodic(PeriodicRate rate, Repeatability rep) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
+  }
   if (!isValidPeriodicRate(rate) || !isValidRepeatability(rep)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid periodic settings");
   }
@@ -568,6 +616,9 @@ Status SHT3x::startPeriodic(PeriodicRate rate, Repeatability rep) {
 Status SHT3x::startArt() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
   }
 
   Status st = _enterPeriodic(_config.periodicRate, _config.repeatability, true);
@@ -596,6 +647,9 @@ Status SHT3x::stopPeriodic() {
 Status SHT3x::readStatus(uint16_t& raw) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before reading status");
@@ -626,6 +680,9 @@ Status SHT3x::clearStatus() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
+  }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before clearing status");
   }
@@ -636,6 +693,9 @@ Status SHT3x::clearStatus() {
 Status SHT3x::setHeater(bool enable) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before changing heater");
@@ -767,6 +827,9 @@ Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
+  }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before reading serial");
   }
@@ -806,6 +869,9 @@ Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
 Status SHT3x::readAlertLimitRaw(AlertLimitKind kind, uint16_t& value) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before reading alert limits");
@@ -850,6 +916,9 @@ Status SHT3x::readAlertLimit(AlertLimitKind kind, AlertLimit& out) {
 Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before writing alert limits");
@@ -976,6 +1045,10 @@ uint32_t SHT3x::estimateMeasurementTimeMs() const {
   return baseMs + MEASUREMENT_MARGIN_MS;
 }
 
+bool SHT3x::_singleShotMeasurementPending() const {
+  return _mode == Mode::SINGLE_SHOT && _measurementRequested && !_measurementReady;
+}
+
 uint32_t SHT3x::_periodicFetchMarginMs() const {
   uint32_t margin = _config.periodicFetchMarginMs;
   if (margin == 0) {
@@ -986,6 +1059,9 @@ uint32_t SHT3x::_periodicFetchMarginMs() const {
     if (margin < 2) {
       margin = 2;
     }
+  }
+  if (_periodMs > 0 && margin > _periodMs) {
+    margin = _periodMs;
   }
   return margin;
 }
@@ -1091,18 +1167,22 @@ Status SHT3x::_applyCachedSettingsAfterReset() {
 
 Status SHT3x::_performRecoveryLadder() {
   const uint32_t now = millis();
-  if (_config.recoverBackoffMs > 0 && _lastRecoverMs != 0 &&
+  if (_config.recoverBackoffMs > 0 && _lastRecoverValid &&
       !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
     return Status::Error(Err::BUSY, "Recovery backoff active");
   }
   _lastRecoverMs = now;
+  _lastRecoverValid = true;
 
   auto probeTracked = [this]() -> Status {
     uint16_t statusRaw = 0;
     return _readStatusRaw(statusRaw, true);
   };
 
-  Status last = Status::Error(Err::I2C_ERROR, "Recovery failed");
+  Status last = probeTracked();
+  if (last.ok()) {
+    return Status::Ok();
+  }
 
   if (_config.recoverUseBusReset && _config.busReset != nullptr) {
     Status st = interfaceReset();
@@ -1172,6 +1252,12 @@ Status SHT3x::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
   if (_config.i2cWriteRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C write-read not set");
   }
+  if ((txLen > 0 && txBuf == nullptr) || (rxLen > 0 && rxBuf == nullptr)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
+  }
+  if (txLen == 0 && rxLen == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Empty I2C transaction");
+  }
   if (txLen > 0 && rxLen > 0) {
     return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");
   }
@@ -1192,6 +1278,9 @@ Status SHT3x::_i2cWriteRaw(const uint8_t* buf, size_t len) {
   if (_config.i2cWrite == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C write not set");
   }
+  if (buf == nullptr || len == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
+  }
   return _config.i2cWrite(_config.i2cAddress, buf, len, _config.i2cTimeoutMs,
                           _config.i2cUser);
 }
@@ -1199,6 +1288,9 @@ Status SHT3x::_i2cWriteRaw(const uint8_t* buf, size_t len) {
 Status SHT3x::_i2cWriteRawAddr(uint8_t addr, const uint8_t* buf, size_t len) {
   if (_config.i2cWrite == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C write not set");
+  }
+  if (buf == nullptr || len == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
   return _config.i2cWrite(addr, buf, len, _config.i2cTimeoutMs, _config.i2cUser);
 }
@@ -1388,8 +1480,8 @@ Status SHT3x::_ensureCommandDelay() {
   const uint32_t delayUs = static_cast<uint32_t>(_config.commandDelayMs) * 1000U;
   const uint32_t target = _lastCommandUs + delayUs;
   const uint32_t startMs = millis();
-  const uint32_t timeoutMs =
-      static_cast<uint32_t>(_config.commandDelayMs) + _config.i2cTimeoutMs;
+  const uint32_t timeoutMs = saturatingAddU32(static_cast<uint32_t>(_config.commandDelayMs),
+                                              _config.i2cTimeoutMs);
   uint32_t lastMs = startMs;
   uint32_t stableLoops = 0;
 
@@ -1404,6 +1496,7 @@ Status SHT3x::_ensureCommandDelay() {
     } else if (++stableLoops >= MAX_SPIN_ITERS) {
       return Status::Error(Err::TIMEOUT, "Command delay timeout");
     }
+    yield();
   }
 
   return Status::Ok();
@@ -1416,7 +1509,7 @@ Status SHT3x::_waitMs(uint32_t delayMs) {
 
   const uint32_t startMs = millis();
   const uint32_t deadline = startMs + delayMs;
-  const uint32_t timeoutMs = delayMs + _config.i2cTimeoutMs;
+  const uint32_t timeoutMs = saturatingAddU32(delayMs, _config.i2cTimeoutMs);
   uint32_t lastMs = startMs;
   uint32_t stableLoops = 0;
 
@@ -1434,6 +1527,7 @@ Status SHT3x::_waitMs(uint32_t delayMs) {
     } else if (++stableLoops >= MAX_SPIN_ITERS) {
       return Status::Error(Err::TIMEOUT, "Wait timeout");
     }
+    yield();
   }
 
   return Status::Ok();

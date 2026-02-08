@@ -112,7 +112,7 @@ struct Config {
 
   // === Device Settings ===
   uint8_t i2cAddress = 0x44;             ///< 0x44 (ADDR=GND) or 0x45 (ADDR=VDD)
-  uint32_t i2cTimeoutMs = 50;            ///< I2C transaction timeout in ms
+  uint32_t i2cTimeoutMs = 50;            ///< I2C transaction timeout in ms (1..60000)
   TransportCapability transportCapabilities = TransportCapability::NONE; ///< Transport capabilities
 
   // === Measurement Settings ===
@@ -123,16 +123,16 @@ struct Config {
   bool lowVdd = false;                                ///< Use low-VDD timing limits
 
   // === Timing ===
-  uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE)
+  uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE), 1..1000 ms
 
   /// Periodic mode not-ready timeout (0 = disabled)
-  uint32_t notReadyTimeoutMs = 0;
+  uint32_t notReadyTimeoutMs = 0;                     ///< 0..600000 ms
 
   /// Periodic fetch margin (ms) to avoid early fetches (0 = auto, max(2, period/20))
-  uint32_t periodicFetchMarginMs = 0;
+  uint32_t periodicFetchMarginMs = 0;                 ///< 0..60000 ms (clamped to <= period)
 
   /// Recovery backoff to avoid bus thrashing (ms)
-  uint32_t recoverBackoffMs = 100;
+  uint32_t recoverBackoffMs = 100;                    ///< 0..600000 ms
 
   // === Health Tracking ===
   uint8_t offlineThreshold = 5;                       ///< Consecutive failures before OFFLINE

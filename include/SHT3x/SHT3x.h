@@ -396,6 +396,7 @@ private:
   uint32_t _periodicFetchMarginMs() const;
   uint32_t _periodicReadyMs(uint32_t nowMs) const;
   uint32_t _periodicRetryMs(uint32_t nowMs) const;
+  bool _singleShotMeasurementPending() const;
   Status _ensureCommandDelay();
   Status _waitMs(uint32_t delayMs);
   Status _readStatusRaw(uint16_t& raw, bool tracked);
@@ -451,6 +452,7 @@ private:
   uint32_t _notReadyStartMs = 0;
   uint32_t _notReadyCount = 0;
   uint32_t _lastRecoverMs = 0;
+  bool _lastRecoverValid = false;
 
   CachedSettings _cachedSettings = {};
   bool _hasCachedSettings = false;
