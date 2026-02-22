@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Nothing yet
 
+## [1.3.1] - 2026-02-22
+
+### Added
+- `isPeriodicActive()` inline accessor for checking periodic mode state without I2C
+- `notReadyCount()` accessor for diagnostic "not-ready" response counter during periodic fetch
+
+### Fixed
+- `generalCallReset()` now sets `_lastCommandValid` so subsequent commands respect tIDLE spacing
+- `tick()` returns early when driver is OFFLINE, preventing I2C bus thrashing (recovery is manual via `recover()`)
+- `_stopPeriodicInternal()` updates driver state immediately after BREAK is accepted, before the processing delay, preventing state inconsistency if `_waitMs()` fails
+- `interfaceReset()` now records command timing after bus reset callback, ensuring next command respects tIDLE
+- `begin()` sends best-effort BREAK + soft reset before probe to recover sensor stuck in periodic mode from a previous session (MCU reboot without sensor power cycle)
+- `_crc8()` null-pointer and zero-length guard added for defensive safety
+
 ## [1.3.0] - 2026-02-02
 
 ### Added
@@ -96,7 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
 [1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
 [1.1.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.1.0

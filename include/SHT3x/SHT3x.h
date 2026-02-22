@@ -141,6 +141,9 @@ public:
            _driverState == DriverState::DEGRADED;
   }
 
+  /// Check if periodic acquisition is currently active
+  bool isPeriodicActive() const { return _periodicActive; }
+
   // =========================================================================
   // Health Tracking
   // =========================================================================
@@ -165,6 +168,9 @@ public:
 
   /// Total success count (lifetime)
   uint32_t totalSuccess() const { return _totalSuccess; }
+
+  /// Count of consecutive "not-ready" responses during periodic fetch
+  uint32_t notReadyCount() const { return _notReadyCount; }
 
   // =========================================================================
   // Measurement API

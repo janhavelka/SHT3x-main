@@ -157,6 +157,16 @@ Status SHT3x::begin(const Config& config) {
     _config.commandDelayMs = MIN_COMMAND_DELAY_MS;
   }
 
+  // Best-effort: stop any stale periodic mode and reset sensor.
+  // If the MCU rebooted but the sensor did not, the sensor may still be in
+  // periodic mode, which rejects most commands.  BREAK exits periodic mode;
+  // soft reset then brings the sensor to a known idle state.
+  // Errors are intentionally ignored — the probe below will catch real issues.
+  (void)_writeCommand(cmd::CMD_BREAK, false);
+  (void)_waitMs(BREAK_DELAY_MS);
+  (void)_writeCommand(cmd::CMD_SOFT_RESET, false);
+  (void)_waitMs(RESET_DELAY_MS);
+
   uint16_t statusRaw = 0;
   Status st = _readStatusRaw(statusRaw, true);
   if (!st.ok()) {
@@ -189,6 +199,11 @@ Status SHT3x::begin(const Config& config) {
 
 void SHT3x::tick(uint32_t nowMs) {
   if (!_initialized || !_measurementRequested) {
+    return;
+  }
+
+  // Do not attempt I2C when OFFLINE — the application must call recover()
+  if (_driverState == DriverState::OFFLINE) {
     return;
   }
 
@@ -766,6 +781,10 @@ Status SHT3x::interfaceReset() {
     return st;
   }
 
+  // Record command timing so the next command respects tIDLE
+  _lastCommandUs = micros();
+  _lastCommandValid = true;
+
   _measurementRequested = false;
   _measurementReady = false;
   _measurementReadyMs = 0;
@@ -801,6 +820,7 @@ Status SHT3x::generalCallReset() {
   }
 
   _lastCommandUs = micros();
+  _lastCommandValid = true;
   st = _waitMs(RESET_DELAY_MS);
   if (!st.ok()) {
     return st;
@@ -1694,11 +1714,9 @@ Status SHT3x::_stopPeriodicInternal() {
     return st;
   }
 
-  st = _waitMs(BREAK_DELAY_MS);
-  if (!st.ok()) {
-    return st;
-  }
-
+  // BREAK was accepted by the sensor — periodic mode is now stopped.
+  // Update driver state immediately, before the processing delay,
+  // so that state remains consistent even if _waitMs() fails.
   _measurementRequested = false;
   _measurementReady = false;
   _measurementReadyMs = 0;
@@ -1711,10 +1729,15 @@ Status SHT3x::_stopPeriodicInternal() {
   _notReadyStartMs = 0;
   _notReadyCount = 0;
   _missedSamples = 0;
-  return Status::Ok();
+
+  // Allow sensor to process the break command
+  return _waitMs(BREAK_DELAY_MS);
 }
 
 uint8_t SHT3x::_crc8(const uint8_t* data, size_t len) {
+  if (data == nullptr || len == 0) {
+    return 0;
+  }
   uint8_t crc = cmd::CRC_INIT;
   for (size_t i = 0; i < len; ++i) {
     crc ^= data[i];
