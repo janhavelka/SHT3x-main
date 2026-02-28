@@ -25,20 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Nothing yet
 
-## [1.3.2] - 2026-02-28
-
-### Added
-- Unified bringup CLI helper set in `examples/common/*` for shared I2C example structure
-- CLI/timing contract checks (`tools/check_cli_contract.py`, `tools/check_core_timing_guard.py`)
-- `docs/UNIFICATION_STANDARD.md` documenting common unification rules
-
-### Changed
-- `examples/01_basic_bringup_cli` command/help/output style aligned with the cross-library CLI scheme
-- Repository quality profile (CI + test layout + metadata checks) aligned with the unification baseline
-
-### Fixed
-- Documentation and release metadata synchronization for the `1.3.2` release cut
-
 ## [1.3.1] - 2026-02-22
 
 ### Added
@@ -124,10 +110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.2...HEAD
-[1.3.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.1...v1.3.2
-[1.3.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.3.0
-[1.2.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.2.0
-[1.1.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.1.0
-[1.0.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.0.0
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
+[1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
+[1.1.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.1.0
+[1.0.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.0.0
