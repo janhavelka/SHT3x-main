@@ -416,6 +416,9 @@ private:
   void _setSafeBaseline();
   void _setDefaultsToConfigAndCache();
   void _syncCacheFromConfig();
+  uint32_t _nowMs() const;
+  uint32_t _nowUs() const;
+  void _yield() const;
 
   static uint8_t _crc8(const uint8_t* data, size_t len);
   static uint16_t _commandForSingleShot(Repeatability rep, ClockStretching stretch);

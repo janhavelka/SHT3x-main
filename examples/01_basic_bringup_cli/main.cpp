@@ -826,6 +826,7 @@ void printHelp() {
   Serial.printf("%s=== SHT3x CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
   helpSection("Common");
   helpItem("help / ?", "Show this help");
+  helpItem("version / ver", "Print firmware and library version info");
   helpItem("scan", "Scan I2C bus");
   helpItem("read", "Request measurement (single-shot or periodic)");
   helpItem("raw", "Print last raw sample");
@@ -876,6 +877,15 @@ void printHelp() {
   helpItem("selftest", "Run safe command self-test report");
 }
 
+void printVersionInfo() {
+  Serial.println("=== Version Info ===");
+  Serial.printf("  Example firmware build: %s %s\n", __DATE__, __TIME__);
+  Serial.printf("  SHT3x library version: %s\n", SHT3x::VERSION);
+  Serial.printf("  SHT3x library full: %s\n", SHT3x::VERSION_FULL);
+  Serial.printf("  SHT3x library build: %s\n", SHT3x::BUILD_TIMESTAMP);
+  Serial.printf("  SHT3x library commit: %s (%s)\n", SHT3x::GIT_COMMIT, SHT3x::GIT_STATUS);
+}
+
 // ============================================================================
 // Command Processing
 // ============================================================================
@@ -889,6 +899,11 @@ void processCommand(const String& cmdLine) {
 
   if (cmd == "help" || cmd == "?") {
     printHelp();
+    return;
+  }
+
+  if (cmd == "version" || cmd == "ver") {
+    printVersionInfo();
     return;
   }
 
