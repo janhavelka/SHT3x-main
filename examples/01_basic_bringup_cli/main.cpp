@@ -43,6 +43,8 @@ uint32_t pendingStartMs = 0;
 int stressRemaining = 0;
 StressStats stressStats;
 
+void cancelPending();
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -82,6 +84,35 @@ const char* stateToStr(SHT3x::DriverState st) {
     case DriverState::OFFLINE: return "OFFLINE";
     default: return "UNKNOWN";
   }
+}
+
+const char* stateColor(SHT3x::DriverState st, bool online, uint8_t consecutiveFailures) {
+  if (st == SHT3x::DriverState::UNINIT) {
+    return LOG_COLOR_RESET;
+  }
+  return LOG_COLOR_STATE(online, consecutiveFailures);
+}
+
+const char* goodIfZeroColor(uint32_t value) {
+  return (value == 0U) ? LOG_COLOR_GREEN : LOG_COLOR_RED;
+}
+
+const char* goodIfNonZeroColor(uint32_t value) {
+  return (value > 0U) ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
+}
+
+const char* onOffColor(bool enabled) {
+  return enabled ? LOG_COLOR_GREEN : LOG_COLOR_RESET;
+}
+
+const char* skipCountColor(uint32_t value) {
+  return (value > 0U) ? LOG_COLOR_YELLOW : LOG_COLOR_RESET;
+}
+
+const char* successRateColor(float pct) {
+  if (pct >= 99.9f) return LOG_COLOR_GREEN;
+  if (pct >= 80.0f) return LOG_COLOR_YELLOW;
+  return LOG_COLOR_RED;
 }
 
 const char* modeToStr(SHT3x::Mode mode) {
@@ -132,26 +163,82 @@ const char* alertKindToStr(SHT3x::AlertLimitKind kind) {
 }
 
 void printStatus(const SHT3x::Status& st) {
-  Serial.printf("  Status: %s (code=%u, detail=%ld)\n",
+  Serial.printf("  Status: %s%s%s (code=%u, detail=%ld)\n",
+                LOG_COLOR_RESULT(st.ok()),
                 errToStr(st.code),
+                LOG_COLOR_RESET,
                 static_cast<unsigned>(st.code),
                 static_cast<long>(st.detail));
   if (st.msg && st.msg[0]) {
-    Serial.printf("  Message: %s\n", st.msg);
+    Serial.printf("  Message: %s%s%s\n", LOG_COLOR_YELLOW, st.msg, LOG_COLOR_RESET);
   }
 }
 
 void printDriverHealth() {
-  Serial.println("=== Driver State ===");
-  Serial.printf("  State: %s\n", stateToStr(device.state()));
-  Serial.printf("  Online: %s\n", device.isOnline() ? "YES" : "NO");
-  Serial.printf("  Consecutive failures: %u\n", device.consecutiveFailures());
-  Serial.printf("  Total failures: %lu\n", static_cast<unsigned long>(device.totalFailures()));
-  Serial.printf("  Total success: %lu\n", static_cast<unsigned long>(device.totalSuccess()));
-  Serial.printf("  Last OK at: %lu ms\n", static_cast<unsigned long>(device.lastOkMs()));
-  Serial.printf("  Last error at: %lu ms\n", static_cast<unsigned long>(device.lastErrorMs()));
-  if (device.lastError().code != SHT3x::Err::OK) {
-    Serial.printf("  Last error: %s\n", errToStr(device.lastError().code));
+  const uint32_t now = millis();
+  const uint32_t totalOk = device.totalSuccess();
+  const uint32_t totalFail = device.totalFailures();
+  const uint32_t total = totalOk + totalFail;
+  const float successRate = (total > 0U)
+                                ? (100.0f * static_cast<float>(totalOk) / static_cast<float>(total))
+                                : 0.0f;
+  const SHT3x::Status lastErr = device.lastError();
+  const SHT3x::DriverState st = device.state();
+  const bool online = device.isOnline();
+
+  Serial.println("=== Driver Health ===");
+  Serial.printf("  State: %s%s%s\n",
+                stateColor(st, online, device.consecutiveFailures()),
+                stateToStr(st),
+                LOG_COLOR_RESET);
+  Serial.printf("  Online: %s%s%s\n",
+                online ? LOG_COLOR_GREEN : LOG_COLOR_RED,
+                log_bool_str(online),
+                LOG_COLOR_RESET);
+  Serial.printf("  Consecutive failures: %s%u%s\n",
+                goodIfZeroColor(device.consecutiveFailures()),
+                device.consecutiveFailures(),
+                LOG_COLOR_RESET);
+  Serial.printf("  Total success: %s%lu%s\n",
+                goodIfNonZeroColor(totalOk),
+                static_cast<unsigned long>(totalOk),
+                LOG_COLOR_RESET);
+  Serial.printf("  Total failures: %s%lu%s\n",
+                goodIfZeroColor(totalFail),
+                static_cast<unsigned long>(totalFail),
+                LOG_COLOR_RESET);
+  Serial.printf("  Success rate: %s%.1f%%%s\n",
+                successRateColor(successRate),
+                successRate,
+                LOG_COLOR_RESET);
+
+  const uint32_t lastOkMs = device.lastOkMs();
+  if (lastOkMs > 0U) {
+    Serial.printf("  Last OK: %lu ms ago (at %lu ms)\n",
+                  static_cast<unsigned long>(now - lastOkMs),
+                  static_cast<unsigned long>(lastOkMs));
+  } else {
+    Serial.println("  Last OK: never");
+  }
+
+  const uint32_t lastErrorMs = device.lastErrorMs();
+  if (lastErrorMs > 0U) {
+    Serial.printf("  Last error: %lu ms ago (at %lu ms)\n",
+                  static_cast<unsigned long>(now - lastErrorMs),
+                  static_cast<unsigned long>(lastErrorMs));
+  } else {
+    Serial.println("  Last error: never");
+  }
+
+  if (!lastErr.ok()) {
+    Serial.printf("  Error code: %s%s%s\n",
+                  LOG_COLOR_RED,
+                  errToStr(lastErr.code),
+                  LOG_COLOR_RESET);
+    Serial.printf("  Error detail: %ld\n", static_cast<long>(lastErr.detail));
+    if (lastErr.msg && lastErr.msg[0]) {
+      Serial.printf("  Error msg: %s\n", lastErr.msg);
+    }
   }
 }
 
@@ -172,7 +259,10 @@ void printCompSample(const SHT3x::CompensatedSample& s) {
 }
 
 void printVerboseState() {
-  Serial.printf("  Verbose: %s\n", verboseMode ? "ON" : "OFF");
+  Serial.printf("  Verbose: %s%s%s\n",
+                onOffColor(verboseMode),
+                verboseMode ? "ON" : "OFF",
+                LOG_COLOR_RESET);
 }
 
 void printConfig() {
@@ -191,6 +281,34 @@ void printConfig() {
   Serial.printf("  Est. meas time: %lu ms\n",
                 static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
   printVerboseState();
+}
+
+void printRuntimeStats() {
+  const uint32_t now = millis();
+  Serial.println("=== Runtime Stats ===");
+  Serial.printf("  periodicActive: %s\n", device.isPeriodicActive() ? "true" : "false");
+  Serial.printf("  measurementReady: %s\n", device.measurementReady() ? "true" : "false");
+  Serial.printf("  hasCachedSettings: %s\n", device.hasCachedSettings() ? "true" : "false");
+  Serial.printf("  lastBusActivityMs: %lu\n",
+                static_cast<unsigned long>(device.lastBusActivityMs()));
+  Serial.printf("  sampleTimestampMs: %lu\n",
+                static_cast<unsigned long>(device.sampleTimestampMs()));
+  Serial.printf("  sampleAgeMs: %lu\n",
+                static_cast<unsigned long>(device.sampleAgeMs(now)));
+  Serial.printf("  notReadyCount: %lu\n",
+                static_cast<unsigned long>(device.notReadyCount()));
+  Serial.printf("  missedSamplesEstimate: %lu\n",
+                static_cast<unsigned long>(device.missedSamplesEstimate()));
+
+  if (device.hasCachedSettings()) {
+    const SHT3x::CachedSettings cached = device.getCachedSettings();
+    Serial.println("  Cached settings:");
+    Serial.printf("    mode: %s\n", modeToStr(cached.mode));
+    Serial.printf("    repeatability: %s\n", repToStr(cached.repeatability));
+    Serial.printf("    periodicRate: %s mps\n", rateToStr(cached.periodicRate));
+    Serial.printf("    stretching: %s\n", stretchToStr(cached.clockStretching));
+    Serial.printf("    heaterEnabled: %s\n", cached.heaterEnabled ? "true" : "false");
+  }
 }
 
 void resetStressStats(int target) {
@@ -251,8 +369,14 @@ void finishStressStats() {
   Serial.println("=== Stress Summary ===");
   Serial.printf("  Target: %d\n", stressStats.target);
   Serial.printf("  Attempts: %d\n", stressStats.attempts);
-  Serial.printf("  Success: %d\n", stressStats.success);
-  Serial.printf("  Errors: %lu\n", static_cast<unsigned long>(stressStats.errors));
+  Serial.printf("  Success: %s%d%s\n",
+                goodIfNonZeroColor(static_cast<uint32_t>(stressStats.success)),
+                stressStats.success,
+                LOG_COLOR_RESET);
+  Serial.printf("  Errors: %s%lu%s\n",
+                goodIfZeroColor(stressStats.errors),
+                static_cast<unsigned long>(stressStats.errors),
+                LOG_COLOR_RESET);
   Serial.printf("  Duration: %lu ms\n", static_cast<unsigned long>(durationMs));
   if (durationMs > 0) {
     const float rate = 1000.0f * static_cast<float>(stressStats.attempts) /
@@ -277,6 +401,268 @@ void finishStressStats() {
       Serial.printf("  Message: %s\n", stressStats.lastError.msg);
     }
   }
+}
+
+SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& out, uint32_t timeoutMs = 500) {
+  SHT3x::Status st = device.requestMeasurement();
+  if (st.code != SHT3x::Err::IN_PROGRESS && st.code != SHT3x::Err::BUSY) {
+    return st;
+  }
+
+  const uint32_t start = millis();
+  while ((millis() - start) < timeoutMs) {
+    device.tick(millis());
+    if (device.measurementReady()) {
+      return device.getMeasurement(out);
+    }
+    delay(1);
+  }
+  return SHT3x::Status::Error(SHT3x::Err::TIMEOUT, "measurement timeout", timeoutMs);
+}
+
+void runStressMix(int count) {
+  struct OpStats {
+    const char* name;
+    uint32_t ok;
+    uint32_t fail;
+  };
+
+  OpStats stats[] = {
+      {"measure", 0, 0},
+      {"readStatus", 0, 0},
+      {"readSerial", 0, 0},
+      {"setRepeat", 0, 0},
+      {"setRate", 0, 0},
+      {"setStretch", 0, 0},
+      {"heaterStat", 0, 0},
+  };
+  const int opCount = static_cast<int>(sizeof(stats) / sizeof(stats[0]));
+
+  cancelPending();
+  const uint32_t succBefore = device.totalSuccess();
+  const uint32_t failBefore = device.totalFailures();
+  const uint32_t startMs = millis();
+
+  for (int i = 0; i < count; ++i) {
+    const int op = i % opCount;
+    SHT3x::Status st = SHT3x::Status::Ok();
+
+    switch (op) {
+      case 0: {
+        SHT3x::Measurement m;
+        st = performMeasurementBlocking(m);
+        break;
+      }
+      case 1: {
+        SHT3x::StatusRegister reg;
+        st = device.readStatus(reg);
+        break;
+      }
+      case 2: {
+        uint32_t serial = 0;
+        st = device.readSerialNumber(serial, SHT3x::ClockStretching::STRETCH_DISABLED);
+        break;
+      }
+      case 3: {
+        st = device.setRepeatability(static_cast<SHT3x::Repeatability>((i / opCount) % 3));
+        break;
+      }
+      case 4: {
+        st = device.setPeriodicRate(static_cast<SHT3x::PeriodicRate>((i / opCount) % 5));
+        break;
+      }
+      case 5: {
+        st = device.setClockStretching(((i / opCount) % 2) ?
+                                           SHT3x::ClockStretching::STRETCH_ENABLED :
+                                           SHT3x::ClockStretching::STRETCH_DISABLED);
+        break;
+      }
+      case 6: {
+        bool enabled = false;
+        st = device.readHeaterStatus(enabled);
+        break;
+      }
+      default:
+        break;
+    }
+
+    if (st.ok()) {
+      stats[op].ok++;
+    } else {
+      stats[op].fail++;
+      if (verboseMode) {
+        Serial.printf("  [%d] %s failed: %s\n", i, stats[op].name, errToStr(st.code));
+      }
+    }
+  }
+
+  const uint32_t elapsed = millis() - startMs;
+  uint32_t okTotal = 0;
+  uint32_t failTotal = 0;
+  for (int i = 0; i < opCount; ++i) {
+    okTotal += stats[i].ok;
+    failTotal += stats[i].fail;
+  }
+
+  Serial.println("=== stress_mix summary ===");
+  const float successPct =
+      (count > 0) ? (100.0f * static_cast<float>(okTotal) / static_cast<float>(count)) : 0.0f;
+  Serial.printf("  Total: %sok=%lu%s %sfail=%lu%s (%s%.2f%%%s)\n",
+                goodIfNonZeroColor(okTotal),
+                static_cast<unsigned long>(okTotal),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failTotal),
+                static_cast<unsigned long>(failTotal),
+                LOG_COLOR_RESET,
+                successRateColor(successPct),
+                successPct,
+                LOG_COLOR_RESET);
+  Serial.printf("  Duration: %lu ms\n", static_cast<unsigned long>(elapsed));
+  if (elapsed > 0) {
+    Serial.printf("  Rate: %.2f ops/s\n", (1000.0f * static_cast<float>(count)) / elapsed);
+  }
+  for (int i = 0; i < opCount; ++i) {
+    Serial.printf("  %-10s %sok=%lu%s %sfail=%lu%s\n",
+                  stats[i].name,
+                  goodIfNonZeroColor(stats[i].ok),
+                  static_cast<unsigned long>(stats[i].ok),
+                  LOG_COLOR_RESET,
+                  goodIfZeroColor(stats[i].fail),
+                  static_cast<unsigned long>(stats[i].fail),
+                  LOG_COLOR_RESET);
+  }
+  const uint32_t successDelta = device.totalSuccess() - succBefore;
+  const uint32_t failDelta = device.totalFailures() - failBefore;
+  Serial.printf("  Health delta: %ssuccess +%lu%s, %sfailures +%lu%s\n",
+                goodIfNonZeroColor(successDelta),
+                static_cast<unsigned long>(successDelta),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failDelta),
+                static_cast<unsigned long>(failDelta),
+                LOG_COLOR_RESET);
+}
+
+void runSelfTest() {
+  struct Result {
+    uint32_t pass = 0;
+    uint32_t fail = 0;
+    uint32_t skip = 0;
+  } result;
+
+  enum class SelftestOutcome : uint8_t { PASS, FAIL, SKIP };
+  auto report = [&](const char* name, SelftestOutcome outcome, const char* note) {
+    const bool ok = (outcome == SelftestOutcome::PASS);
+    const bool skip = (outcome == SelftestOutcome::SKIP);
+    const char* color = skip ? LOG_COLOR_YELLOW : LOG_COLOR_RESULT(ok);
+    const char* tag = skip ? "SKIP" : (ok ? "PASS" : "FAIL");
+    Serial.printf("  [%s%s%s] %s", color, tag, LOG_COLOR_RESET, name);
+    if (note && note[0]) {
+      Serial.printf(" - %s", note);
+    }
+    Serial.println();
+    if (skip) {
+      result.skip++;
+    } else if (ok) {
+      result.pass++;
+    } else {
+      result.fail++;
+    }
+  };
+  auto reportCheck = [&](const char* name, bool ok, const char* note) {
+    report(name, ok ? SelftestOutcome::PASS : SelftestOutcome::FAIL, note);
+  };
+  auto reportSkip = [&](const char* name, const char* note) {
+    report(name, SelftestOutcome::SKIP, note);
+  };
+
+  Serial.println("=== SHT3x selftest (safe commands) ===");
+  cancelPending();
+
+  SHT3x::SettingsSnapshot baseline;
+  bool haveBaseline = device.readSettings(baseline).ok();
+  reportCheck("capture baseline settings", haveBaseline, haveBaseline ? "" : "readSettings failed");
+
+  const uint32_t succBefore = device.totalSuccess();
+  const uint32_t failBefore = device.totalFailures();
+  const uint8_t consBefore = device.consecutiveFailures();
+
+  SHT3x::Status st = device.probe();
+  if (st.code == SHT3x::Err::NOT_INITIALIZED) {
+    reportSkip("probe responds", "driver not initialized");
+    reportSkip("remaining checks", "selftest aborted");
+    Serial.printf("Selftest result: pass=%s%lu%s fail=%s%lu%s skip=%s%lu%s\n",
+                  goodIfNonZeroColor(result.pass), static_cast<unsigned long>(result.pass), LOG_COLOR_RESET,
+                  goodIfZeroColor(result.fail), static_cast<unsigned long>(result.fail), LOG_COLOR_RESET,
+                  skipCountColor(result.skip), static_cast<unsigned long>(result.skip), LOG_COLOR_RESET);
+    return;
+  }
+  reportCheck("probe responds", st.ok(), st.ok() ? "" : errToStr(st.code));
+  const bool probeNoTrack = device.totalSuccess() == succBefore &&
+                            device.totalFailures() == failBefore &&
+                            device.consecutiveFailures() == consBefore;
+  reportCheck("probe no-health-side-effects", probeNoTrack, "");
+
+  st = device.setMode(SHT3x::Mode::SINGLE_SHOT);
+  reportCheck("setMode(SINGLE_SHOT)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  SHT3x::Mode mode = SHT3x::Mode::SINGLE_SHOT;
+  st = device.getMode(mode);
+  reportCheck("getMode", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportCheck("verify mode", st.ok() && mode == SHT3x::Mode::SINGLE_SHOT, "");
+
+  st = device.setRepeatability(SHT3x::Repeatability::HIGH_REPEATABILITY);
+  reportCheck("setRepeatability(HIGH)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  SHT3x::Repeatability rep = SHT3x::Repeatability::LOW_REPEATABILITY;
+  st = device.getRepeatability(rep);
+  reportCheck("verify repeatability", st.ok() && rep == SHT3x::Repeatability::HIGH_REPEATABILITY,
+         st.ok() ? "" : errToStr(st.code));
+
+  st = device.setPeriodicRate(SHT3x::PeriodicRate::MPS_1);
+  reportCheck("setPeriodicRate(1mps)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  SHT3x::PeriodicRate rate = SHT3x::PeriodicRate::MPS_0_5;
+  st = device.getPeriodicRate(rate);
+  reportCheck("verify periodic rate", st.ok() && rate == SHT3x::PeriodicRate::MPS_1,
+         st.ok() ? "" : errToStr(st.code));
+
+  st = device.setClockStretching(SHT3x::ClockStretching::STRETCH_ENABLED);
+  reportCheck("setClockStretching(ON)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  SHT3x::ClockStretching stretch = SHT3x::ClockStretching::STRETCH_DISABLED;
+  st = device.getClockStretching(stretch);
+  reportCheck("verify stretching", st.ok() && stretch == SHT3x::ClockStretching::STRETCH_ENABLED,
+         st.ok() ? "" : errToStr(st.code));
+
+  uint16_t statusRaw = 0;
+  st = device.readStatus(statusRaw);
+  reportCheck("readStatus(raw)", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  bool heaterOn = false;
+  st = device.readHeaterStatus(heaterOn);
+  reportCheck("readHeaterStatus", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  SHT3x::Measurement m;
+  st = performMeasurementBlocking(m);
+  reportCheck("measurement cycle", st.ok(), st.ok() ? "" : errToStr(st.code));
+  const bool mRange = (m.temperatureC > -60.0f && m.temperatureC < 130.0f) &&
+                      (m.humidityPct >= 0.0f && m.humidityPct <= 100.0f);
+  reportCheck("measurement in plausible range", st.ok() && mRange, "");
+
+  st = device.softReset();
+  reportCheck("softReset", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  st = device.recover();
+  reportCheck("recover", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportCheck("isOnline", device.isOnline(), "");
+
+  if (haveBaseline) {
+    device.setMode(baseline.mode);
+    device.setRepeatability(baseline.repeatability);
+    device.setPeriodicRate(baseline.periodicRate);
+    device.setClockStretching(baseline.clockStretching);
+  }
+
+  Serial.printf("Selftest result: pass=%s%lu%s fail=%s%lu%s skip=%s%lu%s\n",
+                goodIfNonZeroColor(result.pass), static_cast<unsigned long>(result.pass), LOG_COLOR_RESET,
+                goodIfZeroColor(result.fail), static_cast<unsigned long>(result.fail), LOG_COLOR_RESET,
+                skipCountColor(result.skip), static_cast<unsigned long>(result.skip), LOG_COLOR_RESET);
 }
 
 void cancelPending() {
@@ -429,45 +815,65 @@ bool parseU16(const String& token, uint16_t& out) {
 }
 
 void printHelp() {
-  Serial.println("=== Commands ===");
-  Serial.println("  help                     - Show this help");
-  Serial.println("  scan                     - Scan I2C bus");
-  Serial.println("  read                     - Request measurement (single-shot or periodic fetch)");
-  Serial.println("  raw                      - Print last raw sample");
-  Serial.println("  comp                     - Print last compensated sample");
-  Serial.println("  meastime                 - Show estimated measurement time");
-  Serial.println("  mode [single|periodic|art]- Set or show operating mode");
-  Serial.println("  start_periodic <rate> <rep> - Start periodic mode");
-  Serial.println("  start_art                - Start ART mode");
-  Serial.println("  stop_periodic            - Stop periodic/ART mode");
-  Serial.println("  repeat [low|med|high]     - Set or show repeatability");
-  Serial.println("  rate [0.5|1|2|4|10]       - Set or show periodic rate");
-  Serial.println("  stretch [0|1]             - Set or show clock stretching");
-  Serial.println("  status                   - Read status register");
-  Serial.println("  status_raw               - Read raw status (16-bit)");
-  Serial.println("  clearstatus              - Clear status flags");
-  Serial.println("  heater [on|off|status]    - Control heater");
-  Serial.println("  serial [stretch|nostretch]- Read serial number");
-  Serial.println("  alert read <hs|hc|lc|ls>  - Read alert limit");
-  Serial.println("  alert write <kind> <T> <RH>- Write alert limit");
-  Serial.println("  alert raw read <kind>     - Read raw alert limit word");
-  Serial.println("  alert raw write <kind> <hex> - Write raw alert limit word");
-  Serial.println("  alert encode <T> <RH>     - Encode alert limit word");
-  Serial.println("  alert decode <hex>        - Decode alert limit word");
-  Serial.println("  alert disable             - Disable alerts (LowSet > HighSet)");
-  Serial.println("  convert <rawT> <rawRH>    - Convert raw values");
-  Serial.println("  reset                    - Soft reset device");
-  Serial.println("  iface_reset              - Interface reset (SCL pulse)");
-  Serial.println("  greset                   - General call reset (bus-wide)");
-  Serial.println("  cfg                      - Show current config");
-  Serial.println("  drv                      - Show driver state and health");
-  Serial.println("  online                   - Show online state");
-  Serial.println("  begin                    - Re-initialize device");
-  Serial.println("  end                      - End driver session");
-  Serial.println("  probe                    - Probe device (no health tracking)");
-  Serial.println("  recover                  - Manual recovery attempt");
-  Serial.println("  verbose [0|1]             - Enable/disable verbose output");
-  Serial.println("  stress [N]               - Run N measurement cycles");
+  auto helpSection = [](const char* title) {
+    Serial.printf("\n%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
+  };
+  auto helpItem = [](const char* cmd, const char* desc) {
+    Serial.printf("  %s%-32s%s - %s\n", LOG_COLOR_CYAN, cmd, LOG_COLOR_RESET, desc);
+  };
+
+  Serial.println();
+  Serial.printf("%s=== SHT3x CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
+  helpSection("Common");
+  helpItem("help / ?", "Show this help");
+  helpItem("scan", "Scan I2C bus");
+  helpItem("read", "Request measurement (single-shot or periodic)");
+  helpItem("raw", "Print last raw sample");
+  helpItem("comp", "Print last compensated sample");
+  helpItem("meastime", "Show estimated measurement time");
+
+  helpSection("Operating Mode");
+  helpItem("mode [single|periodic|art]", "Set or show operating mode");
+  helpItem("start_periodic <rate> <rep>", "Start periodic mode");
+  helpItem("start_art", "Start ART mode");
+  helpItem("stop_periodic", "Stop periodic or ART mode");
+  helpItem("repeat [low|med|high]", "Set or show repeatability");
+  helpItem("rate [0.5|1|2|4|10]", "Set or show periodic rate");
+  helpItem("stretch [0|1]", "Set or show clock stretching");
+
+  helpSection("Status And Alerts");
+  helpItem("status", "Read status register");
+  helpItem("status_raw", "Read raw status (16-bit)");
+  helpItem("clearstatus", "Clear status flags");
+  helpItem("heater [on|off|status]", "Control heater");
+  helpItem("serial [stretch|nostretch]", "Read serial number");
+  helpItem("alert read <hs|hc|lc|ls>", "Read alert limit");
+  helpItem("alert write <kind> <T> <RH>", "Write alert limit");
+  helpItem("alert raw read <kind>", "Read raw alert limit word");
+  helpItem("alert raw write <kind> <hex>", "Write raw alert limit word");
+  helpItem("alert encode <T> <RH>", "Encode alert limit word");
+  helpItem("alert decode <hex>", "Decode alert limit word");
+  helpItem("alert disable", "Disable alerts (LowSet > HighSet)");
+  helpItem("convert <rawT> <rawRH>", "Convert raw values");
+
+  helpSection("Lifecycle And Diagnostics");
+  helpItem("reset", "Soft reset device");
+  helpItem("defaults", "Reset command-mode defaults");
+  helpItem("restore", "Reset sensor and restore cached settings");
+  helpItem("iface_reset", "Interface reset (SCL pulse)");
+  helpItem("greset", "General-call reset (bus-wide)");
+  helpItem("stats", "Runtime counters and cached settings");
+  helpItem("cfg / settings", "Show current config");
+  helpItem("drv", "Show driver state and health");
+  helpItem("online", "Show online state");
+  helpItem("begin", "Re-initialize device");
+  helpItem("end", "End driver session");
+  helpItem("probe", "Probe device (no health tracking)");
+  helpItem("recover", "Manual recovery attempt");
+  helpItem("verbose [0|1]", "Enable/disable verbose output");
+  helpItem("stress [N]", "Run N measurement cycles");
+  helpItem("stress_mix [N]", "Run N mixed-operation cycles");
+  helpItem("selftest", "Run safe command self-test report");
 }
 
 // ============================================================================
@@ -528,7 +934,7 @@ void processCommand(const String& cmdLine) {
     return;
   }
 
-  if (cmd == "cfg") {
+  if (cmd == "cfg" || cmd == "settings") {
     printConfig();
     return;
   }
@@ -962,6 +1368,20 @@ void processCommand(const String& cmdLine) {
     return;
   }
 
+  if (cmd == "defaults") {
+    cancelPending();
+    SHT3x::Status st = device.resetToDefaults();
+    printStatus(st);
+    return;
+  }
+
+  if (cmd == "restore") {
+    cancelPending();
+    SHT3x::Status st = device.resetAndRestore();
+    printStatus(st);
+    return;
+  }
+
   if (cmd == "iface_reset") {
     SHT3x::Status st = device.interfaceReset();
     printStatus(st);
@@ -976,6 +1396,11 @@ void processCommand(const String& cmdLine) {
 
   if (cmd == "online") {
     Serial.printf("Online: %s\n", device.isOnline() ? "YES" : "NO");
+    return;
+  }
+
+  if (cmd == "stats") {
+    printRuntimeStats();
     return;
   }
 
@@ -1026,7 +1451,30 @@ void processCommand(const String& cmdLine) {
   if (cmd.startsWith("verbose ")) {
     const int val = cmd.substring(8).toInt();
     verboseMode = (val != 0);
-    LOGI("Verbose mode: %s", verboseMode ? "ON" : "OFF");
+    LOGI("Verbose mode: %s%s%s",
+         onOffColor(verboseMode),
+         verboseMode ? "ON" : "OFF",
+         LOG_COLOR_RESET);
+    return;
+  }
+
+  if (cmd == "selftest") {
+    runSelfTest();
+    return;
+  }
+
+  if (cmd == "stress_mix") {
+    runStressMix(50);
+    return;
+  }
+
+  if (cmd.startsWith("stress_mix ")) {
+    int count = cmd.substring(11).toInt();
+    if (count <= 0 || count > 100000) {
+      LOGW("Invalid stress_mix count");
+      return;
+    }
+    runStressMix(count);
     return;
   }
 

@@ -1,4 +1,4 @@
-# SHT3x (SHT30/SHT31/SHT35) — Software Driver Extraction Notes (I²C)
+﻿# SHT3x (SHT30/SHT31/SHT35) -- Software Driver Extraction Notes (I2C)
 
 This document is an **extracted, driver-focused** consolidation of everything relevant to implementing a complete software driver for **Sensirion SHT3x-DIS** humidity + temperature sensors, plus the **Alert Mode** and **Serial Number (EIC)** application notes and related material.
 
@@ -16,12 +16,12 @@ This document is an **extracted, driver-focused** consolidation of everything re
 ## 1. Device variants and what a driver should support
 
 ### 1.1 Device family
-- **SHT3x-DIS** is a **humidity + temperature** digital sensor with an **I²C** interface.
+- **SHT3x-DIS** is a **humidity + temperature** digital sensor with an **I2C** interface.
 - SHT30 / SHT31 / SHT35 are accuracy variants (protocol/commands are the same for a driver).
 
 ### 1.2 Key functional blocks exposed to software
 A complete driver should implement:
-- I²C command transport (16-bit commands, MSB-first)
+- I2C command transport (16-bit commands, MSB-first)
 - CRC-8 validation (for **every 16-bit data word** returned and for **every 16-bit word written**)
 - Measurement:
   - **Single shot** (with or without clock stretching)
@@ -44,40 +44,40 @@ A complete driver should implement:
 
 ---
 
-## 2. Pins, wiring, addresses, and I²C electrical assumptions
+## 2. Pins, wiring, addresses, and I2C electrical assumptions
 
 ### 2.1 Pin assignment (8-pin DFN)
 | Pin | Name    | Direction | Notes |
 |---:|---------|-----------|------|
-| 1 | SDA    | I/O | I²C serial data (open drain) |
+| 1 | SDA    | I/O | I2C serial data (open drain) |
 | 2 | ADDR   | In  | Address select; **must not float**; tie to logic low/high |
 | 3 | ALERT  | Out | Alarm output; **must be left floating if unused** |
-| 4 | SCL    | I/O | I²C serial clock (open drain) |
+| 4 | SCL    | I/O | I2C serial clock (open drain) |
 | 5 | VDD    | In  | Supply |
-| 6 | nRESET | In  | Active-low reset input; if unused, recommended float or tie to VDD via series **R ≥ 2 kΩ**; internal pull-up ≈ 50 kΩ typ |
-| 7 | R (no function) | — | Connect to VSS (package “no electrical function” pad) |
-| 8 | VSS    | — | Ground |
+| 6 | nRESET | In  | Active-low reset input; if unused, recommended float or tie to VDD via series **R >= 2 kΩ**; internal pull-up ≈ 50 kΩ typ |
+| 7 | R (no function) | -- | Connect to VSS (package "no electrical function" pad) |
+| 8 | VSS    | -- | Ground |
 
 **Pull-ups:** SDA and SCL need external pull-ups (example given: **~10 kΩ**); consider bus capacitance and frequency.
 
-### 2.2 I²C device addresses
-Only the **7 MSBs** of the I²C header are the address; the LSB is R/W.
+### 2.2 I2C device addresses
+Only the **7 MSBs** of the I2C header are the address; the LSB is R/W.
 | Condition | 7-bit addr (hex) |
 |---|---|
 | ADDR tied low | **0x44** (default) |
 | ADDR tied high | **0x45** |
 
-### 2.3 Supported I²C speed and timing limits
-- Supported SCL frequency: **0–1000 kHz (1 MHz)**.
-- Bus capacitive load: **≤ 400 pF**.
-- Key timing (valid for -40…125 °C and VDD between VDDmin…VDDmax; nomenclature per UM10204):
-  - tHD;STA = 0.24 µs (hold time for repeated START)
-  - tLOW = 0.53 µs, tHIGH = 0.26 µs
-  - tHD;DAT (transmit) = 0…250 ns, (receive) = 0…∞
+### 2.3 Supported I2C speed and timing limits
+- Supported SCL frequency: **0-1000 kHz (1 MHz)**.
+- Bus capacitive load: **<= 400 pF**.
+- Key timing (valid for -40...125  degC and VDD between VDDmin...VDDmax; nomenclature per UM10204):
+  - tHD;STA = 0.24 us (hold time for repeated START)
+  - tLOW = 0.53 us, tHIGH = 0.26 us
+  - tHD;DAT (transmit) = 0...250 ns, (receive) = 0...∞
   - tSU;DAT = 100 ns
-  - tR, tF ≤ 300 ns
-  - tVD;DAT ≤ 0.9 µs
-  - tSU;STA = 0.26 µs, tSU;STO = 0.26 µs
+  - tR, tF <= 300 ns
+  - tVD;DAT <= 0.9 us
+  - tSU;STA = 0.26 us, tSU;STO = 0.26 us
 
 (See datasheet timing diagram and Table 21.)
 
@@ -86,23 +86,23 @@ Only the **7 MSBs** of the I²C header are the address; the LSB is R/W.
 ## 3. Power and timing behavior relevant to software
 
 ### 3.1 Supply and POR
-- VDD: **2.15–5.5 V** (typ 3.3 V)
+- VDD: **2.15-5.5 V** (typ 3.3 V)
 - VPOR (power-up/down level): min 1.8 V, typ 2.10 V, max 2.15 V
-- VDD slew rate should be **≤ 20 V/ms**; faster may cause reset
+- VDD slew rate should be **<= 20 V/ms**; faster may cause reset
 
 ### 3.2 Power-up and reset timing
-- Power-up time (after hard reset / power-up): typ **0.5 ms**, max **1.0 ms** (at VDD ≥ 2.4 V)
+- Power-up time (after hard reset / power-up): typ **0.5 ms**, max **1.0 ms** (at VDD >= 2.4 V)
   - At VDD < 2.4 V, max **1.5 ms**
-- Soft reset time (ACK of soft reset command → idle): typ **0.5 ms**, max **1.5 ms**
-- nRESET pulse: **≥ 1 µs** low to trigger reset
+- Soft reset time (ACK of soft reset command -> idle): typ **0.5 ms**, max **1.5 ms**
+- nRESET pulse: **>= 1 us** low to trigger reset
 
 ### 3.3 Measurement duration (tMEAS)
-At VDD ≥ 2.4 V:
+At VDD >= 2.4 V:
 - Low repeatability: typ **2.5 ms**, max **4.0 ms**
 - Medium repeatability: typ **4.5 ms**, max **6.0 ms**
 - High repeatability: typ **12.5 ms**, max **15.0 ms**
 
-At 2.15 V ≤ VDD < 2.4 V:
+At 2.15 V <= VDD < 2.4 V:
 - Low: typ 2.5 ms, max 4.5 ms
 - Medium: typ 4.5 ms, max 6.5 ms
 - High: typ 12.5 ms, max 15.5 ms
@@ -130,7 +130,7 @@ So a full measurement read is **6 bytes**.
 
 **Reading data:** CRC is always provided by the sensor; it is up to the master to validate.
 
-### 4.3 CRC-8 parameters (I²C CRC)
+### 4.3 CRC-8 parameters (I2C CRC)
 CRC properties (datasheet Table 20):
 - Algorithm: CRC-8
 - Polynomial: **0x31** (x⁸ + x⁵ + x⁴ + 1)
@@ -146,14 +146,14 @@ Let `SRH` and `ST` be raw unsigned 16-bit values.
 
 - Relative humidity (%RH):
   - `RH = 100 * SRH / 65535`
-- Temperature (°C):
+- Temperature ( degC):
   - `T_C = -45 + 175 * ST / 65535`
-- Temperature (°F):
+- Temperature ( degF):
   - `T_F = -49 + 315 * ST / 65535`
 
 ---
 
-## 5. Full command set (register/command “map”)
+## 5. Full command set (register/command "map")
 
 ### 5.1 Single-shot measurement commands (Table 9)
 **Clock stretching enabled (sensor stretches SCL during measurement):**
@@ -205,7 +205,7 @@ In periodic mode, one measurement command yields a continuous stream. Data is re
 
 **Behavior:**
 - If no measurement data is present, the read header is responded with **NACK** and communication stops.
-- After Fetch Data readout, the sensor’s data memory is **cleared** (so subsequent fetch without new data yields NACK).
+- After Fetch Data readout, the sensor's data memory is **cleared** (so subsequent fetch without new data yields NACK).
 
 ### 5.4 ART mode (accelerated response time) (Table 12)
 - Periodic Measurement with ART: **0x2B32**
@@ -225,13 +225,13 @@ After issuing ART, the sensor acquires data at **4 Hz** (applicable periodic-mod
 Works when the sensor is in **idle state**.
 
 **General call reset (Table 15):**
-- I²C address byte: **0x00**
+- I2C address byte: **0x00**
 - Second byte: **0x06**
 - Equivalent 16-bit view: **0x0006**
 **Warning:** This is **bus-wide** for all general-call-capable devices.
 
 **nRESET pin reset:**
-- Active-low reset input; **≥ 1 µs** low pulse
+- Active-low reset input; **>= 1 us** low pulse
 - Resets like a hard reset; interface-only reset sequence exists (below)
 
 **Interface reset sequence (when comm is lost):**
@@ -243,9 +243,9 @@ Works when the sensor is in **idle state**.
 - Heater Disable: **0x3066**
 - Heater is disabled after reset (default).
 
-The heater is “meant for plausibility checking only”; temperature increase is a few °C depending on conditions.
+The heater is "meant for plausibility checking only"; temperature increase is a few  degC depending on conditions.
 
-### 5.8 Status register (Tables 17–19)
+### 5.8 Status register (Tables 17-19)
 **Read status:**
 - Read Out of status register: **0xF32D**
 - Read returns: 2 bytes status + CRC
@@ -257,14 +257,14 @@ The heater is “meant for plausibility checking only”; temperature increase i
 | Bit | Name | Meaning |
 |---:|------|---------|
 | 15 | Alert pending | 1: at least one pending alert |
-| 14 | Reserved | — |
+| 14 | Reserved | -- |
 | 13 | Heater status | 1: heater ON |
-| 12 | Reserved | — |
+| 12 | Reserved | -- |
 | 11 | RH tracking alert | 1: RH alert |
 | 10 | T tracking alert | 1: temperature alert |
-| 9:5 | Reserved | — |
+| 9:5 | Reserved | -- |
 | 4 | System reset detected | 1: reset detected (hard reset / soft reset / supply fail) |
-| 3:2 | Reserved | — |
+| 3:2 | Reserved | -- |
 | 1 | Command status | 1: last command not processed (invalid / command checksum failure) |
 | 0 | Write data checksum status | 1: last write transfer checksum failed |
 
@@ -282,9 +282,9 @@ Together SNB_3..SNB_0 form a **32-bit unique serial number** (SNB_0 is LSB).
 
 ---
 
-## 6. I²C transaction recipes (exact sequences)
+## 6. I2C transaction recipes (exact sequences)
 
-### 6.1 Single-shot measurement — no clock stretching
+### 6.1 Single-shot measurement -- no clock stretching
 1. START
 2. Write header (addr + W)
 3. Send 16-bit measurement command (MSB, LSB)
@@ -295,9 +295,9 @@ Together SNB_3..SNB_0 form a **32-bit unique serial number** (SNB_0 is LSB).
 8. Read 6 bytes: T_MSB, T_LSB, T_CRC, RH_MSB, RH_LSB, RH_CRC
 9. NACK + STOP after last byte
 
-**Alternative “data ready” probing:** If you attempt a read before data is ready, the sensor will NACK the read header.
+**Alternative "data ready" probing:** If you attempt a read before data is ready, the sensor will NACK the read header.
 
-### 6.2 Single-shot measurement — clock stretching
+### 6.2 Single-shot measurement -- clock stretching
 1. START
 2. Write header
 3. Send 16-bit command (stretching enabled variant)
@@ -315,7 +315,7 @@ Together SNB_3..SNB_0 form a **32-bit unique serial number** (SNB_0 is LSB).
 3. To stop periodic mode: send Break (0x3093) and wait ~1 ms.
 
 ### 6.4 Status read / clear
-- Read status: write 0xF32D, wait ≥1 ms, then read 3 bytes (2 status + CRC)
+- Read status: write 0xF32D, wait >=1 ms, then read 3 bytes (2 status + CRC)
 - Clear status: write 0x3041 (no readback)
 
 ### 6.5 Heater
@@ -332,9 +332,9 @@ Together SNB_3..SNB_0 form a **32-bit unique serial number** (SNB_0 is LSB).
 
 ---
 
-## 7. Alert mode (watchdog) — limits, encoding, behavior
+## 7. Alert mode (watchdog) -- limits, encoding, behavior
 
-**Important:** Alert Mode is active **whenever the sensor operates in periodic data acquisition mode** (Alert Mode app note). There is no separate “enable” bit; starting periodic mode makes it active.
+**Important:** Alert Mode is active **whenever the sensor operates in periodic data acquisition mode** (Alert Mode app note). There is no separate "enable" bit; starting periodic mode makes it active.
 
 ### 7.1 ALERT pin electrical behavior
 - Alert Mode app note: **ALERT pin is configured push-pull.**
@@ -346,25 +346,25 @@ The alert output becomes active when **any** of the following occurs:
 - T < T_low_set **or** RH < RH_low_set
 
 The alert output becomes inactive (deasserts) when **both** conditions are satisfied:
-- T is within [T_low_clear … T_high_clear]
-- RH is within [RH_low_clear … RH_high_clear]
+- T is within [T_low_clear ... T_high_clear]
+- RH is within [RH_low_clear ... RH_high_clear]
 
-This “set vs clear” hysteresis prevents fast oscillations near thresholds.
+This "set vs clear" hysteresis prevents fast oscillations near thresholds.
 
 ### 7.3 Deactivating alert mode (without leaving periodic mode)
 You can deactivate alert evaluation (individually for humidity and temperature) by setting:
 - **LowSet > HighSet**
-(“Minimum set point higher than maximum set point”)
+("Minimum set point higher than maximum set point")
 
 ### 7.4 Default (power-up) alert limits
-The sensor starts with default limits (“normal range”) after power-up or brown-out.
+The sensor starts with default limits ("normal range") after power-up or brown-out.
 
 | Alert limit | RH | T | Limit value (hex) |
 |---|---:|---:|---:|
-| High alert set | 80 %RH | 60 °C | 0xCD33 |
-| High alert clear | 79 %RH | 58 °C | 0xC92D |
-| Low alert clear | 22 %RH | -9 °C | 0x3869 |
-| Low alert set | 20 %RH | -10 °C | 0x3466 |
+| High alert set | 80 %RH | 60  degC | 0xCD33 |
+| High alert clear | 79 %RH | 58  degC | 0xC92D |
+| Low alert clear | 22 %RH | -9  degC | 0x3869 |
+| Low alert set | 20 %RH | -10  degC | 0x3466 |
 
 ### 7.5 Reduced data format for alert limits (SHT3x)
 Alert limits are stored in a reduced format:
@@ -374,7 +374,7 @@ Alert limits are stored in a reduced format:
   - **Temperature:** 9 bits (MSBs)
 
 **Resolution consequence:**
-- Temperature limit resolution ≈ **0.5 °C**
+- Temperature limit resolution ≈ **0.5  degC**
 - Humidity limit resolution ≈ **1 %RH**
 
 **Bit layout (16-bit limit word):**
@@ -443,17 +443,17 @@ Alert Mode app note:
 
 ### 8.1 Current consumption (useful for duty-cycling decisions)
 From datasheet electrical specs:
-- Idle current (single-shot mode, not measuring, 25 °C): typ **0.2 µA**, max **2.0 µA**
-- Idle current (single-shot, 125 °C): max **6.0 µA**
-- Idle current (periodic data acquisition mode, between measurements): typ **45 µA**
-- Measuring current: typ **600 µA**, max **1500 µA**
-- Average current (1 measurement/sec, lowest repeatability, single shot): typ **1.7 µA**
-- Heater power: **3.6–33 mW** (depends on heater supply voltage)
+- Idle current (single-shot mode, not measuring, 25  degC): typ **0.2 uA**, max **2.0 uA**
+- Idle current (single-shot, 125  degC): max **6.0 uA**
+- Idle current (periodic data acquisition mode, between measurements): typ **45 uA**
+- Measuring current: typ **600 uA**, max **1500 uA**
+- Average current (1 measurement/sec, lowest repeatability, single shot): typ **1.7 uA**
+- Heater power: **3.6-33 mW** (depends on heater supply voltage)
 
 ### 8.2 Recommended operating range / long-term behavior
 Best performance range:
-- Temperature: **5–60 °C**
-- RH: **20–80 %RH**
+- Temperature: **5-60  degC**
+- RH: **20-80 %RH**
 
 Long-term exposure outside this range, especially high humidity, may temporarily offset RH reading (example given: **+3 %RH after 60 h at >80 %RH**), then it will recover slowly in normal range.
 
@@ -468,10 +468,10 @@ Long-term exposure outside this range, especially high humidity, may temporarily
 A robust driver should:
 1. **Always** CRC-check each 16-bit data word (temp, humidity, status, serial number, alert limits).
 2. For any write that includes data (e.g., alert limits), compute and send CRC; treat NACK or status bit 0 set as failure.
-3. Enforce **≥1 ms** between commands, even if I²C bus is free.
+3. Enforce **>=1 ms** between commands, even if I2C bus is free.
 4. In no-stretch mode, use either:
    - fixed wait (tMEAS max), or
-   - “poll by read header” until ACK (bounded retries/timeouts)
+   - "poll by read header" until ACK (bounded retries/timeouts)
 5. Implement periodic mode as a state:
    - Start periodic (command)
    - Fetch data
@@ -493,19 +493,19 @@ A robust driver should:
 
 ---
 
-## 10. Optional environmental formula helpers (“Humidity at a glance”)
+## 10. Optional environmental formula helpers ("Humidity at a glance")
 
 These are not required to talk to the sensor, but are commonly added in higher-level libraries.
 
-### 10.1 Dew point (°C)
-Given temperature `T` (°C) and RH (%):
+### 10.1 Dew point ( degC)
+Given temperature `T` ( degC) and RH (%):
 ```
 RH = clamp(RH, 0, 100)
 h = (log10(RH) - 2.0)/0.4343 + (17.62*T)/(243.12 + T)
 Td = 243.12*h/(17.62 - h)
 ```
 
-### 10.2 Absolute humidity (g/m³)
+### 10.2 Absolute humidity (g/m3)
 ```
 rho_v = 216.7 * (RH/100.0 * 6.112 * exp(17.62*T/(243.12+T)) / (273.15 + T))
 ```
@@ -517,21 +517,21 @@ e = RH/100.0 * 6.112 * exp(17.62*T/(243.12+T))
 r = 622.0 * e / (p - e)
 ```
 
-### 10.4 Heat index (°C)
-See the “Humidity at a glance” note for full piecewise model and coefficients (NOAA-based).
+### 10.4 Heat index ( degC)
+See the "Humidity at a glance" note for full piecewise model and coefficients (NOAA-based).
 
 ---
 
 ## 11. Manufacturing / testing notes (ambient testing note)
 
-Not driver-critical, but relevant if your firmware test/QA compares against “known good” readings:
-- After reflow soldering (>240 °C), sensors can show a **temporary RH offset** of about **-1 %RH to -2 %RH**, which recovers under ambient conditions.
+Not driver-critical, but relevant if your firmware test/QA compares against "known good" readings:
+- After reflow soldering (>240  degC), sensors can show a **temporary RH offset** of about **-1 %RH to -2 %RH**, which recovers under ambient conditions.
 - Temperature readings remain unaffected by high-temperature assembly processes.
 - Production test fixtures should minimize turbulence, keep reference sensor close to DUT, ensure thermal equilibrium, and minimize cavity volume for faster settling.
 
 ---
 
-## Appendix A — Membrane option (IP67) notes
+## Appendix A -- Membrane option (IP67) notes
 If using SHT3x with the membrane option:
 - PTFE foil membrane protects opening against water and dust to **IP67**.
 - Membrane is designed to remain over sensor lifetime and withstand multiple reflow cycles.
@@ -540,7 +540,7 @@ If using SHT3x with the membrane option:
 
 ---
 
-## Appendix B — Implementation hint: CRC8 reference implementation (language-agnostic)
+## Appendix B -- Implementation hint: CRC8 reference implementation (language-agnostic)
 CRC for a 16-bit word sent/received as two bytes `[msb, lsb]`:
 
 - init = 0xFF
@@ -555,7 +555,7 @@ Compare with received CRC.
 
 ---
 
-## Appendix C — Command quick reference (copy-paste table)
+## Appendix C -- Command quick reference (copy-paste table)
 
 ### Measurement
 - Single shot (stretch): 0x2C06 / 0x2C0D / 0x2C10

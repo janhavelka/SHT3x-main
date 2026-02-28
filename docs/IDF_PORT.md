@@ -1,10 +1,10 @@
-# SHT3x — ESP-IDF Migration Prompt
+# SHT3x -- ESP-IDF Migration Prompt
 
 > **Library**: SHT3x (Sensirion temperature / humidity sensor, one-shot mode)
-> **Current version**: 1.3.1 → **Target**: 2.0.0
+> **Current version**: 1.3.1 -> **Target**: 2.0.0
 > **Namespace**: `SHT3x`
 > **Include path**: `#include "SHT3x/SHT3x.h"`
-> **Difficulty**: Easy — `millis()`/`micros()`/`yield()` replacement in .cpp only
+> **Difficulty**: Easy -- `millis()`/`micros()`/`yield()` replacement in .cpp only
 
 ---
 
@@ -16,7 +16,7 @@ git tag v1.3.1   # freeze Arduino-era version
 
 ---
 
-## Current State — Arduino Dependencies (exact)
+## Current State -- Arduino Dependencies (exact)
 
 | API | Count | Locations |
 |-----|-------|-----------|
@@ -50,17 +50,17 @@ static inline uint32_t nowMs() {
 }
 
 static inline uint32_t nowUs() {
-    return (uint32_t)(esp_timer_get_time());  // already µs
+    return (uint32_t)(esp_timer_get_time());  // already us
 }
 ```
 
-### 3. Replace all `millis()` → `nowMs()` (10 sites)
+### 3. Replace all `millis()` -> `nowMs()` (10 sites)
 
-### 4. Replace all `micros()` → `nowUs()` (5 sites)
+### 4. Replace all `micros()` -> `nowUs()` (5 sites)
 
-### 5. Replace `yield()` → no-op or `taskYIELD()`
+### 5. Replace `yield()` -> no-op or `taskYIELD()`
 
-At lines 1520, 1547 — these are cooperative yield hints inside polling loops. Replace with:
+At lines 1520, 1547 -- these are cooperative yield hints inside polling loops. Replace with:
 
 ```cpp
 #include "freertos/FreeRTOS.h"
@@ -96,8 +96,8 @@ dependencies:
 
 ### 8. Version bump
 
-- `library.json` → `2.0.0`
-- `Version.h` (if present) → `2.0.0`
+- `library.json` -> `2.0.0`
+- `Version.h` (if present) -> `2.0.0`
 
 ### 9. Replace Arduino example with ESP-IDF example
 

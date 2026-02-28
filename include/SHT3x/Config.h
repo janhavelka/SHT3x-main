@@ -72,6 +72,20 @@ using BusResetFn = Status (*)(void* user);
 /// @return Status indicating success or failure
 using HardResetFn = Status (*)(void* user);
 
+/// Millisecond timestamp callback.
+/// @param user User context pointer passed through from Config
+/// @return Current monotonic milliseconds
+using NowMsFn = uint32_t (*)(void* user);
+
+/// Microsecond timestamp callback.
+/// @param user User context pointer passed through from Config
+/// @return Current monotonic microseconds
+using NowUsFn = uint32_t (*)(void* user);
+
+/// Cooperative yield callback.
+/// @param user User context pointer passed through from Config
+using YieldFn = void (*)(void* user);
+
 /// Measurement repeatability
 enum class Repeatability : uint8_t {
   LOW_REPEATABILITY = 0,
@@ -109,6 +123,12 @@ struct Config {
   void* i2cUser = nullptr;               ///< User context for callbacks
   BusResetFn busReset = nullptr;         ///< Optional interface reset callback
   HardResetFn hardReset = nullptr;       ///< Optional hard reset (nRESET pulse)
+
+  // === Timing Hooks (optional) ===
+  NowMsFn nowMs = nullptr;               ///< Monotonic millisecond source
+  NowUsFn nowUs = nullptr;               ///< Monotonic microsecond source
+  YieldFn cooperativeYield = nullptr;    ///< Cooperative scheduler hint
+  void* timeUser = nullptr;              ///< User context for timing hooks
 
   // === Device Settings ===
   uint8_t i2cAddress = 0x44;             ///< 0x44 (ADDR=GND) or 0x45 (ADDR=VDD)

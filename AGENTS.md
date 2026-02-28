@@ -113,7 +113,7 @@ The driver follows a **managed synchronous** model with health tracking:
 
 - All public I2C operations are **blocking** (no async state machine needed - SHT3x has no EEPROM writes).
 - `tick()` may be used for periodic polling or measurement-ready checks.
-- Health is tracked via **tracked transport wrappers** — public API never calls `_updateHealth()` directly.
+- Health is tracked via **tracked transport wrappers** ? public API never calls `_updateHealth()` directly.
 - Recovery is **manual** via `recover()` - the application controls retry strategy.
 
 ### DriverState (4 states only)
