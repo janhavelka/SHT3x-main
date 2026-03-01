@@ -1,193 +1,58 @@
-# SHT3x -- ESP-IDF Migration Prompt
+# SHT3x ESP-IDF Portability Status
 
-> **Library**: SHT3x (Sensirion temperature / humidity sensor, one-shot mode)
-> **Current version**: 1.3.1 -> **Target**: 2.0.0
-> **Namespace**: `SHT3x`
-> **Include path**: `#include "SHT3x/SHT3x.h"`
-> **Difficulty**: Easy -- `millis()`/`micros()`/`yield()` replacement in .cpp only
+Last audited: 2026-03-01
 
----
+## Current Reality
+- Primary runtime remains PlatformIO + Arduino.
+- Transport is callback-based (`Config.i2cWrite`, `Config.i2cWriteRead`).
+- Optional reset hooks are supported (`busReset`, `hardReset`).
+- Optional timing hooks are available:
+  - `Config.nowMs`
+  - `Config.nowUs`
+  - `Config.cooperativeYield`
+  - `Config.timeUser`
+- Core logic uses internal wrappers (`_nowMs`, `_nowUs`, `_cooperativeYield`).
+- Arduino calls are only fallback paths inside wrappers:
+  - `millis()` fallback for `_nowMs`
+  - `micros()` fallback for `_nowUs`
+  - `yield()` fallback for `_cooperativeYield`
 
-## Pre-Migration
+## ESP-IDF Adapter Requirements
+To run under pure ESP-IDF, provide:
+1. I2C write callback.
+2. I2C write-read callback.
+3. Optional bus reset and hard reset callbacks.
+4. Optional timing callbacks (`nowMs`, `nowUs`, `cooperativeYield`).
 
-```bash
-git tag v1.3.1   # freeze Arduino-era version
-```
-
----
-
-## Current State -- Arduino Dependencies (exact)
-
-| API | Count | Locations |
-|-----|-------|-----------|
-| `#include <Arduino.h>` | 1 | `.cpp` only (not in header) |
-| `millis()` | 10 | Throughout .cpp |
-| `micros()` | 5 | Throughout .cpp |
-| `yield()` | 2 | Lines 1520, 1547 |
-
-I2C already abstracted via injected callbacks. Extra callbacks:
-
+## Minimal Adapter Pattern
 ```cpp
-using BusResetFn   = Status (*)(void* user);
-using HardResetFn  = Status (*)(void* user);
-```
-
-Also uses `TransportCapability` enum for feature negotiation. Config is struct-based, time via `tick(uint32_t nowMs)`.
-
----
-
-## Steps
-
-### 1. Remove `#include <Arduino.h>`
-
-### 2. Add timing helpers at file scope in .cpp
-
-```cpp
-#include "esp_timer.h"
-
-static inline uint32_t nowMs() {
-    return (uint32_t)(esp_timer_get_time() / 1000);
+static uint32_t idfNowMs(void*) {
+  return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
 }
 
-static inline uint32_t nowUs() {
-    return (uint32_t)(esp_timer_get_time());  // already us
-}
-```
-
-### 3. Replace all `millis()` -> `nowMs()` (10 sites)
-
-### 4. Replace all `micros()` -> `nowUs()` (5 sites)
-
-### 5. Replace `yield()` -> no-op or `taskYIELD()`
-
-At lines 1520, 1547 -- these are cooperative yield hints inside polling loops. Replace with:
-
-```cpp
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-// Replace yield() with:
-taskYIELD();
-```
-
-Or if the yield is in a tight loop that waits for a sensor measurement, consider `vTaskDelay(pdMS_TO_TICKS(1))` to actually release CPU.
-
-### 6. Add `CMakeLists.txt` (library root)
-
-```cmake
-idf_component_register(
-    SRCS "src/SHT3x.cpp"
-    INCLUDE_DIRS "include"
-    REQUIRES esp_timer
-)
-```
-
-### 7. Add `idf_component.yml` (library root)
-
-```yaml
-version: "2.0.0"
-description: "SHT3x temperature/humidity sensor driver (one-shot mode)"
-targets:
-  - esp32s2
-  - esp32s3
-dependencies:
-  idf: ">=5.0"
-```
-
-### 8. Version bump
-
-- `library.json` -> `2.0.0`
-- `Version.h` (if present) -> `2.0.0`
-
-### 9. Replace Arduino example with ESP-IDF example
-
-Create `examples/espidf_basic/main/main.cpp`:
-
-```cpp
-#include <cstdio>
-#include "SHT3x/SHT3x.h"
-#include "driver/i2c_master.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-static i2c_master_bus_handle_t bus;
-static i2c_master_dev_handle_t dev;
-
-static SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len, void*) {
-    esp_err_t err = i2c_master_transmit(dev, data, len, 100);
-    return err == ESP_OK ? SHT3x::Status{SHT3x::Err::Ok}
-                         : SHT3x::Status{SHT3x::Err::I2cNack, "transmit failed"};
+static uint32_t idfNowUs(void*) {
+  return static_cast<uint32_t>(esp_timer_get_time());
 }
 
-static SHT3x::Status i2cWriteRead(uint8_t addr,
-                                    const uint8_t* wdata, size_t wlen,
-                                    uint8_t* rdata, size_t rlen, void*) {
-    esp_err_t err = i2c_master_transmit_receive(dev, wdata, wlen, rdata, rlen, 100);
-    return err == ESP_OK ? SHT3x::Status{SHT3x::Err::Ok}
-                         : SHT3x::Status{SHT3x::Err::I2cNack, "xfer failed"};
+static void idfYield(void*) {
+  taskYIELD();
 }
 
-extern "C" void app_main() {
-    i2c_master_bus_config_t busCfg{};
-    busCfg.i2c_port = I2C_NUM_0;
-    busCfg.sda_io_num = GPIO_NUM_8;
-    busCfg.scl_io_num = GPIO_NUM_9;
-    busCfg.clk_source = I2C_CLK_SRC_DEFAULT;
-    busCfg.glitch_ignore_cnt = 7;
-    busCfg.flags.enable_internal_pullup = true;
-    i2c_new_master_bus(&busCfg, &bus);
-
-    i2c_device_config_t devCfg{};
-    devCfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    devCfg.device_address = 0x44;
-    devCfg.scl_speed_hz = 100000;
-    i2c_master_bus_add_device(bus, &devCfg, &dev);
-
-    SHT3x::Config cfg{};
-    cfg.i2cAddr = 0x44;
-    cfg.i2cWrite = i2cWrite;
-    cfg.i2cWriteRead = i2cWriteRead;
-
-    SHT3x::Sensor sensor;
-    auto st = sensor.begin(cfg);
-    if (st.err != SHT3x::Err::Ok) {
-        printf("begin() failed: %s\n", st.msg);
-    }
-
-    while (true) {
-        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-        sensor.tick(now);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
+SHT3x::Config cfg{};
+cfg.i2cWrite = myI2cWrite;
+cfg.i2cWriteRead = myI2cWriteRead;
+cfg.nowMs = idfNowMs;
+cfg.nowUs = idfNowUs;
+cfg.cooperativeYield = idfYield;
 ```
 
-Create `examples/espidf_basic/main/CMakeLists.txt`:
+## Porting Notes
+- Keep `tick(nowMs)` scheduled regularly.
+- Preserve transport error mapping for NACK/timeout/bus errors (important for recovery logic).
+- Keep command spacing and periodic-fetch timing behavior unchanged.
 
-```cmake
-idf_component_register(SRCS "main.cpp" INCLUDE_DIRS "." REQUIRES driver esp_timer)
-```
-
-Create `examples/espidf_basic/CMakeLists.txt`:
-
-```cmake
-cmake_minimum_required(VERSION 3.16)
-set(EXTRA_COMPONENT_DIRS "../..")
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(sht3x_espidf_basic)
-```
-
----
-
-## Verification
-
-```bash
-cd examples/espidf_basic && idf.py set-target esp32s2 && idf.py build
-```
-
-- [ ] `idf.py build` succeeds
-- [ ] Zero `#include <Arduino.h>` anywhere
-- [ ] Zero `millis()`, `micros()`, `yield()` calls remaining
-- [ ] Version bumped to 2.0.0
-- [ ] `git tag v2.0.0`
+## Verification Checklist
+- `python tools/check_core_timing_guard.py` passes.
+- Native tests pass (`pio test -e native`).
+- Example build passes (`pio run -e ex_bringup_s3`).
+- No new direct Arduino timing calls are added outside wrapper fallback.

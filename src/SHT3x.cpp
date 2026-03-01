@@ -26,6 +26,22 @@ static constexpr uint32_t MAX_NOT_READY_TIMEOUT_MS = 600000;
 static constexpr uint32_t MAX_PERIODIC_FETCH_MARGIN_MS = 60000;
 static constexpr uint32_t MAX_RECOVER_BACKOFF_MS = 600000;
 
+static uint32_t _nowMs(const Config& cfg) {
+  return (cfg.nowMs != nullptr) ? cfg.nowMs(cfg.timeUser) : millis();
+}
+
+static uint32_t _nowUs(const Config& cfg) {
+  return (cfg.nowUs != nullptr) ? cfg.nowUs(cfg.timeUser) : micros();
+}
+
+static void _cooperativeYield(const Config& cfg) {
+  if (cfg.cooperativeYield != nullptr) {
+    cfg.cooperativeYield(cfg.timeUser);
+  } else {
+    yield();
+  }
+}
+
 static uint32_t saturatingAddU32(uint32_t a, uint32_t b) {
   const uint32_t maxU32 = std::numeric_limits<uint32_t>::max();
   if (a > (maxU32 - b)) {
@@ -355,7 +371,7 @@ Status SHT3x::requestMeasurement() {
     }
 
     _measurementRequested = true;
-    _measurementReadyMs = millis() + estimateMeasurementTimeMs();
+    _measurementReadyMs = _nowMs(_config) + estimateMeasurementTimeMs();
 
     return Status::Error(Err::IN_PROGRESS, "Measurement started");
   }
@@ -365,7 +381,7 @@ Status SHT3x::requestMeasurement() {
       return Status::Error(Err::INVALID_PARAM, "Periodic mode not active");
     }
 
-    const uint32_t now = millis();
+    const uint32_t now = _nowMs(_config);
     uint32_t readyMs = _periodicReadyMs(now);
 
     _measurementRequested = true;
@@ -782,7 +798,7 @@ Status SHT3x::interfaceReset() {
   }
 
   // Record command timing so the next command respects tIDLE
-  _lastCommandUs = micros();
+  _lastCommandUs = _nowUs(_config);
   _lastCommandValid = true;
 
   _measurementRequested = false;
@@ -794,7 +810,7 @@ Status SHT3x::interfaceReset() {
   _notReadyStartMs = 0;
   _notReadyCount = 0;
   if (_periodicActive) {
-    _periodicStartMs = millis();
+    _periodicStartMs = _nowMs(_config);
   }
 
   return Status::Ok();
@@ -819,7 +835,7 @@ Status SHT3x::generalCallReset() {
     return st;
   }
 
-  _lastCommandUs = micros();
+  _lastCommandUs = _nowUs(_config);
   _lastCommandValid = true;
   st = _waitMs(RESET_DELAY_MS);
   if (!st.ok()) {
@@ -1186,7 +1202,7 @@ Status SHT3x::_applyCachedSettingsAfterReset() {
 }
 
 Status SHT3x::_performRecoveryLadder() {
-  const uint32_t now = millis();
+  const uint32_t now = _nowMs(_config);
   if (_config.recoverBackoffMs > 0 && _lastRecoverValid &&
       !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
     return Status::Error(Err::BUSY, "Recovery backoff active");
@@ -1356,7 +1372,7 @@ Status SHT3x::_i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen
     return st;
   }
   if (allow && st.code == Err::I2C_NACK_READ && txLen == 0 && rxLen > 0) {
-    _recordBusActivity(millis());
+    _recordBusActivity(_nowMs(_config));
     return Status::Error(Err::MEASUREMENT_NOT_READY, "No new data", st.detail);
   }
   return _updateHealth(st);
@@ -1386,7 +1402,7 @@ Status SHT3x::_writeCommand(uint16_t cmd, bool tracked) {
     return st;
   }
 
-  _lastCommandUs = micros();
+  _lastCommandUs = _nowUs(_config);
   _lastCommandValid = true;
   return Status::Ok();
 }
@@ -1410,7 +1426,7 @@ Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked) {
     return st;
   }
 
-  _lastCommandUs = micros();
+  _lastCommandUs = _nowUs(_config);
   _lastCommandValid = true;
   return Status::Ok();
 }
@@ -1444,7 +1460,7 @@ Status SHT3x::_readOnly(uint8_t* buf, size_t len, bool tracked,
 }
 
 Status SHT3x::_updateHealth(const Status& st) {
-  const uint32_t now = millis();
+  const uint32_t now = _nowMs(_config);
   const uint32_t maxU32 = std::numeric_limits<uint32_t>::max();
   const uint8_t maxU8 = std::numeric_limits<uint8_t>::max();
 
@@ -1499,14 +1515,14 @@ Status SHT3x::_ensureCommandDelay() {
 
   const uint32_t delayUs = static_cast<uint32_t>(_config.commandDelayMs) * 1000U;
   const uint32_t target = _lastCommandUs + delayUs;
-  const uint32_t startMs = millis();
+  const uint32_t startMs = _nowMs(_config);
   const uint32_t timeoutMs = saturatingAddU32(static_cast<uint32_t>(_config.commandDelayMs),
                                               _config.i2cTimeoutMs);
   uint32_t lastMs = startMs;
   uint32_t stableLoops = 0;
 
-  while (!_timeElapsed(micros(), target)) {
-    const uint32_t nowMs = millis();
+  while (!_timeElapsed(_nowUs(_config), target)) {
+    const uint32_t nowMs = _nowMs(_config);
     if (static_cast<uint32_t>(nowMs - startMs) > timeoutMs) {
       return Status::Error(Err::TIMEOUT, "Command delay timeout");
     }
@@ -1516,7 +1532,7 @@ Status SHT3x::_ensureCommandDelay() {
     } else if (++stableLoops >= MAX_SPIN_ITERS) {
       return Status::Error(Err::TIMEOUT, "Command delay timeout");
     }
-    yield();
+    _cooperativeYield(_config);
   }
 
   return Status::Ok();
@@ -1527,14 +1543,14 @@ Status SHT3x::_waitMs(uint32_t delayMs) {
     return Status::Ok();
   }
 
-  const uint32_t startMs = millis();
+  const uint32_t startMs = _nowMs(_config);
   const uint32_t deadline = startMs + delayMs;
   const uint32_t timeoutMs = saturatingAddU32(delayMs, _config.i2cTimeoutMs);
   uint32_t lastMs = startMs;
   uint32_t stableLoops = 0;
 
   while (true) {
-    const uint32_t nowMs = millis();
+    const uint32_t nowMs = _nowMs(_config);
     if (_timeElapsed(nowMs, deadline)) {
       break;
     }
@@ -1547,7 +1563,7 @@ Status SHT3x::_waitMs(uint32_t delayMs) {
     } else if (++stableLoops >= MAX_SPIN_ITERS) {
       return Status::Error(Err::TIMEOUT, "Wait timeout");
     }
-    yield();
+    _cooperativeYield(_config);
   }
 
   return Status::Ok();
@@ -1604,7 +1620,7 @@ Status SHT3x::_fetchPeriodic() {
 
   bool allowNoData = hasCapability(_config.transportCapabilities,
                                    TransportCapability::READ_HEADER_NACK);
-  const uint32_t now = millis();
+  const uint32_t now = _nowMs(_config);
   if (allowNoData && _config.notReadyTimeoutMs > 0 && _notReadyStartMs != 0) {
     const uint32_t deadline = _notReadyStartMs + _config.notReadyTimeoutMs;
     if (_timeElapsed(now, deadline)) {
@@ -1690,7 +1706,7 @@ Status SHT3x::_enterPeriodic(PeriodicRate rate, Repeatability rep, bool art) {
   } else {
     _periodMs = ART_PERIOD_MS;
   }
-  _periodicStartMs = millis();
+  _periodicStartMs = _nowMs(_config);
   _lastFetchMs = 0;
 
   return Status::Ok();

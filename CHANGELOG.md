@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Nothing yet
 
+## [1.4.0] - 2026-03-01
+
+### Changed
+- Updated `docs/IDF_PORT.md` and version metadata to match the current release baseline.
+
+### Fixed
+- Timing-guard compliance and timing-path stability improvements in `src/SHT3x.cpp`.
+
 ## [1.3.1] - 2026-02-22
 
 ### Added
@@ -110,7 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/janhavelka/SHT3x/compare/v1.3.2...v1.4.0
 [1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
 [1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
