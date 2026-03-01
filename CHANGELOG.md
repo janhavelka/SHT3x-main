@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Timing-guard compliance and timing-path stability improvements in `src/SHT3x.cpp`.
 
+## [1.3.2] - 2026-02-28
+
+### Added
+- Shared bringup framework headers in `examples/common/*` (`BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
+- `docs/IDF_PORT.md` and `docs/UNIFICATION_STANDARD.md` for standardized portability/unification process.
+- CLI/timing guard scripts for repository quality gates.
+
+### Changed
+- Unified `examples/01_basic_bringup_cli` command/help/reporting style with the cross-library scheme.
+- Normalized repository text/line-ending policy and build metadata generation path (`.gitattributes`, version script updates).
+
 ## [1.3.1] - 2026-02-22
 
 ### Added
@@ -120,6 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...HEAD
 [1.4.0]: https://github.com/janhavelka/SHT3x/compare/v1.3.2...v1.4.0
+[1.3.2]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
 [1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
