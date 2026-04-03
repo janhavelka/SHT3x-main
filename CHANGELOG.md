@@ -7,23 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Nothing yet
-
 ### Changed
-- Nothing yet
-
-### Deprecated
-- Nothing yet
-
-### Removed
-- Nothing yet
-
-### Fixed
-- Nothing yet
-
-### Security
-- Nothing yet
+- README installation and documentation references now point to the current repository URL and shipped docs.
+- Example transport documentation now matches the `i2cUser` / `TwoWire*` callback contract used by the bringup example and native tests.
 
 ## [1.4.0] - 2026-03-01
 

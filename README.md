@@ -298,6 +298,8 @@ if (device.readSettings(snap).ok()) {
 
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
+- `docs/Sensirion_electronic_identification_code_SHT3x.pdf` - serial-number / EIC reference
 - `docs/SHT3x_driver_extraction.md` - driver split and extraction notes
 
 ## License
