@@ -1532,6 +1532,7 @@ void setup() {
 
   gConfig.i2cWrite = transport::wireWrite;
   gConfig.i2cWriteRead = transport::wireWriteRead;
+  gConfig.i2cUser = &Wire;
   gConfig.i2cAddress = 0x44;
   gConfig.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   gConfig.transportCapabilities = SHT3x::TransportCapability::NONE;

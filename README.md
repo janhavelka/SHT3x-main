@@ -19,7 +19,7 @@ Add to `platformio.ini`:
 
 ```ini
 lib_deps = 
-  https://github.com/janhavelka/SHT3x-main.git
+  https://github.com/janhavelka/SHT3x.git
 ```
 
 ### Manual
@@ -51,9 +51,13 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
 SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                        uint32_t timeoutMs, void* user) {
   (void)timeoutMs;  // Manager-owned in shared buses
-  Wire.beginTransmission(addr);
-  Wire.write(data, len);
-  uint8_t result = Wire.endTransmission(true);
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  if (wire == nullptr) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG, "Wire instance is null");
+  }
+  wire->beginTransmission(addr);
+  wire->write(data, len);
+  uint8_t result = wire->endTransmission(true);
   return mapWireError(result, "Write failed");
 }
 
@@ -67,19 +71,23 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
     return SHT3x::Status::Ok();
   }
   (void)timeoutMs;  // Manager-owned in shared buses
-  size_t received = Wire.requestFrom(addr, rxLen);
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  if (wire == nullptr) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG, "Wire instance is null");
+  }
+  size_t received = wire->requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {
       return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read returned 0 bytes",
                                   static_cast<int32_t>(received));
     }
     for (size_t i = 0; i < received; i++) {
-      (void)Wire.read();
+      (void)wire->read();
     }
     return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Read failed");
   }
   for (size_t i = 0; i < rxLen; i++) {
-    rx[i] = Wire.read();
+    rx[i] = wire->read();
   }
   return SHT3x::Status::Ok();
 }
@@ -95,6 +103,7 @@ void setup() {
   SHT3x::Config cfg;
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
+  cfg.i2cUser = &Wire;
   cfg.i2cAddress = 0x44;
   cfg.transportCapabilities = SHT3x::TransportCapability::NONE;
 
@@ -288,10 +297,8 @@ if (device.readSettings(snap).ok()) {
 ## Documentation
 
 - `CHANGELOG.md` - full release history
-- `docs/UNIFICATION_STANDARD.md` - shared API/CLI/test conventions
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
-- `release_notes.md` - latest release summary
-- `docs/DOXYGEN.md` - how to build and browse API docs
+- `docs/SHT3x_driver_extraction.md` - driver split and extraction notes
 
 ## License
 

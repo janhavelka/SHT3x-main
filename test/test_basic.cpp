@@ -532,11 +532,11 @@ void test_periodic_fetch_expected_nack_no_failure() {
 void test_example_adapter_ambiguous_zero_bytes() {
   Wire._setRequestFromResult(0);
   uint8_t buf[3] = {};
-  Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 10, nullptr);
+  Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 10, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
   Wire._clearRequestFromOverride();
 
-  st = transport::wireWriteRead(0x44, buf, 1, buf, sizeof(buf), 10, nullptr);
+  st = transport::wireWriteRead(0x44, buf, 1, buf, sizeof(buf), 10, &Wire);
   TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
 
@@ -544,7 +544,7 @@ void test_wire_adapter_timeout_and_stop() {
   Wire.setTimeOut(123);
   Wire._clearClockSetCount();
   uint8_t buf[2] = {0x00, 0x00};
-  Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, nullptr);
+  Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, &Wire);
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._clockSetCount());
@@ -556,7 +556,7 @@ void test_wire_adapter_drains_partial_read() {
   Wire._setRequestFromResult(2);
   Wire._clearReadCallCount();
   uint8_t buf[6] = {};
-  Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, nullptr);
+  Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
   TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());

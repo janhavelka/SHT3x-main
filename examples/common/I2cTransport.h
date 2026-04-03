@@ -31,17 +31,20 @@ inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
 /// @param data Data buffer to write
 /// @param len Number of bytes to write
 /// @param timeoutMs Timeout requested by the driver (manager-owned in shared buses)
-/// @param user User context (unused)
+/// @param user User context (expects TwoWire*)
 /// @return Status indicating success or failure
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
-  (void)user;
   (void)timeoutMs;
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  if (wire == nullptr) {
+    return Status::Error(Err::INVALID_CONFIG, "Wire instance is null");
+  }
 
-  Wire.beginTransmission(addr);
-  size_t written = Wire.write(data, len);
+  wire->beginTransmission(addr);
+  size_t written = wire->write(data, len);
   // SHT3x requires STOP between command write and read header.
-  uint8_t result = Wire.endTransmission(true);
+  uint8_t result = wire->endTransmission(true);
 
   if (result != 0) {
     // Arduino Wire error codes (core-dependent): 1=data too long, 2=NACK addr, 3=NACK data,
@@ -69,13 +72,16 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 /// @param rxData Buffer for read data
 /// @param rxLen Number of bytes to read
 /// @param timeoutMs Timeout requested by the driver (manager-owned in shared buses)
-/// @param user User context (unused)
+/// @param user User context (expects TwoWire*)
 /// @return Status indicating success or failure
 inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint8_t* rxData, size_t rxLen,
                             uint32_t timeoutMs, void* user) {
-  (void)user;
   (void)timeoutMs;
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  if (wire == nullptr) {
+    return Status::Error(Err::INVALID_CONFIG, "Wire instance is null");
+  }
 
   if (txLen > 0) {
     return Status::Error(Err::INVALID_PARAM, "Combined write+read not supported");
@@ -86,20 +92,20 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   }
 
   // Read phase
-  size_t received = Wire.requestFrom(addr, rxLen);
+  size_t received = wire->requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {
       return Status::Error(Err::I2C_ERROR, "I2C read returned 0 bytes",
                            static_cast<int32_t>(received));
     }
     for (size_t i = 0; i < received; i++) {
-      (void)Wire.read();
+      (void)wire->read();
     }
     return Status::Error(Err::I2C_ERROR, "I2C read incomplete", static_cast<int32_t>(received));
   }
 
   for (size_t i = 0; i < rxLen; i++) {
-    rxData[i] = Wire.read();
+    rxData[i] = wire->read();
   }
 
   return Status::Ok();

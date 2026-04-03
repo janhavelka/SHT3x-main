@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Shared bringup framework headers in `examples/common/*` (`BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
-- `docs/IDF_PORT.md` and `docs/UNIFICATION_STANDARD.md` for standardized portability/unification process.
+- `docs/IDF_PORT.md` and `docs/SHT3x_driver_extraction.md` for standardized portability and driver-extraction notes.
 - CLI/timing guard scripts for repository quality gates.
 
 ### Changed
