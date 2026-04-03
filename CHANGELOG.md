@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-04-03
+
 ### Changed
 - README installation and documentation references now point to the current repository URL and shipped docs.
 - Example transport documentation now matches the `i2cUser` / `TwoWire*` callback contract used by the bringup example and native tests.
@@ -115,7 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/janhavelka/SHT3x/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1

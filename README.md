@@ -297,6 +297,7 @@ if (device.readSettings(snap).ok()) {
 ## Documentation
 
 - `CHANGELOG.md` - full release history
+- `release_notes.md` - latest release summary
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
 - `docs/Sensirion_electronic_identification_code_SHT3x.pdf` - serial-number / EIC reference
