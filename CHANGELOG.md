@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - README installation and documentation references now point to the current repository URL and shipped docs.
 - Example transport documentation now matches the `i2cUser` / `TwoWire*` callback contract used by the bringup example and native tests.
+- `Version.h` generation now uses the same macro-based build metadata pattern as the other I2C libraries, avoiding self-referential dirty release headers.
 
 ## [1.4.0] - 2026-03-01
 
