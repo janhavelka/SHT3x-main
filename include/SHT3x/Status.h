@@ -42,8 +42,14 @@ struct Status {
   /// @return true if operation succeeded
   constexpr bool ok() const { return code == Err::OK; }
 
+  /// @return true if the status matches the requested error code
+  constexpr bool is(Err expected) const { return code == expected; }
+
   /// @return true if operation in progress (not a failure)
   constexpr bool inProgress() const { return code == Err::IN_PROGRESS; }
+
+  /// @return true if operation succeeded
+  explicit constexpr operator bool() const { return ok(); }
 
   /// Create a success status
   static constexpr Status Ok() { return Status{Err::OK, 0, "OK"}; }

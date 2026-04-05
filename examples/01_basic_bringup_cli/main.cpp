@@ -162,6 +162,19 @@ const char* alertKindToStr(SHT3x::AlertLimitKind kind) {
   }
 }
 
+void printBytes(const uint8_t* data, size_t len) {
+  if (data == nullptr || len == 0) {
+    Serial.println("Bytes: <empty>");
+    return;
+  }
+
+  Serial.print("Bytes:");
+  for (size_t i = 0; i < len; ++i) {
+    Serial.printf(" %02X", static_cast<unsigned>(data[i]));
+  }
+  Serial.println();
+}
+
 void printStatus(const SHT3x::Status& st) {
   Serial.printf("  Status: %s%s%s (code=%u, detail=%ld)\n",
                 LOG_COLOR_RESULT(st.ok()),
@@ -274,6 +287,12 @@ void printConfig() {
   }
 
   Serial.println("=== Config ===");
+  Serial.printf("  Initialized: %s\n", snap.initialized ? "true" : "false");
+  Serial.printf("  State: %s\n", stateToStr(snap.state));
+  Serial.printf("  I2C address: 0x%02X\n", snap.i2cAddress);
+  Serial.printf("  I2C timeout: %lu ms\n", static_cast<unsigned long>(snap.i2cTimeoutMs));
+  Serial.printf("  Offline threshold: %u\n", static_cast<unsigned>(snap.offlineThreshold));
+  Serial.printf("  Has nowMs hook: %s\n", snap.hasNowMsHook ? "true" : "false");
   Serial.printf("  Mode: %s\n", modeToStr(snap.mode));
   Serial.printf("  Repeatability: %s\n", repToStr(snap.repeatability));
   Serial.printf("  Periodic rate: %s mps\n", rateToStr(snap.periodicRate));
@@ -848,6 +867,9 @@ void printHelp() {
   helpItem("clearstatus", "Clear status flags");
   helpItem("heater [on|off|status]", "Control heater");
   helpItem("serial [stretch|nostretch]", "Read serial number");
+  helpItem("command write <hex>", "Issue a raw 16-bit command");
+  helpItem("command write_data <cmd> <data>", "Issue a command with a packed data word");
+  helpItem("command read <cmd> <len>", "Issue a command and read raw response bytes");
   helpItem("alert read <hs|hc|lc|ls>", "Read alert limit");
   helpItem("alert write <kind> <T> <RH>", "Write alert limit");
   helpItem("alert raw read <kind>", "Read raw alert limit word");
@@ -946,6 +968,88 @@ void processCommand(const String& cmdLine) {
   if (cmd == "meastime") {
     Serial.printf("Estimated measurement time: %lu ms\n",
                   static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
+    return;
+  }
+
+  if (cmd.startsWith("command ")) {
+    String args = cmd.substring(8);
+    args.trim();
+    const int split = args.indexOf(' ');
+    String sub = args;
+    String rest;
+    if (split >= 0) {
+      sub = args.substring(0, split);
+      rest = args.substring(split + 1);
+      rest.trim();
+    }
+
+    if (sub == "write") {
+      uint16_t command = 0;
+      if (!parseU16(rest, command)) {
+        LOGW("Usage: command write <hex>");
+        return;
+      }
+      SHT3x::Status st = device.writeCommand(command);
+      printStatus(st);
+      return;
+    }
+
+    if (sub == "write_data") {
+      const int split2 = rest.indexOf(' ');
+      if (split2 < 0) {
+        LOGW("Usage: command write_data <cmd> <data>");
+        return;
+      }
+      const String cmdStr = rest.substring(0, split2);
+      String dataStr = rest.substring(split2 + 1);
+      dataStr.trim();
+
+      uint16_t command = 0;
+      uint16_t data = 0;
+      if (!parseU16(cmdStr, command) || !parseU16(dataStr, data)) {
+        LOGW("Invalid command or data");
+        return;
+      }
+      SHT3x::Status st = device.writeCommandWithData(command, data);
+      printStatus(st);
+      return;
+    }
+
+    if (sub == "read") {
+      const int split2 = rest.indexOf(' ');
+      if (split2 < 0) {
+        LOGW("Usage: command read <cmd> <len>");
+        return;
+      }
+      const String cmdStr = rest.substring(0, split2);
+      String lenStr = rest.substring(split2 + 1);
+      lenStr.trim();
+
+      uint16_t command = 0;
+      uint16_t lenValue = 0;
+      if (!parseU16(cmdStr, command) || !parseU16(lenStr, lenValue)) {
+        LOGW("Invalid command or length");
+        return;
+      }
+      if (lenValue == 0 || lenValue > 8U) {
+        LOGW("Length must be between 1 and 8");
+        return;
+      }
+
+      uint8_t buf[8] = {};
+      SHT3x::Status st = device.readCommand(command, buf, lenValue);
+      if (!st.ok()) {
+        printStatus(st);
+        return;
+      }
+      Serial.printf("Command 0x%04X response (%u bytes):\n",
+                    static_cast<unsigned>(command),
+                    static_cast<unsigned>(lenValue));
+      printBytes(buf, lenValue);
+      return;
+    }
+
+    LOGW("Usage: command write|write_data|read ...");
     return;
   }
 

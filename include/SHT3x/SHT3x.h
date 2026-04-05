@@ -51,6 +51,12 @@ struct StatusRegister {
 
 /// Snapshot of driver configuration and state
 struct SettingsSnapshot {
+  bool initialized = false;                                   ///< True after begin() succeeds
+  DriverState state = DriverState::UNINIT;                   ///< Current driver state
+  uint8_t i2cAddress = 0x44;                                 ///< Active 7-bit I2C address
+  uint32_t i2cTimeoutMs = 50;                                ///< Active I2C timeout
+  uint8_t offlineThreshold = 5;                              ///< Failure threshold for OFFLINE
+  bool hasNowMsHook = false;                                 ///< True when Config::nowMs is provided
   Mode mode = Mode::SINGLE_SHOT;                              ///< Active acquisition mode
   Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Cached repeatability setting
   PeriodicRate periodicRate = PeriodicRate::MPS_1;            ///< Cached periodic rate
@@ -236,6 +242,32 @@ public:
   /// statusValid is true only if the status read succeeds. If periodic mode
   /// blocks status reads, this returns OK with statusValid=false.
   Status readSettings(SettingsSnapshot& out);
+
+  // =========================================================================
+  // Low-Level Command Access
+  // =========================================================================
+
+  /// Issue a raw 16-bit command using the tracked transport path.
+  /// @param command 16-bit SHT3x command constant from CommandTable.h
+  /// @return Status::Ok() on success, error otherwise
+  Status writeCommand(uint16_t command);
+
+  /// Issue a raw 16-bit command followed by a packed 16-bit data word.
+  /// The CRC byte is computed internally.
+  /// @param command 16-bit SHT3x command constant from CommandTable.h
+  /// @param data Packed 16-bit payload word
+  /// @return Status::Ok() on success, error otherwise
+  Status writeCommandWithData(uint16_t command, uint16_t data);
+
+  /// Issue a 16-bit command and read a raw response frame.
+  /// The command spacing gate and health tracking still apply.
+  /// @param command 16-bit SHT3x command constant from CommandTable.h
+  /// @param out Read buffer
+  /// @param len Number of bytes to read
+  /// @param allowNoData Map a read-header NACK to MEASUREMENT_NOT_READY when supported
+  /// @return Status::Ok() on success, error otherwise
+  Status readCommand(uint16_t command, uint8_t* out, size_t len,
+                     bool allowNoData = false);
 
   /// Set measurement repeatability
   Status setRepeatability(Repeatability rep);

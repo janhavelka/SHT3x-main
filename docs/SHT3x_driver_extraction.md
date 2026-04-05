@@ -490,6 +490,12 @@ A robust driver should:
    - read/write each limit
    - helper to disable alert via LowSet > HighSet
 9. Serial number API should return 32-bit ID and expose both commands (0x3780/0x3682).
+10. Expose safe low-level command helpers for upper layers:
+    - write a 16-bit command
+    - write a 16-bit command plus packed data word
+    - write a 16-bit command and read a raw response frame
+    These helpers should still honor tIDLE, transport health tracking, and the
+    SHT3x transport contract.
 
 ---
 

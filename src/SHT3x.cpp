@@ -479,6 +479,12 @@ Status SHT3x::getSettings(SettingsSnapshot& out) const {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
 
+  out.initialized = _initialized;
+  out.state = _driverState;
+  out.i2cAddress = _config.i2cAddress;
+  out.i2cTimeoutMs = _config.i2cTimeoutMs;
+  out.offlineThreshold = _config.offlineThreshold;
+  out.hasNowMsHook = (_config.nowMs != nullptr);
   out.mode = _mode;
   out.repeatability = _config.repeatability;
   out.periodicRate = _config.periodicRate;
@@ -510,6 +516,45 @@ Status SHT3x::readSettings(SettingsSnapshot& out) {
     return Status::Ok();
   }
   return stStatus;
+}
+
+Status SHT3x::writeCommand(uint16_t command) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
+  }
+
+  return _writeCommand(command, true);
+}
+
+Status SHT3x::writeCommandWithData(uint16_t command, uint16_t data) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
+  }
+
+  return _writeCommandWithData(command, data, true);
+}
+
+Status SHT3x::readCommand(uint16_t command, uint8_t* out, size_t len,
+                          bool allowNoData) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_singleShotMeasurementPending()) {
+    return Status::Error(Err::BUSY, "Measurement in progress");
+  }
+
+  Status st = _writeCommand(command, true);
+  if (!st.ok()) {
+    return st;
+  }
+
+  return _readAfterCommand(out, len, true, allowNoData);
 }
 
 Status SHT3x::setRepeatability(Repeatability rep) {

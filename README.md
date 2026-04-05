@@ -170,9 +170,14 @@ void loop() {
 | `setMode()` / `getMode()` | Switch between single-shot, periodic, and ART modes. |
 | `setRepeatability()`, `setPeriodicRate()`, `setClockStretching()` | Update core measurement policy. |
 | `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read. |
+| `writeCommand()` / `writeCommandWithData()` / `readCommand()` | Advanced command-level helpers for upper layers that need direct access to the SHT3x command set. |
 | `readStatus()` / `clearStatus()` / `readHeaterStatus()` | Status-register and heater helpers. |
 | `readSerialNumber()` | Read the electronic identification code. |
 | `readAlertLimit*()` / `writeAlertLimit*()` / `disableAlerts()` | Physical and raw alert-threshold access. |
+
+The low-level command helpers are intentionally narrow: they reuse the driver's tracked
+transport path and tIDLE guard, but the dedicated mode/status/alert helpers remain the
+preferred entry points when the command has higher-level state implications.
 
 ### Status Semantics
 
@@ -338,7 +343,8 @@ if (device.readSettings(snap).ok()) {
 - `01_basic_bringup_cli/` - Interactive CLI for testing
 
 The bringup CLI covers the full driver surface, including mode control, serial-number
-readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, and
+readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
+command helpers (`command write`, `command write_data`, `command read`), and
 stress/self-test commands.
 
 ## Documentation

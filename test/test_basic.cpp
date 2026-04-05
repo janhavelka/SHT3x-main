@@ -55,6 +55,17 @@ void test_status_in_progress() {
   TEST_ASSERT_TRUE(st.inProgress());
 }
 
+void test_status_helpers() {
+  Status ok = Status::Ok();
+  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_TRUE(ok.is(Err::OK));
+  TEST_ASSERT_FALSE(ok.is(Err::TIMEOUT));
+
+  Status err = Status::Error(Err::I2C_ERROR, "Test error", 42);
+  TEST_ASSERT_FALSE(err);
+  TEST_ASSERT_TRUE(err.is(Err::I2C_ERROR));
+}
+
 void test_config_defaults() {
   Config cfg;
   TEST_ASSERT_EQUAL(nullptr, cfg.i2cWrite);
@@ -139,28 +150,21 @@ void test_command_delay_guard() {
 }
 
 struct FakeTransport {
+  uint32_t nowMs = 1000;
   Status writeStatus = Status::Ok();
   Status writeReadStatus = Status::Ok();
 };
 
-static Status fakeWrite(uint8_t addr, const uint8_t* data, size_t len,
-                        uint32_t timeoutMs, void* user) {
-  (void)addr;
-  (void)data;
-  (void)len;
-  (void)timeoutMs;
+static Status fakeWrite(uint8_t, const uint8_t*, size_t, uint32_t, void* user) {
   auto* ctx = static_cast<FakeTransport*>(user);
   return ctx->writeStatus;
 }
 
-static Status fakeWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
-                            uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
-                            void* user) {
-  (void)addr;
+static Status fakeWriteRead(uint8_t, const uint8_t* txData, size_t txLen,
+                            uint8_t* rxData, size_t rxLen, uint32_t, void* user) {
+  auto* ctx = static_cast<FakeTransport*>(user);
   (void)txData;
   (void)txLen;
-  (void)timeoutMs;
-  auto* ctx = static_cast<FakeTransport*>(user);
   if (ctx->writeReadStatus.ok() && rxData != nullptr && rxLen >= 3) {
     rxData[0] = 0x00;
     rxData[1] = 0x00;
@@ -172,6 +176,23 @@ static Status fakeWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     }
   }
   return ctx->writeReadStatus;
+}
+
+static uint32_t fakeNowMs(void* user) {
+  return static_cast<FakeTransport*>(user)->nowMs;
+}
+
+static Config makeConfig(FakeTransport& bus) {
+  Config cfg;
+  cfg.i2cWrite = fakeWrite;
+  cfg.i2cWriteRead = fakeWriteRead;
+  cfg.i2cUser = &bus;
+  cfg.nowMs = fakeNowMs;
+  cfg.timeUser = &bus;
+  cfg.i2cTimeoutMs = 10;
+  cfg.offlineThreshold = 3;
+  cfg.mode = Mode::SINGLE_SHOT;
+  return cfg;
 }
 
 struct ScriptedTransport {
@@ -337,6 +358,98 @@ static Status countWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   return Status::Ok();
 }
 
+struct CommandCaptureTransport {
+  uint32_t nowMs = 0;
+  Status writeStatus = Status::Ok();
+  Status writeReadStatus = Status::Ok();
+  uint8_t lastWrite[8] = {};
+  size_t lastWriteLen = 0;
+  uint8_t lastReadTx[8] = {};
+  size_t lastReadTxLen = 0;
+  uint8_t lastReadRx[8] = {};
+  size_t lastReadLen = 0;
+};
+
+static Status captureWrite(uint8_t addr, const uint8_t* data, size_t len,
+                           uint32_t timeoutMs, void* user) {
+  (void)addr;
+  (void)timeoutMs;
+  auto* ctx = static_cast<CommandCaptureTransport*>(user);
+  ctx->lastWriteLen = (len > sizeof(ctx->lastWrite)) ? sizeof(ctx->lastWrite) : len;
+  for (size_t i = 0; i < ctx->lastWriteLen; ++i) {
+    ctx->lastWrite[i] = data[i];
+  }
+  return ctx->writeStatus;
+}
+
+static Status captureWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
+                               uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                               void* user) {
+  (void)addr;
+  (void)timeoutMs;
+  auto* ctx = static_cast<CommandCaptureTransport*>(user);
+  ctx->lastReadTxLen = (txLen > sizeof(ctx->lastReadTx)) ? sizeof(ctx->lastReadTx) : txLen;
+  for (size_t i = 0; i < ctx->lastReadTxLen; ++i) {
+    ctx->lastReadTx[i] = txData[i];
+  }
+  ctx->lastReadLen = (rxLen > sizeof(ctx->lastReadRx)) ? sizeof(ctx->lastReadRx) : rxLen;
+  Status st = ctx->writeReadStatus;
+  if (st.ok() && rxData != nullptr) {
+    for (size_t i = 0; i < ctx->lastReadLen; ++i) {
+      rxData[i] = static_cast<uint8_t>(0xA0U + static_cast<uint8_t>(i));
+      ctx->lastReadRx[i] = rxData[i];
+    }
+    if (ctx->lastReadLen == 3) {
+      rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
+      ctx->lastReadRx[2] = rxData[2];
+    } else if (ctx->lastReadLen == 6) {
+      rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
+      rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
+      ctx->lastReadRx[2] = rxData[2];
+      ctx->lastReadRx[5] = rxData[5];
+    }
+  }
+  return st;
+}
+
+static uint32_t captureNowMs(void* user) {
+  return static_cast<CommandCaptureTransport*>(user)->nowMs;
+}
+
+void test_get_settings_snapshot_fields() {
+  FakeTransport bus;
+  SHT3xDevice device;
+  Config cfg = makeConfig(bus);
+  cfg.i2cTimeoutMs = 77;
+  cfg.offlineThreshold = 4;
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
+  Status beginSt = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(beginSt.ok(), beginSt.msg);
+
+  SettingsSnapshot snap;
+  Status st = device.getSettings(snap);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(snap.initialized);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(DriverState::READY), static_cast<uint8_t>(snap.state));
+  TEST_ASSERT_EQUAL_HEX8(0x44, snap.i2cAddress);
+  TEST_ASSERT_EQUAL_UINT32(77u, snap.i2cTimeoutMs);
+  TEST_ASSERT_EQUAL_UINT8(4u, snap.offlineThreshold);
+  TEST_ASSERT_TRUE(snap.hasNowMsHook);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Mode::SINGLE_SHOT), static_cast<uint8_t>(snap.mode));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Repeatability::HIGH_REPEATABILITY),
+                    static_cast<uint8_t>(snap.repeatability));
+  TEST_ASSERT_FALSE(snap.periodicActive);
+  TEST_ASSERT_FALSE(snap.measurementPending);
+  TEST_ASSERT_FALSE(snap.measurementReady);
+  TEST_ASSERT_EQUAL_UINT32(0u, snap.measurementReadyMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, snap.sampleTimestampMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, snap.missedSamples);
+  TEST_ASSERT_FALSE(snap.statusValid);
+}
+
 void test_begin_rejects_oversized_timing_config() {
   FakeTransport ctx;
   Config cfg;
@@ -396,6 +509,127 @@ void test_single_shot_pending_blocks_unrelated_commands() {
   TEST_ASSERT_EQUAL(Err::BUSY, st.code);
 
   st = device.probe();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_low_level_command_helpers_write_and_read() {
+  CommandCaptureTransport ctx;
+  SHT3xDevice device;
+  Config cfg;
+  cfg.i2cWrite = captureWrite;
+  cfg.i2cWriteRead = captureWriteRead;
+  cfg.i2cUser = &ctx;
+  cfg.nowMs = captureNowMs;
+  cfg.timeUser = &ctx;
+  cfg.i2cTimeoutMs = 10;
+  cfg.commandDelayMs = 1;
+  cfg.offlineThreshold = 3;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
+
+  Status beginSt = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(beginSt.ok(), beginSt.msg);
+
+  ctx.lastWriteLen = 0;
+  ctx.lastReadTxLen = 0;
+  ctx.lastReadLen = 0;
+
+  Status st = device.writeCommand(cmd::CMD_CLEAR_STATUS);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(2u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_CLEAR_STATUS >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_CLEAR_STATUS & 0xFF), ctx.lastWrite[1]);
+
+  ctx.lastWriteLen = 0;
+  st = device.writeCommandWithData(cmd::CMD_ALERT_WRITE_HIGH_SET, 0x1234);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(5u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_ALERT_WRITE_HIGH_SET >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_ALERT_WRITE_HIGH_SET & 0xFF), ctx.lastWrite[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x12, ctx.lastWrite[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x34, ctx.lastWrite[3]);
+  TEST_ASSERT_EQUAL_HEX8(SHT3xDevice::_crc8(&ctx.lastWrite[2], 2), ctx.lastWrite[4]);
+
+  ctx.lastWriteLen = 0;
+  ctx.lastReadTxLen = 0;
+  ctx.lastReadLen = 0;
+  uint8_t buf[3] = {};
+  st = device.readCommand(cmd::CMD_READ_STATUS, buf, sizeof(buf));
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(2u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_READ_STATUS >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_READ_STATUS & 0xFF), ctx.lastWrite[1]);
+  TEST_ASSERT_EQUAL_UINT8(0u, ctx.lastReadTxLen);
+  TEST_ASSERT_EQUAL_UINT8(3u, ctx.lastReadLen);
+  TEST_ASSERT_EQUAL_HEX8(SHT3xDevice::_crc8(&buf[0], 2), buf[2]);
+}
+
+void test_low_level_command_helpers_map_expected_nack() {
+  CommandCaptureTransport ctx;
+
+  SHT3xDevice device;
+  Config cfg;
+  cfg.i2cWrite = captureWrite;
+  cfg.i2cWriteRead = captureWriteRead;
+  cfg.i2cUser = &ctx;
+  cfg.nowMs = captureNowMs;
+  cfg.timeUser = &ctx;
+  cfg.i2cTimeoutMs = 10;
+  cfg.commandDelayMs = 1;
+  cfg.offlineThreshold = 3;
+  cfg.transportCapabilities = TransportCapability::READ_HEADER_NACK;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
+
+  Status beginSt = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(beginSt.ok(), beginSt.msg);
+
+  ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
+  ctx.lastWriteLen = 0;
+  ctx.lastReadTxLen = 0;
+  ctx.lastReadLen = 0;
+
+  uint8_t buf[6] = {};
+  Status st = device.readCommand(cmd::CMD_FETCH_DATA, buf, sizeof(buf), true);
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
+  TEST_ASSERT_EQUAL_UINT8(2u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_FETCH_DATA >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_FETCH_DATA & 0xFF), ctx.lastWrite[1]);
+  TEST_ASSERT_EQUAL_UINT8(0u, ctx.lastReadTxLen);
+  TEST_ASSERT_EQUAL_UINT32(0u, device.consecutiveFailures());
+  TEST_ASSERT_EQUAL(DriverState::READY, device.state());
+}
+
+void test_low_level_command_helpers_block_pending_measurement() {
+  CountTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::SINGLE_SHOT;
+  device._measurementRequested = true;
+  device._measurementReady = false;
+
+  Status st = device.writeCommand(cmd::CMD_CLEAR_STATUS);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  st = device.writeCommandWithData(cmd::CMD_ALERT_WRITE_HIGH_SET, 0x1234);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+
+  uint8_t buf[3] = {};
+  st = device.readCommand(cmd::CMD_READ_STATUS, buf, sizeof(buf));
   TEST_ASSERT_EQUAL(Err::BUSY, st.code);
 
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
@@ -949,7 +1183,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_status_ok);
   RUN_TEST(test_status_error);
   RUN_TEST(test_status_in_progress);
+  RUN_TEST(test_status_helpers);
   RUN_TEST(test_config_defaults);
+  RUN_TEST(test_get_settings_snapshot_fields);
   RUN_TEST(test_crc8_example);
   RUN_TEST(test_conversions_basic);
   RUN_TEST(test_alert_limit_roundtrip);
@@ -957,6 +1193,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_command_delay_guard);
   RUN_TEST(test_begin_rejects_oversized_timing_config);
   RUN_TEST(test_single_shot_pending_blocks_unrelated_commands);
+  RUN_TEST(test_low_level_command_helpers_write_and_read);
+  RUN_TEST(test_low_level_command_helpers_map_expected_nack);
+  RUN_TEST(test_low_level_command_helpers_block_pending_measurement);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_expected_nack_mapping);
   RUN_TEST(test_not_ready_timeout_escalation);
