@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Public low-level SHT3x command helpers (`writeCommand`, `writeCommandWithData`, `readCommand`) so upper layers can exercise the protocol directly without bypassing the driver's tracked transport path.
+- `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`.
+- `Status::is(Err)` method for type-safe error code comparison.
+- `Status::operator bool()` explicit conversion for concise success checks.
 
 ## [1.4.2] - 2026-04-05
 

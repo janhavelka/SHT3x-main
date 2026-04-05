@@ -181,6 +181,8 @@ preferred entry points when the command has higher-level state implications.
 
 ### Status Semantics
 
+- `Status::is(Err)` checks whether the status matches a specific error code.
+- `Status::operator bool()` returns `true` for success, usable in `if (st)` idiom.
 - `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
 - Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
