@@ -10,12 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.2] - 2026-04-05
 
 ### Added
+- `CommandHandler.h` example helper for serial command parsing (`cmd::readLine`, `cmd::match`, `cmd::parseInt`).
+- `HealthDiag.h` example helper with verbose health diagnostics, color-coded output, snapshots, diffs, and `HealthMonitor` class for continuous monitoring.
 - README API coverage for lifecycle accessors (`isInitialized()`, `getConfig()`), maintenance helpers (`resetToDefaults()`, `resetAndRestore()`), settings snapshots, serial-number readout, alert-limit helpers, and timing helpers.
 - Documentation for `Status::inProgress()` and the `Err::CONVERSION_NOT_READY` compatibility alias.
 
 ### Changed
 - README now clarifies health semantics: expected not-ready fetches are non-failures, while pre-`begin()` validation/setup issues do not transition the driver state.
 - Example documentation now reflects the current bringup CLI coverage instead of only the minimal measurement path.
+- Unified build config and CI structure: simplified `platformio.ini` environments, aligned `.github/workflows/ci.yml`.
+- `.gitignore` now uses the correct `Version.h` path instead of template placeholder.
+
+### Fixed
+- Doxyfile version, `SECURITY.md` email/version, and PlatformIO environment names now match the current release.
 
 ## [1.4.1] - 2026-04-03
 
