@@ -52,6 +52,7 @@ void test_status_in_progress() {
   Status st = Status{Err::IN_PROGRESS, 0, "In progress"};
   TEST_ASSERT_FALSE(st.ok());
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(st.inProgress());
 }
 
 void test_config_defaults() {

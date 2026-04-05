@@ -17,6 +17,7 @@ enum class Err : uint8_t {
   DEVICE_NOT_FOUND,       ///< Device not responding on I2C bus
   CRC_MISMATCH,           ///< CRC check failed
   MEASUREMENT_NOT_READY,  ///< Sample not yet available
+  CONVERSION_NOT_READY = MEASUREMENT_NOT_READY, ///< Alias for cross-library uniformity
   BUSY,                   ///< Device or driver busy
   IN_PROGRESS,            ///< Operation scheduled; call tick() to complete
   COMMAND_FAILED,         ///< Sensor reported last command failed
@@ -40,6 +41,9 @@ struct Status {
 
   /// @return true if operation succeeded
   constexpr bool ok() const { return code == Err::OK; }
+
+  /// @return true if operation in progress (not a failure)
+  constexpr bool inProgress() const { return code == Err::IN_PROGRESS; }
 
   /// Create a success status
   static constexpr Status Ok() { return Status{Err::OK, 0, "OK"}; }

@@ -39,41 +39,41 @@ struct CompensatedSample {
 
 /// Parsed status register
 struct StatusRegister {
-  uint16_t raw = 0;
-  bool alertPending = false;
-  bool heaterOn = false;
-  bool rhAlert = false;
-  bool tAlert = false;
-  bool resetDetected = false;
-  bool commandError = false;
-  bool writeCrcError = false;
+  uint16_t raw = 0;            ///< Raw 16-bit status register value
+  bool alertPending = false;   ///< ALERT_PENDING flag
+  bool heaterOn = false;       ///< HEATER_ON flag
+  bool rhAlert = false;        ///< Humidity alert event flag
+  bool tAlert = false;         ///< Temperature alert event flag
+  bool resetDetected = false;  ///< Reset-detected flag
+  bool commandError = false;   ///< Last command was rejected by the sensor
+  bool writeCrcError = false;  ///< Last command payload failed CRC validation
 };
 
 /// Snapshot of driver configuration and state
 struct SettingsSnapshot {
-  Mode mode = Mode::SINGLE_SHOT;
-  Repeatability repeatability = Repeatability::HIGH_REPEATABILITY;
-  PeriodicRate periodicRate = PeriodicRate::MPS_1;
-  ClockStretching clockStretching = ClockStretching::STRETCH_DISABLED;
-  bool periodicActive = false;
-  bool measurementPending = false;
-  bool measurementReady = false;
-  uint32_t measurementReadyMs = 0;
-  uint32_t sampleTimestampMs = 0;
-  uint32_t missedSamples = 0;
-  StatusRegister status = {};
-  bool statusValid = false;
+  Mode mode = Mode::SINGLE_SHOT;                              ///< Active acquisition mode
+  Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Cached repeatability setting
+  PeriodicRate periodicRate = PeriodicRate::MPS_1;            ///< Cached periodic rate
+  ClockStretching clockStretching = ClockStretching::STRETCH_DISABLED; ///< Cached clock-stretching policy
+  bool periodicActive = false;                                ///< True if periodic or ART mode is currently running
+  bool measurementPending = false;                            ///< A measurement request has been issued but not read yet
+  bool measurementReady = false;                              ///< Cached sample is ready to read
+  uint32_t measurementReadyMs = 0;                            ///< Deadline/timestamp associated with the pending sample
+  uint32_t sampleTimestampMs = 0;                             ///< Timestamp of the last successful sample
+  uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
+  StatusRegister status = {};                                 ///< Parsed status-register snapshot when available
+  bool statusValid = false;                                   ///< True if status was read successfully for this snapshot
 };
 
 /// Cached sensor settings for restore-after-reset (RAM only)
 struct CachedSettings {
-  Mode mode = Mode::SINGLE_SHOT;
-  Repeatability repeatability = Repeatability::HIGH_REPEATABILITY;
-  PeriodicRate periodicRate = PeriodicRate::MPS_1;
-  ClockStretching clockStretching = ClockStretching::STRETCH_DISABLED;
-  bool heaterEnabled = false;
-  bool alertValid[4] = {false, false, false, false};
-  uint16_t alertRaw[4] = {0, 0, 0, 0};
+  Mode mode = Mode::SINGLE_SHOT;                              ///< Mode to restore after reset
+  Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Repeatability to restore
+  PeriodicRate periodicRate = PeriodicRate::MPS_1;            ///< Periodic rate to restore
+  ClockStretching clockStretching = ClockStretching::STRETCH_DISABLED; ///< Clock-stretching policy to restore
+  bool heaterEnabled = false;                                 ///< Cached heater state
+  bool alertValid[4] = {false, false, false, false};          ///< Per-limit validity flags for cached alert words
+  uint16_t alertRaw[4] = {0, 0, 0, 0};                        ///< Cached raw alert-limit words by AlertLimitKind index
 };
 
 /// Alert limit selector
@@ -109,6 +109,12 @@ public:
 
   /// Shutdown the driver and release resources
   void end();
+
+  /// Check if begin() completed successfully and end() has not been called
+  bool isInitialized() const { return _initialized; }
+
+  /// Get the active configuration snapshot
+  const Config& getConfig() const { return _config; }
 
   // =========================================================================
   // Diagnostics

@@ -137,6 +137,49 @@ void loop() {
 }
 ```
 
+## API Overview
+
+### Lifecycle
+
+| Method | Description |
+|--------|-------------|
+| `begin(config)` | Initialize the driver, validate transport callbacks, and probe the sensor. |
+| `tick(nowMs)` | Advance bounded timing gates and recovery state. |
+| `end()` | End the current session and return to `UNINIT`. |
+| `isInitialized()` | Return `true` after a successful `begin()` until `end()`. |
+| `getConfig()` | Return the cached configuration currently held by the driver. |
+| `probe()` | Raw presence check with no health tracking. |
+| `recover()` | Manual recovery ladder that restores communications but leaves the driver in idle single-shot mode. |
+| `resetToDefaults()` / `resetAndRestore()` | Reset-only or reset-plus-RAM-restore maintenance helpers. |
+
+### Measurement and Scheduling
+
+| Method | Description |
+|--------|-------------|
+| `requestMeasurement()` | Start a single-shot measurement or schedule the next periodic fetch. |
+| `measurementReady()` | Report whether a sample is ready to be read. |
+| `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` | Read float, raw, or fixed-point sample data. |
+| `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
+| `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
+| `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings. |
+
+### Configuration and Diagnostics
+
+| Method | Description |
+|--------|-------------|
+| `setMode()` / `getMode()` | Switch between single-shot, periodic, and ART modes. |
+| `setRepeatability()`, `setPeriodicRate()`, `setClockStretching()` | Update core measurement policy. |
+| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read. |
+| `readStatus()` / `clearStatus()` / `readHeaterStatus()` | Status-register and heater helpers. |
+| `readSerialNumber()` | Read the electronic identification code. |
+| `readAlertLimit*()` / `writeAlertLimit*()` / `disableAlerts()` | Physical and raw alert-threshold access. |
+
+### Status Semantics
+
+- `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
+- `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
+- Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
+
 ## Transport Contract (Required)
 
 Your I2C callbacks **must** return specific `Err` codes so the driver can make correct decisions:
@@ -293,6 +336,10 @@ if (device.readSettings(snap).ok()) {
 ## Examples
 
 - `01_basic_bringup_cli/` - Interactive CLI for testing
+
+The bringup CLI covers the full driver surface, including mode control, serial-number
+readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, and
+stress/self-test commands.
 
 ## Documentation
 
