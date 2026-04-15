@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include "common/Log.h"
 #include "common/BoardConfig.h"
+#include "common/HealthView.h"
 #include "common/I2cTransport.h"
 #include "common/I2cScanner.h"
 
@@ -20,10 +21,13 @@ struct StressStats {
   bool active = false;
   uint32_t startMs = 0;
   uint32_t endMs = 0;
+  uint32_t successBefore = 0;
+  uint32_t failBefore = 0;
   int target = 0;
   int attempts = 0;
   int success = 0;
   uint32_t errors = 0;
+  bool hasFailure = false;
   bool hasSample = false;
   float minTemp = 0.0f;
   float maxTemp = 0.0f;
@@ -31,6 +35,7 @@ struct StressStats {
   float maxHumidity = 0.0f;
   double sumTemp = 0.0;
   double sumHumidity = 0.0;
+  SHT3x::Status firstError = SHT3x::Status::Ok();
   SHT3x::Status lastError = SHT3x::Status::Ok();
 };
 
@@ -366,6 +371,8 @@ void resetStressStats(int target) {
   stressStats.active = true;
   stressStats.startMs = millis();
   stressStats.endMs = 0;
+  stressStats.successBefore = device.totalSuccess();
+  stressStats.failBefore = device.totalFailures();
   stressStats.target = target;
   stressStats.attempts = 0;
   stressStats.success = 0;
@@ -382,6 +389,10 @@ void resetStressStats(int target) {
 
 void noteStressError(const SHT3x::Status& st) {
   stressStats.errors++;
+  if (!stressStats.hasFailure) {
+    stressStats.firstError = st;
+    stressStats.hasFailure = true;
+  }
   stressStats.lastError = st;
 }
 
@@ -415,6 +426,8 @@ void updateStressStats(const SHT3x::Measurement& m) {
 void finishStressStats() {
   stressStats.active = false;
   stressStats.endMs = millis();
+  const uint32_t successDelta = device.totalSuccess() - stressStats.successBefore;
+  const uint32_t failDelta = device.totalFailures() - stressStats.failBefore;
   const uint32_t durationMs = stressStats.endMs - stressStats.startMs;
   const float successPct =
       (stressStats.attempts > 0)
@@ -443,6 +456,13 @@ void finishStressStats() {
                        static_cast<float>(durationMs);
     Serial.printf("  Rate: %.2f samples/s\n", rate);
   }
+  Serial.printf("  Health delta: %ssuccess +%lu%s, %sfailures +%lu%s\n",
+                goodIfNonZeroColor(successDelta),
+                static_cast<unsigned long>(successDelta),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failDelta),
+                static_cast<unsigned long>(failDelta),
+                LOG_COLOR_RESET);
 
   if (stressStats.success > 0) {
     const float avgTemp = static_cast<float>(stressStats.sumTemp / stressStats.success);
@@ -455,10 +475,12 @@ void finishStressStats() {
     Serial.println("  No valid samples");
   }
 
-  if (!stressStats.lastError.ok()) {
-    Serial.printf("  Last error: %s\n", errToStr(stressStats.lastError.code));
-    if (stressStats.lastError.msg && stressStats.lastError.msg[0]) {
-      Serial.printf("  Message: %s\n", stressStats.lastError.msg);
+  if (stressStats.hasFailure) {
+    Serial.println("  First failure:");
+    printStatus(stressStats.firstError);
+    if (stressStats.errors > 1U) {
+      Serial.println("  Last failure:");
+      printStatus(stressStats.lastError);
     }
   }
 }
@@ -475,7 +497,7 @@ SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& out, uint32_t timeo
     if (device.measurementReady()) {
       return device.getMeasurement(out);
     }
-    delay(1);
+    yield();
   }
   return SHT3x::Status::Error(SHT3x::Err::TIMEOUT, "measurement timeout", timeoutMs);
 }
@@ -499,11 +521,16 @@ void runStressMix(int count) {
   const int opCount = static_cast<int>(sizeof(stats) / sizeof(stats[0]));
 
   cancelPending();
+  HealthSnapshot<SHT3x::SHT3x> healthBefore;
+  healthBefore.capture(device);
   const uint32_t succBefore = device.totalSuccess();
   const uint32_t failBefore = device.totalFailures();
   const uint32_t startMs = millis();
   uint32_t okTotal = 0;
   uint32_t failTotal = 0;
+  bool hasFailure = false;
+  SHT3x::Status firstFailure = SHT3x::Status::Ok();
+  SHT3x::Status lastFailure = SHT3x::Status::Ok();
 
   for (int i = 0; i < count; ++i) {
     const int op = i % opCount;
@@ -554,6 +581,11 @@ void runStressMix(int count) {
     } else {
       stats[op].fail++;
       failTotal++;
+      if (!hasFailure) {
+        firstFailure = st;
+        hasFailure = true;
+      }
+      lastFailure = st;
       if (verboseMode) {
         Serial.printf("  [%d] %s failed: %s\n", i, stats[op].name, errToStr(st.code));
       }
@@ -566,6 +598,8 @@ void runStressMix(int count) {
   }
 
   const uint32_t elapsed = millis() - startMs;
+  HealthSnapshot<SHT3x::SHT3x> healthAfter;
+  healthAfter.capture(device);
 
   Serial.println("=== stress_mix summary ===");
   const float successPct =
@@ -585,13 +619,21 @@ void runStressMix(int count) {
     Serial.printf("  Rate: %.2f ops/s\n", (1000.0f * static_cast<float>(count)) / elapsed);
   }
   for (int i = 0; i < opCount; ++i) {
-    Serial.printf("  %-10s %sok=%lu%s %sfail=%lu%s\n",
+    const uint32_t opTotal = stats[i].ok + stats[i].fail;
+    const float opPct = (opTotal > 0U)
+                            ? (100.0f * static_cast<float>(stats[i].ok) /
+                               static_cast<float>(opTotal))
+                            : 0.0f;
+    Serial.printf("  %-10s %sok=%lu%s %sfail=%lu%s (%s%.1f%%%s)\n",
                   stats[i].name,
                   goodIfNonZeroColor(stats[i].ok),
                   static_cast<unsigned long>(stats[i].ok),
                   LOG_COLOR_RESET,
                   goodIfZeroColor(stats[i].fail),
                   static_cast<unsigned long>(stats[i].fail),
+                  LOG_COLOR_RESET,
+                  successRateColor(opPct),
+                  opPct,
                   LOG_COLOR_RESET);
   }
   const uint32_t successDelta = device.totalSuccess() - succBefore;
@@ -603,6 +645,16 @@ void runStressMix(int count) {
                 goodIfZeroColor(failDelta),
                 static_cast<unsigned long>(failDelta),
                 LOG_COLOR_RESET);
+  Serial.println("  Health changes:");
+  printHealthDiff(healthBefore, healthAfter);
+  if (hasFailure) {
+    Serial.println("  First failure:");
+    printStatus(firstFailure);
+    if (failTotal > 1U) {
+      Serial.println("  Last failure:");
+      printStatus(lastFailure);
+    }
+  }
 }
 
 void runSelfTest() {
@@ -943,6 +995,7 @@ void printHelp() {
   helpItem("online", "Show online state");
   helpItem("begin", "Re-initialize device");
   helpItem("end", "End driver session");
+  helpItem("state", "Show compact one-line health summary");
   helpItem("probe", "Probe device (no health tracking)");
   helpItem("recover", "Manual recovery attempt");
   helpItem("verbose [0|1]", "Enable/disable verbose output");
@@ -1599,17 +1652,34 @@ void processCommand(const String& cmdLine) {
     return;
   }
 
+  if (cmd == "state") {
+    printHealthView(device);
+    return;
+  }
+
   if (cmd == "probe") {
     LOGI("Probing device (no health tracking)...");
+    HealthSnapshot<SHT3x::SHT3x> before;
+    before.capture(device);
     SHT3x::Status st = device.probe();
     printStatus(st);
+    HealthSnapshot<SHT3x::SHT3x> after;
+    after.capture(device);
+    Serial.println("  Health changes:");
+    printHealthDiff(before, after);
     return;
   }
 
   if (cmd == "recover") {
     LOGI("Attempting recovery...");
+    HealthSnapshot<SHT3x::SHT3x> before;
+    before.capture(device);
     SHT3x::Status st = device.recover();
     printStatus(st);
+    HealthSnapshot<SHT3x::SHT3x> after;
+    after.capture(device);
+    Serial.println("  Health changes:");
+    printHealthDiff(before, after);
     printDriverHealth();
     return;
   }
