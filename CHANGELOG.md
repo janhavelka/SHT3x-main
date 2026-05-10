@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`.
 - `Status::is(Err)` method for type-safe error code comparison.
 - `Status::operator bool()` explicit conversion for concise success checks.
+- Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while explicit recovery/reset paths remain available.
+
+### Changed
+- Doxyfile project metadata now matches `library.json` and references the
+  maintained docs tree instead of removed template files.
+- Explicit recovery/reset bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
+- `readCommand()` now validates read buffers and rejects responses larger than the largest documented SHT3x frame before sending the command.
+- Active periodic/ART repeatability and rate setters now update cached configuration only after the required restart succeeds.
+- Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
 
 ## [1.4.2] - 2026-04-05
 

@@ -177,7 +177,12 @@ void loop() {
 
 The low-level command helpers are intentionally narrow: they reuse the driver's tracked
 transport path and tIDLE guard, but the dedicated mode/status/alert helpers remain the
-preferred entry points when the command has higher-level state implications.
+preferred entry points when the command has higher-level state implications. Raw reads are
+bounded to the largest documented SHT3x response (6 bytes), and invalid read buffers are
+rejected before sending the command.
+
+When repeatability or periodic rate changes require restarting an active periodic/ART mode,
+the cached configuration is updated only after that restart succeeds.
 
 ### Status Semantics
 
@@ -253,6 +258,8 @@ The driver has no unbounded loops.
 
 Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`--the orchestrator triggers it.
 
+`OFFLINE` is latched. Normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch the bus until `recover()` succeeds. `probe()` remains raw/diagnostic and does not update health counters.
+
 After a successful `recover()`, the driver is left in **SINGLE_SHOT** idle mode with measurement state cleared. If you need periodic/ART/heater, re-apply those settings in your orchestrator.
 
 Two explicit reset APIs are available:
@@ -285,7 +292,7 @@ sensor.resetAndRestore();   // restores cached settings
 
 ## Thread-Safety / ISR-Safety
 
-The driver is **not** thread-safe and must be externally serialized. Do not call any public API from an ISR.
+The driver is **not** thread-safe and must be externally serialized. Do not call any public API from an ISR; use interrupts only to signal work to normal task/loop context.
 
 ## ESP32 Notes
 

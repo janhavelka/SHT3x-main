@@ -6,7 +6,7 @@ This document is an **extracted, driver-focused** consolidation of everything re
 - **SHT3x-DIS Datasheet**, Feb 2019, Version 6 (`SHT3x_datasheet.pdf`)
 - **Alert Mode of SHT3x- and STS3x-DIS**, Nov 2023, Version 3.1 (`SHT3x_HT_AN_AlertMode.pdf`)
 - **Electronic Identification Code / Serial Number**, Jan 2023, Version 3 (`Sensirion_electronic_identification_code_SHT3x.pdf`)
-- **Membrane Option Datasheet**, Mar 2025, Version 4.1 (`SHT3x_membrane_flyer.pdf`)
+- **Membrane Option Datasheet**, Mar 2025, Version 4.1 (`SHT3x_membrane_option_datasheet.pdf`)
 - **Humidity at a glance**, May 2025, Version 2.1 (`Sensirion_AppNotes_Humidity_Sensors_at_a_Glance.pdf`)
 - **Testing at Ambient Conditions**, Oct 2022, Version 3 (`Sensirion_Humidity_Sensors_Testing_at_Ambient_Conditions.pdf`)
 - **HT_AlertMode_BitConversion.xlsx** (Sensirion-provided conversion helper for alert limits)
