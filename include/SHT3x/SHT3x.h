@@ -64,6 +64,7 @@ struct SettingsSnapshot {
   bool periodicActive = false;                                ///< True if periodic or ART mode is currently running
   bool measurementPending = false;                            ///< A measurement request has been issued but not read yet
   bool measurementReady = false;                              ///< Cached sample is ready to read
+  bool hasSample = false;                                     ///< True after at least one sample has been captured
   uint32_t measurementReadyMs = 0;                            ///< Deadline/timestamp associated with the pending sample
   uint32_t sampleTimestampMs = 0;                             ///< Timestamp of the last successful sample
   uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
@@ -84,10 +85,10 @@ struct CachedSettings {
 
 /// Alert limit selector
 enum class AlertLimitKind : uint8_t {
-  HIGH_SET = 0,
-  HIGH_CLEAR = 1,
-  LOW_CLEAR = 2,
-  LOW_SET = 3
+  HIGH_SET = 0,   ///< High alert set threshold
+  HIGH_CLEAR = 1, ///< High alert clear threshold
+  LOW_CLEAR = 2,  ///< Low alert clear threshold
+  LOW_SET = 3     ///< Low alert set threshold
 };
 
 /// Decoded alert limit
@@ -147,6 +148,9 @@ public:
   /// Get current driver state
   DriverState state() const { return _driverState; }
 
+  /// Alias for state() used by shared diagnostics.
+  DriverState driverState() const { return state(); }
+
   /// Check if driver is ready for operations
   bool isOnline() const {
     return _driverState == DriverState::READY ||
@@ -197,12 +201,17 @@ public:
   /// Check if measurement is ready to read
   bool measurementReady() const { return _measurementReady; }
 
+  /// True after at least one sample has been cached.
+  bool hasSample() const { return _hasSample; }
+
   /// Timestamp of last completed sample (0 if none)
   uint32_t sampleTimestampMs() const { return _sampleTimestampMs; }
 
-  /// Age of the last sample in milliseconds (0 if none)
+  /// Age of the last captured sample in milliseconds.
+  /// @param nowMs Current monotonic timestamp in milliseconds
+  /// @return `nowMs - sampleTimestampMs()` when a sample exists, otherwise 0
   uint32_t sampleAgeMs(uint32_t nowMs) const {
-    return _sampleTimestampMs == 0 ? 0 : (nowMs - _sampleTimestampMs);
+    return _hasSample ? (nowMs - _sampleTimestampMs) : 0;
   }
 
   /// Best-effort estimate of missed samples (periodic/ART mode)
@@ -213,10 +222,14 @@ public:
   /// Clears ready flag after successful read
   Status getMeasurement(Measurement& out);
 
-  /// Get raw measurement values
+  /// Get last captured raw measurement values.
+  /// @param[out] out Last cached raw temperature/humidity words
+  /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
   Status getRawSample(RawSample& out) const;
 
-  /// Get fixed-point converted values
+  /// Get last captured fixed-point converted values.
+  /// @param[out] out Last cached fixed-point sample
+  /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
   Status getCompensatedSample(CompensatedSample& out) const;
 
   // =========================================================================
@@ -263,13 +276,15 @@ public:
   /// The command spacing gate and health tracking still apply.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @param out Read buffer
-  /// @param len Number of bytes to read
+  /// @param len Number of bytes to read; SHT3x responses are limited to 6 bytes
   /// @param allowNoData Map a read-header NACK to MEASUREMENT_NOT_READY when supported
+  /// @note Invalid buffers and oversized reads are rejected before any I2C command is sent.
   /// @return Status::Ok() on success, error otherwise
   Status readCommand(uint16_t command, uint8_t* out, size_t len,
                      bool allowNoData = false);
 
-  /// Set measurement repeatability
+  /// Set measurement repeatability; active periodic/ART modes are restarted and
+  /// cached settings are updated only after the restart succeeds.
   Status setRepeatability(Repeatability rep);
 
   /// Get current repeatability
@@ -281,7 +296,8 @@ public:
   /// Get current clock stretching mode
   Status getClockStretching(ClockStretching& out) const;
 
-  /// Set periodic rate (used in periodic mode)
+  /// Set periodic rate; active periodic/ART modes are restarted and cached
+  /// settings are updated only after the restart succeeds.
   Status setPeriodicRate(PeriodicRate rate);
 
   /// Get current periodic rate
@@ -411,6 +427,9 @@ private:
   /// Tracked I2C write (updates health)
   Status _i2cWriteTracked(const uint8_t* buf, size_t len);
 
+  /// Return BUSY when normal operations try I2C while OFFLINE.
+  Status _offlineStatus() const;
+
   // =========================================================================
   // Command Access
   // =========================================================================
@@ -429,6 +448,7 @@ private:
   /// Update health counters and state based on operation result
   /// Called ONLY from tracked transport wrappers
   Status _updateHealth(const Status& st);
+  void _reassertOfflineLatch();
 
   /// Record any bus activity (including expected NACK)
   void _recordBusActivity(uint32_t nowMs);
@@ -479,6 +499,7 @@ private:
   uint8_t _consecutiveFailures = 0;
   uint32_t _totalFailures = 0;
   uint32_t _totalSuccess = 0;
+  bool _allowOfflineI2c = false;
 
   // Command timing
   uint32_t _lastCommandUs = 0;
@@ -487,6 +508,7 @@ private:
   // Measurement state
   bool _measurementRequested = false;
   bool _measurementReady = false;
+  bool _hasSample = false;
   uint32_t _measurementReadyMs = 0;
   uint32_t _periodicStartMs = 0;
   uint32_t _lastFetchMs = 0;

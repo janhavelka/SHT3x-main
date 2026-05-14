@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <limits>
 #include <cstdlib>
+#include "common/CliStyle.h"
 #include "common/Log.h"
 #include "common/BoardConfig.h"
 #include "common/HealthView.h"
@@ -334,6 +335,7 @@ void printConfig() {
   Serial.printf("  Repeatability: %s\n", repToStr(snap.repeatability));
   Serial.printf("  Periodic rate: %s mps\n", rateToStr(snap.periodicRate));
   Serial.printf("  Clock stretching: %s\n", stretchToStr(snap.clockStretching));
+  Serial.printf("  Has sample: %s\n", snap.hasSample ? "true" : "false");
   Serial.printf("  Est. meas time: %lu ms\n",
                 static_cast<unsigned long>(device.estimateMeasurementTimeMs()));
   printVerboseState();
@@ -938,70 +940,63 @@ bool parseU16(const String& token, uint16_t& out) {
 }
 
 void printHelp() {
-  auto helpSection = [](const char* title) {
-    Serial.printf("\n%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
-  };
-  auto helpItem = [](const char* cmd, const char* desc) {
-    Serial.printf("  %s%-32s%s - %s\n", LOG_COLOR_CYAN, cmd, LOG_COLOR_RESET, desc);
-  };
-
   Serial.println();
-  Serial.printf("%s=== SHT3x CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
-  helpSection("Common");
-  helpItem("help / ?", "Show this help");
-  helpItem("version / ver", "Print firmware and library version info");
-  helpItem("scan", "Scan I2C bus");
-  helpItem("read", "Request measurement (single-shot or periodic)");
-  helpItem("raw", "Print last raw sample");
-  helpItem("comp", "Print last compensated sample");
-  helpItem("meastime", "Show estimated measurement time");
+  cli::printHelpHeader("SHT3x CLI Help");
+  cli::printHelpSection("Common");
+  cli::printHelpItem("help / ?", "Show this help");
+  cli::printHelpItem("version / ver", "Print firmware and library version info");
+  cli::printHelpItem("scan", "Scan I2C bus");
+  cli::printHelpItem("read", "Request measurement (single-shot or periodic)");
+  cli::printHelpItem("raw", "Print last raw sample");
+  cli::printHelpItem("comp", "Print last compensated sample");
+  cli::printHelpItem("meastime", "Show estimated measurement time");
 
-  helpSection("Operating Mode");
-  helpItem("mode [single|periodic|art]", "Set or show operating mode");
-  helpItem("start_periodic <rate> <rep>", "Start periodic mode");
-  helpItem("start_art", "Start ART mode");
-  helpItem("stop_periodic", "Stop periodic or ART mode");
-  helpItem("repeat [low|med|high]", "Set or show repeatability");
-  helpItem("rate [0.5|1|2|4|10]", "Set or show periodic rate");
-  helpItem("stretch [0|1]", "Set or show clock stretching");
+  cli::printHelpSection("Operating Mode");
+  cli::printHelpItem("mode [single|periodic|art]", "Set or show operating mode");
+  cli::printHelpItem("start_periodic <rate> <rep>", "Start periodic mode");
+  cli::printHelpItem("start_art", "Start ART mode");
+  cli::printHelpItem("stop_periodic", "Stop periodic or ART mode");
+  cli::printHelpItem("repeat [low|med|high]", "Set or show repeatability");
+  cli::printHelpItem("rate [0.5|1|2|4|10]", "Set or show periodic rate");
+  cli::printHelpItem("stretch [0|1]", "Set or show clock stretching");
 
-  helpSection("Status And Alerts");
-  helpItem("status", "Read status register");
-  helpItem("status_raw", "Read raw status (16-bit)");
-  helpItem("clearstatus", "Clear status flags");
-  helpItem("heater [on|off|status]", "Control heater");
-  helpItem("serial [stretch|nostretch]", "Read serial number");
-  helpItem("command write <hex>", "Issue a raw 16-bit command");
-  helpItem("command write_data <cmd> <data>", "Issue a command with a packed data word");
-  helpItem("command read <cmd> <len>", "Issue a command and read raw response bytes");
-  helpItem("alert read <hs|hc|lc|ls>", "Read alert limit");
-  helpItem("alert write <kind> <T> <RH>", "Write alert limit");
-  helpItem("alert raw read <kind>", "Read raw alert limit word");
-  helpItem("alert raw write <kind> <hex>", "Write raw alert limit word");
-  helpItem("alert encode <T> <RH>", "Encode alert limit word");
-  helpItem("alert decode <hex>", "Decode alert limit word");
-  helpItem("alert disable", "Disable alerts (LowSet > HighSet)");
-  helpItem("convert <rawT> <rawRH>", "Convert raw values");
+  cli::printHelpSection("Status And Alerts");
+  cli::printHelpItem("status", "Read status register");
+  cli::printHelpItem("status_raw", "Read raw status (16-bit)");
+  cli::printHelpItem("clearstatus", "Clear status flags");
+  cli::printHelpItem("heater [on|off|status]", "Control heater");
+  cli::printHelpItem("serial [stretch|nostretch]", "Read serial number");
+  cli::printHelpItem("command write <hex>", "Issue a raw 16-bit command");
+  cli::printHelpItem("command write_data <cmd> <data>", "Issue a command with a packed data word");
+  cli::printHelpItem("command read <cmd> <len>", "Issue a command and read raw response bytes");
+  cli::printHelpItem("alert read <hs|hc|lc|ls>", "Read alert limit");
+  cli::printHelpItem("alert write <kind> <T> <RH>", "Write alert limit");
+  cli::printHelpItem("alert raw read <kind>", "Read raw alert limit word");
+  cli::printHelpItem("alert raw write <kind> <hex>", "Write raw alert limit word");
+  cli::printHelpItem("alert encode <T> <RH>", "Encode alert limit word");
+  cli::printHelpItem("alert decode <hex>", "Decode alert limit word");
+  cli::printHelpItem("alert disable", "Disable alerts (LowSet > HighSet)");
+  cli::printHelpItem("convert <rawT> <rawRH>", "Convert raw values");
 
-  helpSection("Lifecycle And Diagnostics");
-  helpItem("reset", "Soft reset device");
-  helpItem("defaults", "Reset command-mode defaults");
-  helpItem("restore", "Reset sensor and restore cached settings");
-  helpItem("iface_reset", "Interface reset (SCL pulse)");
-  helpItem("greset", "General-call reset (bus-wide)");
-  helpItem("stats", "Runtime counters and cached settings");
-  helpItem("cfg / settings", "Show current config");
-  helpItem("drv", "Show driver state and health");
-  helpItem("online", "Show online state");
-  helpItem("begin", "Re-initialize device");
-  helpItem("end", "End driver session");
-  helpItem("state", "Show compact one-line health summary");
-  helpItem("probe", "Probe device (no health tracking)");
-  helpItem("recover", "Manual recovery attempt");
-  helpItem("verbose [0|1]", "Enable/disable verbose output");
-  helpItem("stress [N]", "Run N measurement cycles");
-  helpItem("stress_mix [N]", "Run N mixed-operation cycles");
-  helpItem("selftest", "Run safe command self-test report");
+  cli::printHelpSection("Lifecycle And Diagnostics");
+  cli::printHelpItem("reset", "Soft reset device");
+  cli::printHelpItem("defaults", "Reset command-mode defaults");
+  cli::printHelpItem("restore", "Reset sensor and restore cached settings");
+  cli::printHelpItem("iface_reset", "Interface reset (SCL pulse)");
+  cli::printHelpItem("greset", "General-call reset (bus-wide)");
+  cli::printHelpItem("stats", "Runtime counters and cached settings");
+  cli::printHelpItem("cfg / settings", "Show current config");
+  cli::printHelpItem("drv", "Show driver state and health");
+  cli::printHelpItem("online", "Show online state");
+  cli::printHelpItem("begin", "Re-initialize device");
+  cli::printHelpItem("end", "End driver session");
+  cli::printHelpItem("state", "Show compact one-line health summary");
+  cli::printHelpItem("probe", "Probe device (no health tracking)");
+  cli::printHelpItem("recover", "Manual recovery attempt");
+  cli::printHelpItem("verbose [0|1]", "Enable/disable verbose output");
+  cli::printHelpItem("stress [N]", "Run N measurement cycles");
+  cli::printHelpItem("stress_mix [N]", "Run N mixed-operation cycles");
+  cli::printHelpItem("selftest", "Run safe command self-test report");
 }
 
 void printVersionInfo() {
@@ -1136,8 +1131,8 @@ void processCommand(const String& cmdLine) {
         LOGW("Invalid command or length");
         return;
       }
-      if (lenValue == 0 || lenValue > 8U) {
-        LOGW("Length must be between 1 and 8");
+      if (lenValue == 0 || lenValue > SHT3x::cmd::MEASUREMENT_DATA_LEN) {
+        LOGW("Length must be between 1 and 6");
         return;
       }
 
@@ -1775,7 +1770,7 @@ void setup() {
   LOGI("Device initialized successfully");
   printDriverHealth();
   printHelp();
-  Serial.print("> ");
+  cli::printPrompt();
 }
 
 void loop() {
@@ -1806,7 +1801,7 @@ void loop() {
       if (inputBuffer.length() > 0) {
         processCommand(inputBuffer);
         inputBuffer = "";
-        Serial.print("> ");
+        cli::printPrompt();
       }
     } else {
       inputBuffer += c;

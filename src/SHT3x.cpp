@@ -14,6 +14,7 @@ namespace SHT3x {
 namespace {
 
 static constexpr size_t MAX_WRITE_LEN = 5;
+static constexpr size_t MAX_READ_LEN = cmd::MEASUREMENT_DATA_LEN;
 static constexpr uint32_t RESET_DELAY_MS = 2;
 static constexpr uint32_t BREAK_DELAY_MS = 1;
 static constexpr uint16_t MIN_COMMAND_DELAY_MS = 1;
@@ -25,6 +26,24 @@ static constexpr uint16_t MAX_COMMAND_DELAY_MS = 1000;
 static constexpr uint32_t MAX_NOT_READY_TIMEOUT_MS = 600000;
 static constexpr uint32_t MAX_PERIODIC_FETCH_MARGIN_MS = 60000;
 static constexpr uint32_t MAX_RECOVER_BACKOFF_MS = 600000;
+
+class ScopedOfflineI2cAllowance {
+public:
+  explicit ScopedOfflineI2cAllowance(bool& flag, bool allow) : _flag(flag), _old(flag) {
+    _flag = allow;
+  }
+
+  ~ScopedOfflineI2cAllowance() {
+    _flag = _old;
+  }
+
+  ScopedOfflineI2cAllowance(const ScopedOfflineI2cAllowance&) = delete;
+  ScopedOfflineI2cAllowance& operator=(const ScopedOfflineI2cAllowance&) = delete;
+
+private:
+  bool& _flag;
+  bool _old;
+};
 
 static uint32_t _nowMs(const Config& cfg) {
   return (cfg.nowMs != nullptr) ? cfg.nowMs(cfg.timeUser) : millis();
@@ -101,6 +120,7 @@ static uint32_t baseMeasurementMs(Repeatability rep, bool lowVdd) {
 }  // namespace
 
 Status SHT3x::begin(const Config& config) {
+  _config = Config{};
   _initialized = false;
   _driverState = DriverState::UNINIT;
 
@@ -111,9 +131,11 @@ Status SHT3x::begin(const Config& config) {
   _consecutiveFailures = 0;
   _totalFailures = 0;
   _totalSuccess = 0;
+  _allowOfflineI2c = false;
 
   _measurementRequested = false;
   _measurementReady = false;
+  _hasSample = false;
   _measurementReadyMs = 0;
   _periodicStartMs = 0;
   _lastFetchMs = 0;
@@ -220,6 +242,7 @@ void SHT3x::tick(uint32_t nowMs) {
 
   // Do not attempt I2C when OFFLINE — the application must call recover()
   if (_driverState == DriverState::OFFLINE) {
+    _measurementRequested = false;
     return;
   }
 
@@ -238,6 +261,7 @@ void SHT3x::tick(uint32_t nowMs) {
 
     _sampleTimestampMs = nowMs;
     _measurementReady = true;
+    _hasSample = true;
     _measurementRequested = false;
     return;
   }
@@ -265,6 +289,7 @@ void SHT3x::tick(uint32_t nowMs) {
     }
 
     _measurementReady = true;
+    _hasSample = true;
     _measurementRequested = false;
     _lastFetchMs = nowMs;
     _sampleTimestampMs = nowMs;
@@ -274,6 +299,7 @@ void SHT3x::tick(uint32_t nowMs) {
 void SHT3x::end() {
   _measurementRequested = false;
   _measurementReady = false;
+  _hasSample = false;
   _measurementReadyMs = 0;
   _periodicActive = false;
   _periodicStartMs = 0;
@@ -358,6 +384,9 @@ Status SHT3x::requestMeasurement() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
+  }
   if (_measurementRequested && !_measurementReady) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
@@ -412,7 +441,7 @@ Status SHT3x::getRawSample(RawSample& out) const {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-  if (!_measurementReady) {
+  if (!_hasSample) {
     return Status::Error(Err::MEASUREMENT_NOT_READY, "Measurement not ready");
   }
 
@@ -424,7 +453,7 @@ Status SHT3x::getCompensatedSample(CompensatedSample& out) const {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-  if (!_measurementReady) {
+  if (!_hasSample) {
     return Status::Error(Err::MEASUREMENT_NOT_READY, "Measurement not ready");
   }
 
@@ -492,6 +521,7 @@ Status SHT3x::getSettings(SettingsSnapshot& out) const {
   out.periodicActive = _periodicActive;
   out.measurementPending = _measurementRequested && !_measurementReady;
   out.measurementReady = _measurementReady;
+  out.hasSample = _hasSample;
   out.measurementReadyMs = _measurementReadyMs;
   out.sampleTimestampMs = _sampleTimestampMs;
   out.missedSamples = _missedSamples;
@@ -512,6 +542,9 @@ Status SHT3x::readSettings(SettingsSnapshot& out) {
     return stStatus;
   }
   if (stStatus.code == Err::BUSY) {
+    if (_driverState == DriverState::OFFLINE) {
+      return stStatus;
+    }
     out.statusValid = false;
     return Status::Ok();
   }
@@ -545,6 +578,9 @@ Status SHT3x::readCommand(uint16_t command, uint8_t* out, size_t len,
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (out == nullptr || len == 0 || len > MAX_READ_LEN) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid read buffer");
+  }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
@@ -568,8 +604,6 @@ Status SHT3x::setRepeatability(Repeatability rep) {
     return Status::Error(Err::INVALID_PARAM, "Invalid repeatability");
   }
 
-  _config.repeatability = rep;
-
   if (_mode == Mode::PERIODIC) {
     Status st = startPeriodic(_config.periodicRate, rep);
     if (st.ok()) {
@@ -579,14 +613,19 @@ Status SHT3x::setRepeatability(Repeatability rep) {
     return st;
   }
   if (_mode == Mode::ART) {
+    const Repeatability previous = _config.repeatability;
+    _config.repeatability = rep;
     Status st = startArt();
-    if (st.ok()) {
-      _cachedSettings.repeatability = rep;
-      _hasCachedSettings = true;
+    if (!st.ok()) {
+      _config.repeatability = previous;
+      return st;
     }
+    _cachedSettings.repeatability = rep;
+    _hasCachedSettings = true;
     return st;
   }
 
+  _config.repeatability = rep;
   _cachedSettings.repeatability = rep;
   _hasCachedSettings = true;
   return Status::Ok();
@@ -636,8 +675,6 @@ Status SHT3x::setPeriodicRate(PeriodicRate rate) {
     return Status::Error(Err::INVALID_PARAM, "Invalid periodic rate");
   }
 
-  _config.periodicRate = rate;
-
   if (_mode == Mode::PERIODIC) {
     Status st = startPeriodic(rate, _config.repeatability);
     if (st.ok()) {
@@ -647,14 +684,19 @@ Status SHT3x::setPeriodicRate(PeriodicRate rate) {
     return st;
   }
   if (_mode == Mode::ART) {
+    const PeriodicRate previous = _config.periodicRate;
+    _config.periodicRate = rate;
     Status st = startArt();
-    if (st.ok()) {
-      _cachedSettings.periodicRate = rate;
-      _hasCachedSettings = true;
+    if (!st.ok()) {
+      _config.periodicRate = previous;
+      return st;
     }
+    _cachedSettings.periodicRate = rate;
+    _hasCachedSettings = true;
     return st;
   }
 
+  _config.periodicRate = rate;
   _cachedSettings.periodicRate = rate;
   _hasCachedSettings = true;
   return Status::Ok();
@@ -803,30 +845,39 @@ Status SHT3x::softReset() {
     return Status::Error(Err::BUSY, "Stop periodic mode before reset");
   }
 
-  Status st = _writeCommand(cmd::CMD_SOFT_RESET, true);
-  if (!st.ok()) {
-    return st;
+  const bool startedOffline = (_driverState == DriverState::OFFLINE);
+  ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
+  Status result = [&]() -> Status {
+    Status st = _writeCommand(cmd::CMD_SOFT_RESET, true);
+    if (!st.ok()) {
+      return st;
+    }
+
+    st = _waitMs(RESET_DELAY_MS);
+    if (!st.ok()) {
+      return st;
+    }
+
+    _measurementRequested = false;
+    _measurementReady = false;
+    _hasSample = false;
+    _mode = Mode::SINGLE_SHOT;
+    _config.mode = Mode::SINGLE_SHOT;
+    _periodicActive = false;
+    _periodicStartMs = 0;
+    _lastFetchMs = 0;
+    _periodMs = 0;
+    _sampleTimestampMs = 0;
+    _missedSamples = 0;
+    _notReadyStartMs = 0;
+    _notReadyCount = 0;
+
+    return Status::Ok();
+  }();
+  if (startedOffline && !result.ok() && !result.inProgress()) {
+    _reassertOfflineLatch();
   }
-
-  st = _waitMs(RESET_DELAY_MS);
-  if (!st.ok()) {
-    return st;
-  }
-
-  _measurementRequested = false;
-  _measurementReady = false;
-  _mode = Mode::SINGLE_SHOT;
-  _config.mode = Mode::SINGLE_SHOT;
-  _periodicActive = false;
-  _periodicStartMs = 0;
-  _lastFetchMs = 0;
-  _periodMs = 0;
-  _sampleTimestampMs = 0;
-  _missedSamples = 0;
-  _notReadyStartMs = 0;
-  _notReadyCount = 0;
-
-  return Status::Ok();
+  return result;
 }
 
 Status SHT3x::interfaceReset() {
@@ -848,6 +899,7 @@ Status SHT3x::interfaceReset() {
 
   _measurementRequested = false;
   _measurementReady = false;
+  _hasSample = false;
   _measurementReadyMs = 0;
   _lastFetchMs = 0;
   _sampleTimestampMs = 0;
@@ -869,39 +921,48 @@ Status SHT3x::generalCallReset() {
     return Status::Error(Err::INVALID_CONFIG, "General call reset disabled");
   }
 
-  Status st = _ensureCommandDelay();
-  if (!st.ok()) {
-    return st;
+  const bool startedOffline = (_driverState == DriverState::OFFLINE);
+  ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
+  Status result = [&]() -> Status {
+    Status st = _ensureCommandDelay();
+    if (!st.ok()) {
+      return st;
+    }
+
+    uint8_t byte = cmd::GENERAL_CALL_RESET_BYTE;
+    st = _i2cWriteRawAddrTracked(cmd::GENERAL_CALL_ADDR, &byte, 1);
+    if (!st.ok()) {
+      return st;
+    }
+
+    _lastCommandUs = _nowUs(_config);
+    _lastCommandValid = true;
+    st = _waitMs(RESET_DELAY_MS);
+    if (!st.ok()) {
+      return st;
+    }
+
+    _measurementRequested = false;
+    _measurementReady = false;
+    _hasSample = false;
+    _measurementReadyMs = 0;
+    _mode = Mode::SINGLE_SHOT;
+    _config.mode = Mode::SINGLE_SHOT;
+    _periodicActive = false;
+    _periodicStartMs = 0;
+    _lastFetchMs = 0;
+    _periodMs = 0;
+    _sampleTimestampMs = 0;
+    _missedSamples = 0;
+    _notReadyStartMs = 0;
+    _notReadyCount = 0;
+
+    return Status::Ok();
+  }();
+  if (startedOffline && !result.ok() && !result.inProgress()) {
+    _reassertOfflineLatch();
   }
-
-  uint8_t byte = cmd::GENERAL_CALL_RESET_BYTE;
-  st = _i2cWriteRawAddrTracked(cmd::GENERAL_CALL_ADDR, &byte, 1);
-  if (!st.ok()) {
-    return st;
-  }
-
-  _lastCommandUs = _nowUs(_config);
-  _lastCommandValid = true;
-  st = _waitMs(RESET_DELAY_MS);
-  if (!st.ok()) {
-    return st;
-  }
-
-  _measurementRequested = false;
-  _measurementReady = false;
-  _measurementReadyMs = 0;
-  _mode = Mode::SINGLE_SHOT;
-  _config.mode = Mode::SINGLE_SHOT;
-  _periodicActive = false;
-  _periodicStartMs = 0;
-  _lastFetchMs = 0;
-  _periodMs = 0;
-  _sampleTimestampMs = 0;
-  _missedSamples = 0;
-  _notReadyStartMs = 0;
-  _notReadyCount = 0;
-
-  return Status::Ok();
+  return result;
 }
 
 Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
@@ -1176,6 +1237,7 @@ uint32_t SHT3x::_periodicRetryMs(uint32_t nowMs) const {
 void SHT3x::_setSafeBaseline() {
   _measurementRequested = false;
   _measurementReady = false;
+  _hasSample = false;
   _measurementReadyMs = 0;
   _periodicActive = false;
   _periodicStartMs = 0;
@@ -1247,6 +1309,9 @@ Status SHT3x::_applyCachedSettingsAfterReset() {
 }
 
 Status SHT3x::_performRecoveryLadder() {
+  const bool startedOffline = (_driverState == DriverState::OFFLINE);
+  ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
+  Status result = [&]() -> Status {
   const uint32_t now = _nowMs(_config);
   if (_config.recoverBackoffMs > 0 && _lastRecoverValid &&
       !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
@@ -1326,6 +1391,11 @@ Status SHT3x::_performRecoveryLadder() {
   }
 
   return last;
+  }();
+  if (startedOffline && !result.ok() && !result.inProgress()) {
+    _reassertOfflineLatch();
+  }
+  return result;
 }
 
 Status SHT3x::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
@@ -1380,6 +1450,9 @@ Status SHT3x::_i2cWriteRawAddrTracked(uint8_t addr, const uint8_t* buf, size_t l
   if (buf == nullptr || len == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
+  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
+  }
 
   Status st = _i2cWriteRawAddr(addr, buf, len);
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
@@ -1392,6 +1465,9 @@ Status SHT3x::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
                                    uint8_t* rxBuf, size_t rxLen) {
   if ((txLen > 0 && txBuf == nullptr) || (rxLen > 0 && rxBuf == nullptr)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
+  }
+  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
   }
 
   Status st = _i2cWriteReadRaw(txBuf, txLen, rxBuf, rxLen);
@@ -1411,6 +1487,9 @@ Status SHT3x::_i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen
   const bool canReportNack = hasCapability(_config.transportCapabilities,
                                            TransportCapability::READ_HEADER_NACK);
   const bool allow = allowNoData && canReportNack;
+  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
+  }
 
   Status st = _i2cWriteReadRaw(txBuf, txLen, rxBuf, rxLen);
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
@@ -1427,12 +1506,19 @@ Status SHT3x::_i2cWriteTracked(const uint8_t* buf, size_t len) {
   if (buf == nullptr || len == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
+  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
+  }
 
   Status st = _i2cWriteRaw(buf, len);
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
     return st;
   }
   return _updateHealth(st);
+}
+
+Status SHT3x::_offlineStatus() const {
+  return Status::Error(Err::BUSY, "Driver is offline; call recover()");
 }
 
 Status SHT3x::_writeCommand(uint16_t cmd, bool tracked) {
@@ -1478,7 +1564,7 @@ Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked) {
 
 Status SHT3x::_readAfterCommand(uint8_t* buf, size_t len, bool tracked,
                                 bool allowNoData) {
-  if (buf == nullptr || len == 0) {
+  if (buf == nullptr || len == 0 || len > MAX_READ_LEN) {
     return Status::Error(Err::INVALID_PARAM, "Invalid read buffer");
   }
 
@@ -1492,7 +1578,7 @@ Status SHT3x::_readAfterCommand(uint8_t* buf, size_t len, bool tracked,
 
 Status SHT3x::_readOnly(uint8_t* buf, size_t len, bool tracked,
                         bool allowNoData) {
-  if (buf == nullptr || len == 0) {
+  if (buf == nullptr || len == 0 || len > MAX_READ_LEN) {
     return Status::Error(Err::INVALID_PARAM, "Invalid read buffer");
   }
 
@@ -1505,21 +1591,15 @@ Status SHT3x::_readOnly(uint8_t* buf, size_t len, bool tracked,
 }
 
 Status SHT3x::_updateHealth(const Status& st) {
+  if (!_initialized || st.inProgress()) {
+    return st;
+  }
+
   const uint32_t now = _nowMs(_config);
   const uint32_t maxU32 = std::numeric_limits<uint32_t>::max();
   const uint8_t maxU8 = std::numeric_limits<uint8_t>::max();
 
   _recordBusActivity(now);
-
-  if (!_initialized) {
-    if (st.ok()) {
-      _lastOkMs = now;
-    } else {
-      _lastError = st;
-      _lastErrorMs = now;
-    }
-    return st;
-  }
 
   if (st.ok()) {
     _lastOkMs = now;
@@ -1547,6 +1627,14 @@ Status SHT3x::_updateHealth(const Status& st) {
   }
 
   return st;
+}
+
+void SHT3x::_reassertOfflineLatch() {
+  _driverState = DriverState::OFFLINE;
+  const uint8_t threshold = _config.offlineThreshold == 0 ? 1 : _config.offlineThreshold;
+  if (_consecutiveFailures < threshold) {
+    _consecutiveFailures = threshold;
+  }
 }
 
 void SHT3x::_recordBusActivity(uint32_t nowMs) {

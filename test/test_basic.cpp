@@ -434,6 +434,8 @@ void test_get_settings_snapshot_fields() {
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_TRUE(snap.initialized);
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(DriverState::READY), static_cast<uint8_t>(snap.state));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(DriverState::READY),
+                    static_cast<uint8_t>(device.driverState()));
   TEST_ASSERT_EQUAL_HEX8(0x44, snap.i2cAddress);
   TEST_ASSERT_EQUAL_UINT32(77u, snap.i2cTimeoutMs);
   TEST_ASSERT_EQUAL_UINT8(4u, snap.offlineThreshold);
@@ -444,10 +446,71 @@ void test_get_settings_snapshot_fields() {
   TEST_ASSERT_FALSE(snap.periodicActive);
   TEST_ASSERT_FALSE(snap.measurementPending);
   TEST_ASSERT_FALSE(snap.measurementReady);
+  TEST_ASSERT_FALSE(snap.hasSample);
+  TEST_ASSERT_FALSE(device.hasSample());
   TEST_ASSERT_EQUAL_UINT32(0u, snap.measurementReadyMs);
   TEST_ASSERT_EQUAL_UINT32(0u, snap.sampleTimestampMs);
   TEST_ASSERT_EQUAL_UINT32(0u, snap.missedSamples);
   TEST_ASSERT_FALSE(snap.statusValid);
+}
+
+void test_begin_resets_invalid_config_to_uninit_defaults_and_no_startup_health() {
+  FakeTransport bus;
+  SHT3xDevice device;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 4;
+
+  TEST_ASSERT_TRUE(device.begin(cfg).ok());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalFailures());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastOkMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastBusActivityMs());
+
+  Status pending = device._updateHealth(Status{Err::IN_PROGRESS, 0, "pending"});
+  TEST_ASSERT_TRUE(pending.inProgress());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalFailures());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastBusActivityMs());
+
+  (void)device._updateHealth(Status::Error(Err::I2C_TIMEOUT, "forced stale error"));
+  device._allowOfflineI2c = true;
+
+  Config invalid = cfg;
+  invalid.i2cTimeoutMs = 0;
+  const Status st = device.begin(invalid);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+  TEST_ASSERT_FALSE(device.isInitialized());
+  TEST_ASSERT_EQUAL(DriverState::UNINIT, device.state());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(0u, device.consecutiveFailures());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastOkMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastErrorMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastBusActivityMs());
+  TEST_ASSERT_EQUAL(Err::OK, device.lastError().code);
+  TEST_ASSERT_FALSE(device._allowOfflineI2c);
+  TEST_ASSERT_EQUAL(nullptr, device.getConfig().i2cWrite);
+  TEST_ASSERT_EQUAL(nullptr, device.getConfig().i2cWriteRead);
+  TEST_ASSERT_EQUAL_UINT32(50u, device.getConfig().i2cTimeoutMs);
+  TEST_ASSERT_EQUAL_UINT8(5u, device.getConfig().offlineThreshold);
+}
+
+void test_begin_i2c_failure_does_not_update_health() {
+  FakeTransport bus;
+  SHT3xDevice device;
+  Config cfg = makeConfig(bus);
+  bus.writeReadStatus = Status::Error(Err::I2C_TIMEOUT, "startup read timeout", -44);
+
+  const Status st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::DEVICE_NOT_FOUND, st.code);
+  TEST_ASSERT_FALSE(device.isInitialized());
+  TEST_ASSERT_EQUAL(DriverState::UNINIT, device.state());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(0u, device.consecutiveFailures());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastOkMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastErrorMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, device.lastBusActivityMs());
 }
 
 void test_begin_rejects_oversized_timing_config() {
@@ -634,6 +697,31 @@ void test_low_level_command_helpers_block_pending_measurement() {
 
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_low_level_read_rejects_invalid_buffers_before_i2c() {
+  CountTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+
+  uint8_t oversized[cmd::MEASUREMENT_DATA_LEN + 1] = {};
+  Status st = device.readCommand(cmd::CMD_READ_STATUS, nullptr, 3);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = device.readCommand(cmd::CMD_READ_STATUS, oversized, 0);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = device.readCommand(cmd::CMD_READ_STATUS, oversized, sizeof(oversized));
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+  TEST_ASSERT_EQUAL_UINT32(0u, device.totalFailures());
 }
 
 void test_raw_transport_rejects_invalid_buffers() {
@@ -956,6 +1044,40 @@ void test_setters_restart_art_mode() {
   TEST_ASSERT_EQUAL_UINT16(cmd::CMD_ART, ctx.commands[ctx.count - 1]);
 }
 
+void test_periodic_setters_do_not_mutate_config_on_restart_failure() {
+  LogTransport ctx;
+  ctx.writeStatus = Status::Error(Err::I2C_ERROR, "forced failure");
+
+  SHT3xDevice device;
+  device._config.i2cWrite = logWrite;
+  device._config.i2cWriteRead = logWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.repeatability = Repeatability::HIGH_REPEATABILITY;
+  device._config.periodicRate = PeriodicRate::MPS_1;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::PERIODIC;
+  device._periodicActive = true;
+  device._cachedSettings.repeatability = Repeatability::HIGH_REPEATABILITY;
+  device._cachedSettings.periodicRate = PeriodicRate::MPS_1;
+  device._hasCachedSettings = true;
+
+  Status st = device.setRepeatability(Repeatability::LOW_REPEATABILITY);
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Repeatability::HIGH_REPEATABILITY),
+                    static_cast<uint8_t>(device._config.repeatability));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(Repeatability::HIGH_REPEATABILITY),
+                    static_cast<uint8_t>(device._cachedSettings.repeatability));
+
+  st = device.setPeriodicRate(PeriodicRate::MPS_10);
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(PeriodicRate::MPS_1),
+                    static_cast<uint8_t>(device._config.periodicRate));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(PeriodicRate::MPS_1),
+                    static_cast<uint8_t>(device._cachedSettings.periodicRate));
+}
+
 void test_read_paths_no_combined_and_respect_delay() {
   TimingTransport ctx;
   SHT3xDevice device;
@@ -1036,6 +1158,84 @@ void test_periodic_fetch_margin_blocks_early_fetch() {
   TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
 }
 
+void test_raw_and_compensated_samples_remain_after_measurement_read() {
+  FakeTransport bus;
+  SHT3xDevice device;
+  Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  cfg.timeUser = nullptr;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
+
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  RawSample raw;
+  st = device.getRawSample(raw);
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, st.code);
+
+  st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  const uint32_t readyMs = device._measurementReadyMs;
+  device.tick(readyMs);
+  TEST_ASSERT_TRUE(device.measurementReady());
+
+  Measurement measurement;
+  st = device.getMeasurement(measurement);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(device.measurementReady());
+
+  st = device.getRawSample(raw);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT16(0u, raw.rawTemperature);
+  TEST_ASSERT_EQUAL_UINT16(0u, raw.rawHumidity);
+
+  CompensatedSample comp;
+  st = device.getCompensatedSample(comp);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_INT32(-4500, comp.tempC_x100);
+  TEST_ASSERT_EQUAL_UINT32(0u, comp.humidityPct_x100);
+
+  SettingsSnapshot snap;
+  st = device.getSettings(snap);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(snap.hasSample);
+  TEST_ASSERT_FALSE(snap.measurementReady);
+}
+
+void test_zero_timestamp_sample_age_uses_has_sample_flag() {
+  SHT3xDevice device;
+  device._hasSample = false;
+  device._sampleTimestampMs = 0;
+  TEST_ASSERT_EQUAL_UINT32(0u, device.sampleAgeMs(123u));
+
+  device._hasSample = true;
+  TEST_ASSERT_EQUAL_UINT32(123u, device.sampleAgeMs(123u));
+}
+
+void test_offline_request_measurement_does_not_touch_bus_or_schedule() {
+  CountTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._initialized = true;
+  device._driverState = DriverState::OFFLINE;
+  device._mode = Mode::SINGLE_SHOT;
+  device._periodicActive = false;
+
+  Status st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_STRING("Driver is offline; call recover()", st.msg);
+  TEST_ASSERT_FALSE(device._measurementRequested);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
 void test_recover_transient_failure() {
   ScriptedTransport ctx;
   ctx.readScript[0] = Status::Error(Err::I2C_TIMEOUT, "timeout");
@@ -1094,6 +1294,80 @@ void test_recover_permanent_offline() {
   Status st = device.recover();
   TEST_ASSERT_FALSE(st.ok());
   TEST_ASSERT_TRUE(device._consecutiveFailures > 0);
+}
+
+void test_offline_latches_read_status_without_i2c() {
+  CountTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.offlineThreshold = 1;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+
+  (void)device._updateHealth(Status::Error(Err::I2C_TIMEOUT, "forced offline"));
+  TEST_ASSERT_EQUAL(DriverState::OFFLINE, device._driverState);
+
+  uint16_t statusRaw = 0;
+  Status st = device.readStatus(statusRaw);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_STRING("Driver is offline; call recover()", st.msg);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+}
+
+void test_read_settings_returns_offline_busy_without_i2c() {
+  CountTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = countWrite;
+  device._config.i2cWriteRead = countWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.offlineThreshold = 1;
+  device._initialized = true;
+  device._driverState = DriverState::OFFLINE;
+  device._consecutiveFailures = 1;
+
+  SettingsSnapshot snap;
+  Status st = device.readSettings(snap);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_STRING("Driver is offline; call recover()", st.msg);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL(DriverState::OFFLINE, device._driverState);
+}
+
+void test_failed_recover_from_offline_keeps_latch_after_intermediate_success() {
+  ScriptedTransport ctx;
+  ctx.readScript[0] = Status::Error(Err::I2C_TIMEOUT, "initial probe timeout");
+  ctx.readScript[1] = Status::Error(Err::I2C_TIMEOUT, "post-reset timeout");
+  ctx.readCount = 2;
+
+  SHT3xDevice device;
+  device._config.i2cWrite = scriptedWrite;
+  device._config.i2cWriteRead = scriptedWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.offlineThreshold = 3;
+  device._config.recoverBackoffMs = 0;
+  device._config.recoverUseBusReset = false;
+  device._config.recoverUseSoftReset = true;
+  device._config.recoverUseHardReset = false;
+  device._config.allowGeneralCallReset = false;
+  device._initialized = true;
+  device._driverState = DriverState::OFFLINE;
+  device._consecutiveFailures = device._config.offlineThreshold;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 1000;
+  Status st = device.recover();
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL(DriverState::OFFLINE, device._driverState);
+  TEST_ASSERT_TRUE(device._consecutiveFailures >= device._config.offlineThreshold);
 }
 
 void test_recover_backoff_enforced_at_zero_ms() {
@@ -1158,6 +1432,7 @@ void test_end_clears_runtime_state() {
   TEST_ASSERT_EQUAL(DriverState::UNINIT, device._driverState);
   TEST_ASSERT_FALSE(device._measurementRequested);
   TEST_ASSERT_FALSE(device._measurementReady);
+  TEST_ASSERT_FALSE(device._hasSample);
   TEST_ASSERT_EQUAL_UINT32(0u, device._measurementReadyMs);
   TEST_ASSERT_FALSE(device._periodicActive);
   TEST_ASSERT_EQUAL_UINT32(0u, device._periodicStartMs);
@@ -1186,6 +1461,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_status_helpers);
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_get_settings_snapshot_fields);
+  RUN_TEST(test_begin_resets_invalid_config_to_uninit_defaults_and_no_startup_health);
   RUN_TEST(test_crc8_example);
   RUN_TEST(test_conversions_basic);
   RUN_TEST(test_alert_limit_roundtrip);
@@ -1196,6 +1472,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_low_level_command_helpers_write_and_read);
   RUN_TEST(test_low_level_command_helpers_map_expected_nack);
   RUN_TEST(test_low_level_command_helpers_block_pending_measurement);
+  RUN_TEST(test_low_level_read_rejects_invalid_buffers_before_i2c);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_expected_nack_mapping);
   RUN_TEST(test_not_ready_timeout_escalation);
@@ -1209,10 +1486,17 @@ int main(int argc, char** argv) {
   RUN_TEST(test_reset_to_defaults_clears_cache);
   RUN_TEST(test_reset_and_restore_applies_cached_settings);
   RUN_TEST(test_setters_restart_art_mode);
+  RUN_TEST(test_periodic_setters_do_not_mutate_config_on_restart_failure);
   RUN_TEST(test_read_paths_no_combined_and_respect_delay);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
+  RUN_TEST(test_raw_and_compensated_samples_remain_after_measurement_read);
+  RUN_TEST(test_zero_timestamp_sample_age_uses_has_sample_flag);
+  RUN_TEST(test_offline_request_measurement_does_not_touch_bus_or_schedule);
   RUN_TEST(test_recover_transient_failure);
   RUN_TEST(test_recover_permanent_offline);
+  RUN_TEST(test_offline_latches_read_status_without_i2c);
+  RUN_TEST(test_read_settings_returns_offline_busy_without_i2c);
+  RUN_TEST(test_failed_recover_from_offline_keeps_latch_after_intermediate_success);
   RUN_TEST(test_recover_backoff_enforced_at_zero_ms);
   RUN_TEST(test_periodic_fetch_margin_is_clamped);
   RUN_TEST(test_end_clears_runtime_state);

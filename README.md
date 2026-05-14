@@ -159,6 +159,7 @@ void loop() {
 | `requestMeasurement()` | Start a single-shot measurement or schedule the next periodic fetch. |
 | `measurementReady()` | Report whether a sample is ready to be read. |
 | `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` | Read float, raw, or fixed-point sample data. |
+| `hasSample()` | True after at least one raw/converted sample has been cached. |
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
 | `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings. |
@@ -169,7 +170,8 @@ void loop() {
 |--------|-------------|
 | `setMode()` / `getMode()` | Switch between single-shot, periodic, and ART modes. |
 | `setRepeatability()`, `setPeriodicRate()`, `setClockStretching()` | Update core measurement policy. |
-| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read. |
+| `driverState()` | Cross-library alias for the current `DriverState`. |
+| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read; snapshots include `hasSample`. |
 | `writeCommand()` / `writeCommandWithData()` / `readCommand()` | Advanced command-level helpers for upper layers that need direct access to the SHT3x command set. |
 | `readStatus()` / `clearStatus()` / `readHeaterStatus()` | Status-register and heater helpers. |
 | `readSerialNumber()` | Read the electronic identification code. |
@@ -180,6 +182,11 @@ transport path and tIDLE guard, but the dedicated mode/status/alert helpers rema
 preferred entry points when the command has higher-level state implications. Raw reads are
 bounded to the largest documented SHT3x response (6 bytes), and invalid read buffers are
 rejected before sending the command.
+
+`getRawSample()` and `getCompensatedSample()` remain available after
+`getMeasurement()` consumes the current `measurementReady()` event. Use
+`hasSample()` or `SettingsSnapshot::hasSample` to check whether those cached
+sample helpers can return data.
 
 When repeatability or periodic rate changes require restarting an active periodic/ART mode,
 the cached configuration is updated only after that restart succeeds.
@@ -354,7 +361,9 @@ if (device.readSettings(snap).ok()) {
 The bringup CLI covers the full driver surface, including mode control, serial-number
 readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
 command helpers (`command write`, `command write_data`, `command read`), and
-stress/self-test commands.
+stress/self-test commands. Help output is generated through the shared
+`CliStyle.h` helpers so command sections stay aligned with the sibling
+libraries.
 
 ## Documentation
 

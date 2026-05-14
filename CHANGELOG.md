@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Public low-level SHT3x command helpers (`writeCommand`, `writeCommandWithData`, `readCommand`) so upper layers can exercise the protocol directly without bypassing the driver's tracked transport path.
-- `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`.
+- `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`, and `hasSample`.
+- `hasSample()` and `driverState()` for cross-library diagnostics.
 - `Status::is(Err)` method for type-safe error code comparison.
 - `Status::operator bool()` explicit conversion for concise success checks.
 - Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while explicit recovery/reset paths remain available.
@@ -17,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Doxyfile project metadata now matches `library.json` and references the
   maintained docs tree instead of removed template files.
+- Reference documentation now uses human-readable vendor PDF names and separates compact SHT3x notes from full PDF/application-note extractions under `docs/extracted-md/` and `docs/pdf-extracted-md/`.
 - Explicit recovery/reset bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - `readCommand()` now validates read buffers and rejects responses larger than the largest documented SHT3x frame before sending the command.
+- `getRawSample()` and `getCompensatedSample()` now remain available after `getMeasurement()` consumes `measurementReady()`, with cache validity reported by `hasSample`.
+- CLI help was refactored onto shared `CliStyle.h` `cli::printHelp*` helpers, and the CLI contract now checks that helper.
 - Active periodic/ART repeatability and rate setters now update cached configuration only after the required restart succeeds.
 - Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
 
