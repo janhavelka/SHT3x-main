@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-05-14
+
 ### Added
 - Public low-level SHT3x command helpers (`writeCommand`, `writeCommandWithData`, `readCommand`) so upper layers can exercise the protocol directly without bypassing the driver's tracked transport path.
 - `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`, and `hasSample`.
@@ -156,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/janhavelka/SHT3x/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/janhavelka/SHT3x/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/janhavelka/SHT3x/compare/v1.3.2...v1.4.0
