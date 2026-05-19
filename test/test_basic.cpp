@@ -182,12 +182,41 @@ static uint32_t fakeNowMs(void* user) {
   return static_cast<FakeTransport*>(user)->nowMs;
 }
 
+static uint32_t fakeNowUs(void* user) {
+  return static_cast<FakeTransport*>(user)->nowMs * 1000U;
+}
+
+static void fakeYield(void* user) {
+  static_cast<FakeTransport*>(user)->nowMs++;
+}
+
+static uint32_t stubNowMs(void*) {
+  return millis();
+}
+
+static uint32_t stubNowUs(void*) {
+  return micros();
+}
+
+static void stubYield(void*) {
+  yield();
+}
+
+static void installTimingHooks(SHT3xDevice& device) {
+  device._config.nowMs = stubNowMs;
+  device._config.nowUs = stubNowUs;
+  device._config.cooperativeYield = stubYield;
+  device._config.timeUser = nullptr;
+}
+
 static Config makeConfig(FakeTransport& bus) {
   Config cfg;
   cfg.i2cWrite = fakeWrite;
   cfg.i2cWriteRead = fakeWriteRead;
   cfg.i2cUser = &bus;
   cfg.nowMs = fakeNowMs;
+  cfg.nowUs = fakeNowUs;
+  cfg.cooperativeYield = fakeYield;
   cfg.timeUser = &bus;
   cfg.i2cTimeoutMs = 10;
   cfg.offlineThreshold = 3;
@@ -416,6 +445,14 @@ static uint32_t captureNowMs(void* user) {
   return static_cast<CommandCaptureTransport*>(user)->nowMs;
 }
 
+static uint32_t captureNowUs(void* user) {
+  return static_cast<CommandCaptureTransport*>(user)->nowMs * 1000U;
+}
+
+static void captureYield(void* user) {
+  static_cast<CommandCaptureTransport*>(user)->nowMs++;
+}
+
 void test_get_settings_snapshot_fields() {
   FakeTransport bus;
   SHT3xDevice device;
@@ -553,6 +590,7 @@ void test_single_shot_pending_blocks_unrelated_commands() {
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._mode = Mode::SINGLE_SHOT;
@@ -586,6 +624,8 @@ void test_low_level_command_helpers_write_and_read() {
   cfg.i2cWriteRead = captureWriteRead;
   cfg.i2cUser = &ctx;
   cfg.nowMs = captureNowMs;
+  cfg.nowUs = captureNowUs;
+  cfg.cooperativeYield = captureYield;
   cfg.timeUser = &ctx;
   cfg.i2cTimeoutMs = 10;
   cfg.commandDelayMs = 1;
@@ -642,6 +682,8 @@ void test_low_level_command_helpers_map_expected_nack() {
   cfg.i2cWriteRead = captureWriteRead;
   cfg.i2cUser = &ctx;
   cfg.nowMs = captureNowMs;
+  cfg.nowUs = captureNowUs;
+  cfg.cooperativeYield = captureYield;
   cfg.timeUser = &ctx;
   cfg.i2cTimeoutMs = 10;
   cfg.commandDelayMs = 1;
@@ -679,6 +721,7 @@ void test_low_level_command_helpers_block_pending_measurement() {
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._mode = Mode::SINGLE_SHOT;
@@ -706,6 +749,7 @@ void test_low_level_read_rejects_invalid_buffers_before_i2c() {
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::READY;
 
@@ -731,6 +775,7 @@ void test_raw_transport_rejects_invalid_buffers() {
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
 
   uint8_t byte = 0x00;
   uint8_t rx[3] = {};
@@ -760,6 +805,7 @@ void test_expected_nack_mapping() {
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.commandDelayMs = 1;
   device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
   device._initialized = true;
@@ -786,6 +832,7 @@ void test_not_ready_timeout_escalation() {
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.commandDelayMs = 1;
   device._config.notReadyTimeoutMs = 5;
   device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
@@ -813,6 +860,7 @@ void test_nack_mapping_without_capability() {
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.commandDelayMs = 1;
   device._config.transportCapabilities = TransportCapability::NONE;
   device._initialized = true;
@@ -835,6 +883,7 @@ void test_periodic_fetch_expected_nack_no_failure() {
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.commandDelayMs = 1;
   device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
   device._initialized = true;
@@ -893,6 +942,7 @@ void test_cache_updates_only_on_success() {
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._cachedSettings = CachedSettings{};
@@ -915,6 +965,7 @@ void test_write_alert_limit_rejects_nan() {
   device._config.i2cWrite = fakeWrite;
   device._config.i2cWriteRead = fakeWriteRead;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._cachedSettings = CachedSettings{};
   device._hasCachedSettings = true;
 
@@ -931,6 +982,7 @@ void test_reset_to_defaults_clears_cache() {
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.recoverUseBusReset = false;
   device._config.recoverUseSoftReset = true;
   device._initialized = true;
@@ -968,6 +1020,7 @@ void test_reset_and_restore_applies_cached_settings() {
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.recoverUseBusReset = false;
   device._config.recoverUseSoftReset = true;
   device._initialized = true;
@@ -1021,6 +1074,7 @@ void test_setters_restart_art_mode() {
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._mode = Mode::ART;
@@ -1053,6 +1107,7 @@ void test_periodic_setters_do_not_mutate_config_on_restart_failure() {
   device._config.i2cWriteRead = logWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.repeatability = Repeatability::HIGH_REPEATABILITY;
   device._config.periodicRate = PeriodicRate::MPS_1;
   device._initialized = true;
@@ -1085,6 +1140,7 @@ void test_read_paths_no_combined_and_respect_delay() {
   device._config.i2cWriteRead = timingWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.commandDelayMs = 2;
   device._initialized = true;
   device._driverState = DriverState::READY;
@@ -1162,8 +1218,6 @@ void test_raw_and_compensated_samples_remain_after_measurement_read() {
   FakeTransport bus;
   SHT3xDevice device;
   Config cfg = makeConfig(bus);
-  cfg.nowMs = nullptr;
-  cfg.timeUser = nullptr;
 
   gMillis = 0;
   gMicros = 0;
@@ -1223,6 +1277,7 @@ void test_offline_request_measurement_does_not_touch_bus_or_schedule() {
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::OFFLINE;
   device._mode = Mode::SINGLE_SHOT;
@@ -1252,6 +1307,7 @@ void test_recover_transient_failure() {
   device._config.i2cWriteRead = scriptedWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.recoverBackoffMs = 0;
   device._config.busReset = busReset;
   device._config.recoverUseBusReset = true;
@@ -1281,6 +1337,7 @@ void test_recover_permanent_offline() {
   device._config.i2cWriteRead = scriptedWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.recoverBackoffMs = 0;
   device._config.recoverUseBusReset = false;
   device._config.recoverUseSoftReset = true;
@@ -1303,6 +1360,7 @@ void test_offline_latches_read_status_without_i2c() {
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.offlineThreshold = 1;
   device._initialized = true;
   device._driverState = DriverState::READY;
@@ -1325,6 +1383,7 @@ void test_read_settings_returns_offline_busy_without_i2c() {
   device._config.i2cWriteRead = countWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.offlineThreshold = 1;
   device._initialized = true;
   device._driverState = DriverState::OFFLINE;
@@ -1350,6 +1409,7 @@ void test_failed_recover_from_offline_keeps_latch_after_intermediate_success() {
   device._config.i2cWriteRead = scriptedWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.offlineThreshold = 3;
   device._config.recoverBackoffMs = 0;
   device._config.recoverUseBusReset = false;
@@ -1380,6 +1440,7 @@ void test_recover_backoff_enforced_at_zero_ms() {
   device._config.i2cWriteRead = scriptedWriteRead;
   device._config.i2cUser = &ctx;
   device._config.i2cTimeoutMs = 10;
+  installTimingHooks(device);
   device._config.recoverBackoffMs = 100;
   device._config.recoverUseBusReset = false;
   device._config.recoverUseSoftReset = false;

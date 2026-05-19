@@ -23,7 +23,7 @@ Official ESP-IDF references:
 ## Arduino Dependencies
 
 - `src/SHT3x.cpp` no longer includes `<Arduino.h>`.
-- `src/PlatformTime.h` is the private fallback timing/yield shim for Arduino, ESP-IDF, and native tests.
+- `src/PlatformTime.h` is framework-neutral and intentionally inert unless the application supplies timing/yield callbacks through `Config`.
 - `include/SHT3x/Config.h` exposes framework-neutral callbacks:
   - `i2cWrite`
   - `i2cWriteRead`
@@ -34,15 +34,15 @@ Official ESP-IDF references:
   - optional `hardReset`
 - `examples/common/I2cTransport.h`, `I2cScanner.h`, `BoardConfig.h`, `CommandHandler.h`, and `Log.h` are Arduino example glue. They use `Wire`, `Serial`, `String`, GPIO helpers, `delay()`, and `yield()`.
 - `platformio.ini` builds Arduino examples and native tests. It is not an IDF project file.
-- `library.json` declares only the Arduino framework and must remain the PlatformIO package manifest.
+- `library.json` declares Arduino and ESP-IDF framework compatibility and remains the PlatformIO package manifest.
 - `include/SHT3x/Version.h` is generated from `library.json`; do not edit it by hand.
 
 ## Portability Status
 
 Implemented:
 
-1. The core driver compiles through a private platform timing/yield shim instead of direct Arduino includes.
-2. ESP-IDF fallback timing uses `esp_timer_get_time()` and `taskYIELD()`.
+1. The core driver compiles without Arduino or ESP-IDF framework headers.
+2. ESP-IDF timing/yield behavior is injected by the example through `Config::nowMs`, `Config::nowUs`, and `Config::cooperativeYield`.
 3. Root `CMakeLists.txt` provides `idf_component_register`.
 4. `examples/idf/basic` provides an ESP-IDF v6 `i2c_master` adapter.
 5. Arduino examples remain separate and are not part of the IDF component target.
@@ -57,17 +57,16 @@ Still application-owned:
 ## Exact Files and APIs to Change
 
 - `src/SHT3x.cpp`
-  - Replace direct `<Arduino.h>` usage with a private platform/timing shim.
+  - Keep framework headers out of the core implementation.
   - Preserve the existing bounded wait logic and `MAX_SPIN_ITERS` guard.
   - Keep all SHT3x commands, CRC handling, and health tracking in the core driver.
 - `include/SHT3x/Config.h`
-  - No API break is required for the first IDF port.
+  - No API break is required for the IDF port.
   - Keep transport, timing, yield, bus-reset, and hard-reset callbacks as the portability boundary.
   - Under IDF, examples should always supply `nowMs`, `nowUs`, and `cooperativeYield` so timing is explicit.
 - Private shim `src/PlatformTime.h`
-  - Under Arduino, call `millis()`, `micros()`, and `yield()`.
-  - Under ESP-IDF, use `esp_timer_get_time()` for time and `taskYIELD()` or `vTaskDelay(1)` only in the optional cooperative-yield path.
-  - Keep this file private; public headers must stay framework-neutral.
+  - Do not include Arduino or ESP-IDF headers.
+  - Keep the fallback inert; examples/applications must inject real timing through `Config`.
 - ESP-IDF example files under `examples/idf/basic/main/`
   - Own the I2C bus, device handle, optional reset GPIO, and optional bus recovery GPIOs.
   - Fill `Config` with IDF adapter callbacks.
@@ -163,16 +162,6 @@ idf_component_register(
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 ```
 
-If the private timing shim uses ESP-IDF fallback APIs, add private requirements:
-
-```cmake
-idf_component_register(
-  SRCS "src/SHT3x.cpp"
-  INCLUDE_DIRS "include"
-  PRIV_REQUIRES esp_timer freertos
-)
-```
-
 If an IDF adapter is built into an example component, that example should declare:
 
 ```cmake
@@ -240,7 +229,7 @@ ESP-IDF examples:
 
 ## Ordered Checklist
 
-1. Add a private timing/yield shim and remove direct `<Arduino.h>` use from `src/SHT3x.cpp`. Done.
+1. Add a framework-neutral timing/yield shim and remove direct framework headers from the core. Done.
 2. Add a minimal component `CMakeLists.txt` for the core library. Done.
 3. Add an IDF I2C adapter using `<driver/i2c_master.h>` outside the core driver. Done.
 4. Add optional IDF hard-reset and bus-reset callback examples outside the library. Documented as application-owned.

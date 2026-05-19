@@ -5,9 +5,7 @@ Last updated: 2026-05-19
 ## Implemented
 
 - The library core no longer includes `<Arduino.h>` from `src/SHT3x.cpp`.
-- `src/PlatformTime.h` is the only private framework fallback shim:
-  - Arduino builds use `millis()`, `micros()`, and `yield()` when timing hooks are not supplied.
-  - ESP-IDF builds use `esp_timer_get_time()` and `taskYIELD()` when timing hooks are not supplied.
+- `src/PlatformTime.h` is framework-neutral and does not include Arduino or ESP-IDF headers.
 - Root `CMakeLists.txt` registers the core as an ESP-IDF component with C++17 enabled.
 - `examples/idf/basic` provides:
   - an ESP-IDF project CMake file;
@@ -16,7 +14,8 @@ Last updated: 2026-05-19
   - explicit bus/device ownership in the example;
   - `Config::nowMs`, `nowUs`, `cooperativeYield`, `i2cWrite`, and `i2cWriteRead` wiring;
   - the same user-visible CLI contract as `examples/01_basic_bringup_cli` through
-    `examples/common/Sht3xCli.*`.
+    the framework-neutral `examples/common/Sht3xCli.*` command layer, without
+    Arduino compatibility facades in the IDF example.
 
 ## Core Boundary
 

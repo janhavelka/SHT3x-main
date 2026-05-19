@@ -5,6 +5,18 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+FORBIDDEN_IDF_TOKENS = [
+    "Arduino.h",
+    "Wire.h",
+    "ArduinoCompat",
+    "IdfArduinoCompat",
+    "TwoWire",
+    "String",
+    "Serial",
+    "examples/01_basic_bringup_cli/main.cpp",
+    "setup();",
+    "loop();",
+]
 
 
 def fail(msg: str) -> None:
@@ -27,6 +39,19 @@ def main() -> int:
     for path in (shared_cli, idf_main, idf_cmake, idf_transport):
         if not path.exists():
             fail(f"missing required file: {path.as_posix()}")
+
+    combined_idf = (
+        idf_main.read_text(encoding="utf-8", errors="replace")
+        + "\n"
+        + idf_transport.read_text(encoding="utf-8", errors="replace")
+        + "\n"
+        + idf_cmake.read_text(encoding="utf-8", errors="replace")
+    )
+    for token in FORBIDDEN_IDF_TOKENS:
+        if token in combined_idf:
+            fail(f"IDF example uses forbidden Arduino/compat token: {token}")
+    if "driver/i2c.h" in combined_idf:
+        fail("IDF example must use driver/i2c_master.h, not legacy driver/i2c.h")
 
     for needle in (
         "Sht3xCli.h",

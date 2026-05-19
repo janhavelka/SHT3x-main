@@ -34,10 +34,10 @@ The repository root can be used as an ESP-IDF component through
 no I2C bus, pins, reset GPIO, logging, or scheduler policy; applications provide
 transport and timing callbacks through `SHT3x::Config`.
 
-Under ESP-IDF the private fallback timebase uses `esp_timer_get_time()` and
-`taskYIELD()`, but IDF applications should inject `Config::nowMs`,
-`Config::nowUs`, and `Config::cooperativeYield` so all driver timing follows the
-application scheduler.
+The core component does not include Arduino or ESP-IDF framework headers. IDF
+applications should inject `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield` so all driver timing follows the application
+scheduler.
 
 See `examples/idf/basic` for an ESP-IDF v6-style `i2c_master` adapter and the
 same interactive CLI command surface used by the Arduino bringup example.
@@ -378,9 +378,11 @@ if (device.readSettings(snap).ok()) {
 The shared bringup CLI covers the full driver surface, including mode control, serial-number
 readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
 command helpers (`command write`, `command write_data`, `command read`), and
-stress/self-test commands. Arduino and ESP-IDF use `examples/common/Sht3xCli.*`
-so command names, aliases, help sections, ranges, output style, prompts, health
-reporting, diagnostics, and raw/register access stay aligned.
+stress/self-test commands. Arduino and ESP-IDF use the framework-neutral
+`examples/common/Sht3xCli.*` command layer so command names, aliases, help
+sections, ranges, output style, prompts, health reporting, diagnostics, and
+raw/register access stay aligned without Arduino compatibility facades in the
+IDF example.
 
 ## Documentation
 
