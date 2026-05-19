@@ -14,7 +14,9 @@ Last updated: 2026-05-19
   - a `main` component;
   - an `i2c_master` transport adapter;
   - explicit bus/device ownership in the example;
-  - `Config::nowMs`, `nowUs`, `cooperativeYield`, `i2cWrite`, and `i2cWriteRead` wiring.
+  - `Config::nowMs`, `nowUs`, `cooperativeYield`, `i2cWrite`, and `i2cWriteRead` wiring;
+  - the same user-visible CLI contract as `examples/01_basic_bringup_cli` through
+    `examples/common/Sht3xCli.*`.
 
 ## Core Boundary
 
@@ -46,6 +48,7 @@ Run these checks from the repository root:
 ```bash
 python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
+python tools/check_idf_example_contract.py
 pio test -e native
 pio run -e esp32s3dev
 pio run -e esp32s2dev

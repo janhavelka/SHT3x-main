@@ -19,6 +19,22 @@ REQUIRED_COMMON = [
 ]
 
 MANDATORY_COMMANDS = ["help", "scan", "probe", "recover", "drv", "read", "verbose", "stress"]
+MANDATORY_HELP_ITEMS = [
+    "help / ?",
+    "version / ver",
+    "mode [single|periodic|art]",
+    "start_periodic <rate> <rep>",
+    "repeat [low|med|high]",
+    "rate [0.5|1|2|4|10]",
+    "stretch [0|1]",
+    "command write <hex>",
+    "command write_data <cmd> <data>",
+    "command read <cmd> <len>",
+    "alert raw write <kind> <hex>",
+    "cfg / settings",
+    "stress_mix [N]",
+    "selftest",
+]
 
 
 def fail(msg: str) -> None:
@@ -39,9 +55,15 @@ def ensure_missing(path: pathlib.Path, label: str) -> None:
 def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
+    shared_cli = common_dir / "Sht3xCli.cpp"
+    shared_cli_header = common_dir / "Sht3xCli.h"
+    idf_main = ROOT / "examples" / "idf" / "basic" / "main" / "main.cpp"
 
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
+    ensure_exists(shared_cli, "shared CLI implementation")
+    ensure_exists(shared_cli_header, "shared CLI header")
+    ensure_exists(idf_main, "ESP-IDF CLI example")
 
     ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
     ensure_missing(
@@ -52,11 +74,22 @@ def main() -> int:
     for name in REQUIRED_COMMON:
         ensure_exists(common_dir / name, f"common helper {name}")
 
-    text = bringup_main.read_text(encoding="utf-8", errors="replace")
+    arduino_text = bringup_main.read_text(encoding="utf-8", errors="replace")
+    idf_text = idf_main.read_text(encoding="utf-8", errors="replace")
+    text = shared_cli.read_text(encoding="utf-8", errors="replace")
+
+    if "Sht3xCli.h" not in arduino_text:
+        fail("Arduino example must use shared Sht3xCli.h")
+    if "Sht3xCli.h" not in idf_text:
+        fail("ESP-IDF example must use shared Sht3xCli.h")
 
     for cmd in MANDATORY_COMMANDS:
         if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
-            fail(f"mandatory command '{cmd}' missing in {bringup_main.as_posix()}")
+            fail(f"mandatory command '{cmd}' missing in {shared_cli.as_posix()}")
+
+    for item in MANDATORY_HELP_ITEMS:
+        if item not in text:
+            fail(f"mandatory help item '{item}' missing in {shared_cli.as_posix()}")
 
     if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
         fail("either 'cfg' or 'settings' command must be present")

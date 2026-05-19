@@ -189,7 +189,10 @@ update the `REQUIRES` value accordingly. `esp_driver_gpio` is only for example
 GPIO reset/bus-recovery code; do not require GPIO from the core component unless
 the core starts using ESP-IDF GPIO APIs, which it should not.
 
-Do not compile `examples/common/*.h` into ESP-IDF targets.
+Do not compile Arduino-only helpers from `examples/common/` into ESP-IDF
+targets. Framework-neutral shared helpers such as `Sht3xCli.cpp` may be
+compiled by both example families when they avoid Arduino, Wire, and
+ESP-IDF-only APIs.
 
 ## IDF and Arduino Example Plan
 
@@ -241,7 +244,7 @@ ESP-IDF examples:
 2. Add a minimal component `CMakeLists.txt` for the core library. Done.
 3. Add an IDF I2C adapter using `<driver/i2c_master.h>` outside the core driver. Done.
 4. Add optional IDF hard-reset and bus-reset callback examples outside the library. Documented as application-owned.
-5. Add `examples/idf/basic` with bus setup, adapter callbacks, timing callbacks, and a polling task. Done.
+5. Add `examples/idf/basic` with bus setup, adapter callbacks, timing callbacks, and CLI parity with the Arduino bringup example. Done.
 6. Build with ESP-IDF v6.0.1 for ESP32-S2 and ESP32-S3. Pending local ESP-IDF environment.
 7. Run Arduino and native builds to confirm existing users are unaffected. Pending local validation.
 8. Run hardware tests for probe, CRC, single-shot, periodic mode, resets, alerts, heater, and fault injection. Pending hardware.

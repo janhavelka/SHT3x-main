@@ -39,8 +39,8 @@ Under ESP-IDF the private fallback timebase uses `esp_timer_get_time()` and
 `Config::nowUs`, and `Config::cooperativeYield` so all driver timing follows the
 application scheduler.
 
-See `examples/idf/basic` for an ESP-IDF v6-style `i2c_master` adapter and a
-single-shot polling task.
+See `examples/idf/basic` for an ESP-IDF v6-style `i2c_master` adapter and the
+same interactive CLI command surface used by the Arduino bringup example.
 
 ## Quick Start
 
@@ -372,15 +372,15 @@ if (device.readSettings(snap).ok()) {
 
 ## Examples
 
-- `01_basic_bringup_cli/` - Interactive CLI for testing
-- `idf/basic/` - ESP-IDF example using the new `i2c_master` driver
+- `01_basic_bringup_cli/` - Arduino interactive CLI for testing
+- `idf/basic/` - ESP-IDF interactive CLI using the new `i2c_master` driver
 
-The bringup CLI covers the full driver surface, including mode control, serial-number
+The shared bringup CLI covers the full driver surface, including mode control, serial-number
 readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
 command helpers (`command write`, `command write_data`, `command read`), and
-stress/self-test commands. Help output is generated through the shared
-`CliStyle.h` helpers so command sections stay aligned with the sibling
-libraries.
+stress/self-test commands. Arduino and ESP-IDF use `examples/common/Sht3xCli.*`
+so command names, aliases, help sections, ranges, output style, prompts, health
+reporting, diagnostics, and raw/register access stay aligned.
 
 ## Documentation
 
