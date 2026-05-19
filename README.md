@@ -1,10 +1,11 @@
 # SHT3x Driver Library
 
-Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO).
+Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO and ESP-IDF component use).
 
 ## Features
 
 - **Injected I2C transport** - no Wire dependency in library code
+- **Framework-neutral core** - Arduino and ESP-IDF integration live behind callbacks/adapters
 - **CRC validation** - all 16-bit data words verified
 - **Alert mode support** - read/write limits, encode/decode helpers
 - **Periodic + ART modes** - 0.5/1/2/4/10 mps and ART
@@ -25,6 +26,21 @@ lib_deps =
 ### Manual
 
 Copy `include/SHT3x/` and `src/` to your project.
+
+### ESP-IDF Component
+
+The repository root can be used as an ESP-IDF component through
+`EXTRA_COMPONENT_DIRS` or your component manager workflow. The core driver owns
+no I2C bus, pins, reset GPIO, logging, or scheduler policy; applications provide
+transport and timing callbacks through `SHT3x::Config`.
+
+Under ESP-IDF the private fallback timebase uses `esp_timer_get_time()` and
+`taskYIELD()`, but IDF applications should inject `Config::nowMs`,
+`Config::nowUs`, and `Config::cooperativeYield` so all driver timing follows the
+application scheduler.
+
+See `examples/idf/basic` for an ESP-IDF v6-style `i2c_master` adapter and a
+single-shot polling task.
 
 ## Quick Start
 
@@ -357,6 +373,7 @@ if (device.readSettings(snap).ok()) {
 ## Examples
 
 - `01_basic_bringup_cli/` - Interactive CLI for testing
+- `idf/basic/` - ESP-IDF example using the new `i2c_master` driver
 
 The bringup CLI covers the full driver surface, including mode control, serial-number
 readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
@@ -369,6 +386,7 @@ libraries.
 
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `docs/IDF_PORT_IMPLEMENTATION.md` - implemented IDF component/example notes
 - `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
 - `docs/Sensirion_electronic_identification_code_SHT3x.pdf` - serial-number / EIC reference
 - `docs/SHT3x_driver_extraction.md` - driver split and extraction notes
