@@ -67,6 +67,9 @@ def main() -> int:
         "driver/i2c_master.h",
         "esp_timer_get_time",
         "vTaskDelay",
+        "gConfig.nowMs",
+        "gConfig.nowUs",
+        "gConfig.cooperativeYield",
     ):
         require_text(idf_main, needle)
 

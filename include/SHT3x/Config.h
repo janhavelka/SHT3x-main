@@ -124,10 +124,10 @@ struct Config {
   BusResetFn busReset = nullptr;         ///< Optional interface reset callback
   HardResetFn hardReset = nullptr;       ///< Optional hard reset (nRESET pulse)
 
-  // === Timing Hooks (optional) ===
-  NowMsFn nowMs = nullptr;               ///< Monotonic millisecond source; IDF apps should inject this explicitly
-  NowUsFn nowUs = nullptr;               ///< Monotonic microsecond source; IDF apps should inject this explicitly
-  YieldFn cooperativeYield = nullptr;    ///< Cooperative scheduler hint; IDF apps should inject this explicitly
+  // === Timing Hooks (required by begin/runtime) ===
+  NowMsFn nowMs = nullptr;               ///< Monotonic millisecond source; required for begin/runtime timing
+  NowUsFn nowUs = nullptr;               ///< Monotonic microsecond source; required for command spacing
+  YieldFn cooperativeYield = nullptr;    ///< Cooperative scheduler hint used while waiting for bounded deadlines
   void* timeUser = nullptr;              ///< User context for timing hooks
 
   // === Device Settings ===

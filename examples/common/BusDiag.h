@@ -4,6 +4,6 @@
 
 namespace bus_diag {
 inline void scan() {
-  i2c::scan();
+  i2c_scanner::scanDefault();
 }
-}
+}  // namespace bus_diag

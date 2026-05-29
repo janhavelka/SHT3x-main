@@ -23,7 +23,7 @@ Official ESP-IDF references:
 ## Arduino Dependencies
 
 - `src/SHT3x.cpp` no longer includes `<Arduino.h>`.
-- `src/PlatformTime.h` is framework-neutral and intentionally inert unless the application supplies timing/yield callbacks through `Config`.
+- `src/PlatformTime.h` is framework-neutral and intentionally inert; `begin()` requires application-supplied timing/yield callbacks through `Config`.
 - `include/SHT3x/Config.h` exposes framework-neutral callbacks:
   - `i2cWrite`
   - `i2cWriteRead`
@@ -61,9 +61,8 @@ Still application-owned:
   - Preserve the existing bounded wait logic and `MAX_SPIN_ITERS` guard.
   - Keep all SHT3x commands, CRC handling, and health tracking in the core driver.
 - `include/SHT3x/Config.h`
-  - No API break is required for the IDF port.
   - Keep transport, timing, yield, bus-reset, and hard-reset callbacks as the portability boundary.
-  - Under IDF, examples should always supply `nowMs`, `nowUs`, and `cooperativeYield` so timing is explicit.
+  - Applications must supply `nowMs`, `nowUs`, and `cooperativeYield`; `begin()` rejects missing timing hooks before I2C.
 - Private shim `src/PlatformTime.h`
   - Do not include Arduino or ESP-IDF headers.
   - Keep the fallback inert; examples/applications must inject real timing through `Config`.

@@ -72,6 +72,9 @@ void test_config_defaults() {
   TEST_ASSERT_EQUAL(nullptr, cfg.i2cWriteRead);
   TEST_ASSERT_EQUAL(nullptr, cfg.busReset);
   TEST_ASSERT_EQUAL(nullptr, cfg.hardReset);
+  TEST_ASSERT_EQUAL(nullptr, cfg.nowMs);
+  TEST_ASSERT_EQUAL(nullptr, cfg.nowUs);
+  TEST_ASSERT_EQUAL(nullptr, cfg.cooperativeYield);
   TEST_ASSERT_EQUAL(0x44, cfg.i2cAddress);
   TEST_ASSERT_EQUAL(50u, cfg.i2cTimeoutMs);
   TEST_ASSERT_EQUAL(0, static_cast<uint8_t>(cfg.transportCapabilities));
@@ -550,12 +553,39 @@ void test_begin_i2c_failure_does_not_update_health() {
   TEST_ASSERT_EQUAL_UINT32(0u, device.lastBusActivityMs());
 }
 
+void test_begin_rejects_missing_timing_hooks_before_i2c() {
+  CountTransport ctx;
+  Config cfg;
+  cfg.i2cWrite = countWrite;
+  cfg.i2cWriteRead = countWriteRead;
+  cfg.i2cUser = &ctx;
+  cfg.i2cTimeoutMs = 10;
+
+  SHT3xDevice device;
+  Status st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+  TEST_ASSERT_EQUAL_STRING("Timing callbacks not set", st.msg);
+  TEST_ASSERT_FALSE(device.isInitialized());
+  TEST_ASSERT_EQUAL(DriverState::UNINIT, device.state());
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  cfg.nowMs = stubNowMs;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  cfg.nowUs = stubNowUs;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
 void test_begin_rejects_oversized_timing_config() {
   FakeTransport ctx;
-  Config cfg;
-  cfg.i2cWrite = fakeWrite;
-  cfg.i2cWriteRead = fakeWriteRead;
-  cfg.i2cUser = &ctx;
+  Config cfg = makeConfig(ctx);
 
   SHT3xDevice device;
   cfg.i2cTimeoutMs = 60001;
@@ -1523,6 +1553,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_get_settings_snapshot_fields);
   RUN_TEST(test_begin_resets_invalid_config_to_uninit_defaults_and_no_startup_health);
+  RUN_TEST(test_begin_rejects_missing_timing_hooks_before_i2c);
   RUN_TEST(test_crc8_example);
   RUN_TEST(test_conversions_basic);
   RUN_TEST(test_alert_limit_roundtrip);

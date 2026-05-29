@@ -187,6 +187,10 @@ Status SHT3x::begin(const Config& config) {
   if (config.recoverBackoffMs > MAX_RECOVER_BACKOFF_MS) {
     return Status::Error(Err::INVALID_CONFIG, "Recover backoff too large");
   }
+  if (config.nowMs == nullptr || config.nowUs == nullptr ||
+      config.cooperativeYield == nullptr) {
+    return Status::Error(Err::INVALID_CONFIG, "Timing callbacks not set");
+  }
 
   _config = config;
   if (_config.offlineThreshold == 0) {

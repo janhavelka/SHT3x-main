@@ -5,7 +5,7 @@
 #include <Arduino.h>
 
 #include "common/BoardConfig.h"
-#include "common/I2cScanner.h"
+#include "common/BusDiag.h"
 #include "common/I2cTransport.h"
 #include "common/Sht3xCli.h"
 
@@ -23,12 +23,16 @@ uint32_t arduinoNowMs(void*) {
   return millis();
 }
 
+uint32_t arduinoNowUs(void*) {
+  return micros();
+}
+
 void arduinoYield(void*) {
   yield();
 }
 
 void arduinoScanBus(void*) {
-  i2c::scan();
+  bus_diag::scan();
 }
 
 void readSerialInput() {
@@ -100,12 +104,15 @@ void setup() {
   }
   sht3x_cli::logInfo("I2C initialized (SDA=%d, SCL=%d)", board::I2C_SDA, board::I2C_SCL);
 
-  i2c::scan();
+  bus_diag::scan();
 
   SHT3x::Config& cfg = sht3x_cli::config();
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = arduinoNowMs;
+  cfg.nowUs = arduinoNowUs;
+  cfg.cooperativeYield = arduinoYield;
   cfg.i2cAddress = 0x44;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.transportCapabilities = SHT3x::TransportCapability::NONE;

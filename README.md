@@ -34,10 +34,10 @@ The repository root can be used as an ESP-IDF component through
 no I2C bus, pins, reset GPIO, logging, or scheduler policy; applications provide
 transport and timing callbacks through `SHT3x::Config`.
 
-The core component does not include Arduino or ESP-IDF framework headers. IDF
-applications should inject `Config::nowMs`, `Config::nowUs`, and
-`Config::cooperativeYield` so all driver timing follows the application
-scheduler.
+The core component does not include Arduino or ESP-IDF framework headers.
+Applications must inject `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield` so command spacing, reset delays, and timeout
+deadlines follow the application scheduler.
 
 See `examples/idf/basic` for an ESP-IDF v6-style `i2c_master` adapter and the
 same interactive CLI command surface used by the Arduino bringup example.
@@ -110,6 +110,10 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
 
 SHT3x::SHT3x device;
 
+uint32_t appNowMs(void*) { return millis(); }
+uint32_t appNowUs(void*) { return micros(); }
+void appYield(void*) { yield(); }
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(8, 9);  // SDA, SCL
@@ -120,6 +124,9 @@ void setup() {
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = appNowMs;
+  cfg.nowUs = appNowUs;
+  cfg.cooperativeYield = appYield;
   cfg.i2cAddress = 0x44;
   cfg.transportCapabilities = SHT3x::TransportCapability::NONE;
 
@@ -179,6 +186,11 @@ void loop() {
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
 | `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings. |
+
+`begin()` requires `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield`. Without those callbacks the driver cannot enforce
+the SHT3x tIDLE command spacing or reset delays deterministically, so startup
+fails with `INVALID_CONFIG`.
 
 ### Configuration and Diagnostics
 
