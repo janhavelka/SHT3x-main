@@ -375,14 +375,13 @@ if (device.readSettings(snap).ok()) {
 - `01_basic_bringup_cli/` - Arduino interactive CLI for testing
 - `idf/basic/` - ESP-IDF interactive CLI using the new `i2c_master` driver
 
-The shared bringup CLI covers the full driver surface, including mode control, serial-number
-readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
-command helpers (`command write`, `command write_data`, `command read`), and
-stress/self-test commands. Arduino and ESP-IDF use the framework-neutral
-`examples/common/Sht3xCli.*` command layer so command names, aliases, help
-sections, ranges, output style, prompts, health reporting, diagnostics, and
-raw/register access stay aligned without Arduino compatibility facades in the
-IDF example.
+The Arduino bringup CLI covers the full driver surface, including mode control,
+serial-number readout, alert-limit helpers, recovery/reset flows, cached
+settings snapshots, direct command helpers (`command write`,
+`command write_data`, `command read`), and stress/self-test commands. The
+ESP-IDF example uses a separate native fixed-buffer command loop with the same
+driver scenarios, native `i2c_master` ownership, ESP-IDF logging, FreeRTOS
+timing, and no Arduino compatibility facades in the IDF build path.
 
 ## Documentation
 

@@ -179,9 +179,9 @@ GPIO reset/bus-recovery code; do not require GPIO from the core component unless
 the core starts using ESP-IDF GPIO APIs, which it should not.
 
 Do not compile Arduino-only helpers from `examples/common/` into ESP-IDF
-targets. Framework-neutral shared helpers such as `Sht3xCli.cpp` may be
-compiled by both example families when they avoid Arduino, Wire, and
-ESP-IDF-only APIs.
+targets. The ESP-IDF example now uses its own native fixed-buffer CLI; keep
+`examples/common/Sht3xCli.*` on the Arduino/example-helper side unless it is
+kept free of Arduino-named facades and IDF-only APIs.
 
 ## IDF and Arduino Example Plan
 

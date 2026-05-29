@@ -13,9 +13,9 @@ Last updated: 2026-05-19
   - an `i2c_master` transport adapter;
   - explicit bus/device ownership in the example;
   - `Config::nowMs`, `nowUs`, `cooperativeYield`, `i2cWrite`, and `i2cWriteRead` wiring;
-  - the same user-visible CLI contract as `examples/01_basic_bringup_cli` through
-    the framework-neutral `examples/common/Sht3xCli.*` command layer, without
-    Arduino compatibility facades in the IDF example.
+  - a native fixed-buffer command loop that covers the same driver scenarios as
+    `examples/01_basic_bringup_cli` without compiling `examples/common/Sht3xCli.*`
+    or Arduino compatibility facades into the IDF example.
 
 ## Core Boundary
 
@@ -36,9 +36,9 @@ The IDF example maps `esp_err_t` values to library `Status` codes:
 - `ESP_ERR_INVALID_RESPONSE` -> `Err::I2C_ERROR`
 - other ESP-IDF failures -> `Err::I2C_BUS`
 
-The example advertises only `TransportCapability::TIMEOUT`; it does not
-advertise `READ_HEADER_NACK` because the standard IDF receive API does not prove
-the NACK phase.
+The example advertises `TransportCapability::TIMEOUT` and
+`TransportCapability::BUS_ERROR`; it does not advertise `READ_HEADER_NACK`
+because the standard IDF receive API does not prove the NACK phase.
 
 ## Validation
 

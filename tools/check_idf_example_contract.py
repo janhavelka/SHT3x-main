@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -48,22 +49,33 @@ def main() -> int:
         + idf_cmake.read_text(encoding="utf-8", errors="replace")
     )
     for token in FORBIDDEN_IDF_TOKENS:
-        if token in combined_idf:
+        if token in {"TwoWire", "String", "Serial", "ArduinoCompat", "IdfArduinoCompat"}:
+            found = re.search(rf"\b{re.escape(token)}\b", combined_idf) is not None
+        else:
+            found = token in combined_idf
+        if found:
             fail(f"IDF example uses forbidden Arduino/compat token: {token}")
     if "driver/i2c.h" in combined_idf:
         fail("IDF example must use driver/i2c_master.h, not legacy driver/i2c.h")
 
     for needle in (
-        "Sht3xCli.h",
-        "sht3x_cli::processCommand",
-        "sht3x_cli::tick",
-        "sht3x_cli::printPrompt",
+        'extern "C" void app_main(void)',
+        "handleCommandLine",
+        "char buffer[LINE_LEN]",
+        "std::fgets",
         "i2c_master_probe",
         "driver/i2c_master.h",
+        "esp_timer_get_time",
+        "vTaskDelay",
     ):
         require_text(idf_main, needle)
 
-    require_text(idf_cmake, "../../../common/Sht3xCli.cpp")
+    if "../../../common/Sht3xCli.cpp" in idf_cmake.read_text(
+        encoding="utf-8", errors="replace"
+    ):
+        fail("IDF example must not compile examples/common/Sht3xCli.cpp")
+    for component in ("SHT3x-main", "esp_driver_i2c", "esp_timer", "freertos", "vfs"):
+        require_text(idf_cmake, component)
     require_text(idf_transport, "i2c_master_transmit")
     require_text(idf_transport, "i2c_master_receive")
 

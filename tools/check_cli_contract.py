@@ -80,8 +80,11 @@ def main() -> int:
 
     if "Sht3xCli.h" not in arduino_text:
         fail("Arduino example must use shared Sht3xCli.h")
-    if "Sht3xCli.h" not in idf_text:
-        fail("ESP-IDF example must use shared Sht3xCli.h")
+    if "Sht3xCli.h" in idf_text:
+        fail("ESP-IDF example must not include shared Sht3xCli.h")
+    for token in ('extern "C" void app_main(void)', "handleCommandLine", "std::fgets"):
+        if token not in idf_text:
+            fail(f"ESP-IDF native CLI token missing: {token}")
 
     for cmd in MANDATORY_COMMANDS:
         if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
@@ -90,6 +93,8 @@ def main() -> int:
     for item in MANDATORY_HELP_ITEMS:
         if item not in text:
             fail(f"mandatory help item '{item}' missing in {shared_cli.as_posix()}")
+        if item not in idf_text:
+            fail(f"mandatory help item '{item}' missing in ESP-IDF native CLI")
 
     if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
         fail("either 'cfg' or 'settings' command must be present")
