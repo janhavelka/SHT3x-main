@@ -1,10 +1,11 @@
 # SHT3x Driver Library
 
-Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO).
+Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO and ESP-IDF component use).
 
 ## Features
 
 - **Injected I2C transport** - no Wire dependency in library code
+- **Framework-neutral core** - Arduino and ESP-IDF integration live behind callbacks/adapters
 - **CRC validation** - all 16-bit data words verified
 - **Alert mode support** - read/write limits, encode/decode helpers
 - **Periodic + ART modes** - 0.5/1/2/4/10 mps and ART
@@ -25,6 +26,21 @@ lib_deps =
 ### Manual
 
 Copy `include/SHT3x/` and `src/` to your project.
+
+### ESP-IDF Component
+
+The repository root can be used as an ESP-IDF component through
+`EXTRA_COMPONENT_DIRS` or your component manager workflow. The core driver owns
+no I2C bus, pins, reset GPIO, logging, or scheduler policy; applications provide
+transport and timing callbacks through `SHT3x::Config`.
+
+The core component does not include Arduino or ESP-IDF framework headers.
+Applications must inject `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield` so command spacing, reset delays, and timeout
+deadlines follow the application scheduler.
+
+See `examples/idf/basic` for an ESP-IDF v6-style `i2c_master` adapter and the
+same interactive CLI command surface used by the Arduino bringup example.
 
 ## Quick Start
 
@@ -94,6 +110,10 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
 
 SHT3x::SHT3x device;
 
+uint32_t appNowMs(void*) { return millis(); }
+uint32_t appNowUs(void*) { return micros(); }
+void appYield(void*) { yield(); }
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(8, 9);  // SDA, SCL
@@ -104,6 +124,9 @@ void setup() {
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = appNowMs;
+  cfg.nowUs = appNowUs;
+  cfg.cooperativeYield = appYield;
   cfg.i2cAddress = 0x44;
   cfg.transportCapabilities = SHT3x::TransportCapability::NONE;
 
@@ -163,6 +186,11 @@ void loop() {
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
 | `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings. |
+
+`begin()` requires `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield`. Without those callbacks the driver cannot enforce
+the SHT3x tIDLE command spacing or reset delays deterministically, so startup
+fails with `INVALID_CONFIG`.
 
 ### Configuration and Diagnostics
 
@@ -356,19 +384,22 @@ if (device.readSettings(snap).ok()) {
 
 ## Examples
 
-- `01_basic_bringup_cli/` - Interactive CLI for testing
+- `01_basic_bringup_cli/` - Arduino interactive CLI for testing
+- `idf/basic/` - ESP-IDF interactive CLI using the new `i2c_master` driver
 
-The bringup CLI covers the full driver surface, including mode control, serial-number
-readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
-command helpers (`command write`, `command write_data`, `command read`), and
-stress/self-test commands. Help output is generated through the shared
-`CliStyle.h` helpers so command sections stay aligned with the sibling
-libraries.
+The Arduino bringup CLI covers the full driver surface, including mode control,
+serial-number readout, alert-limit helpers, recovery/reset flows, cached
+settings snapshots, direct command helpers (`command write`,
+`command write_data`, `command read`), and stress/self-test commands. The
+ESP-IDF example uses a separate native fixed-buffer command loop with the same
+driver scenarios, native `i2c_master` ownership, ESP-IDF logging, FreeRTOS
+timing, and no Arduino compatibility facades in the IDF build path.
 
 ## Documentation
 
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `docs/IDF_PORT_IMPLEMENTATION.md` - implemented IDF component/example notes
 - `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
 - `docs/Sensirion_electronic_identification_code_SHT3x.pdf` - serial-number / EIC reference
 - `docs/SHT3x_driver_extraction.md` - driver split and extraction notes

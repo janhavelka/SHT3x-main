@@ -5,7 +5,8 @@
 
 #include "SHT3x/SHT3x.h"
 
-#include <Arduino.h>
+#include "PlatformTime.h"
+
 #include <cstring>
 #include <limits>
 #include <cmath>
@@ -46,18 +47,18 @@ private:
 };
 
 static uint32_t _nowMs(const Config& cfg) {
-  return (cfg.nowMs != nullptr) ? cfg.nowMs(cfg.timeUser) : millis();
+  return (cfg.nowMs != nullptr) ? cfg.nowMs(cfg.timeUser) : platform::nowMs();
 }
 
 static uint32_t _nowUs(const Config& cfg) {
-  return (cfg.nowUs != nullptr) ? cfg.nowUs(cfg.timeUser) : micros();
+  return (cfg.nowUs != nullptr) ? cfg.nowUs(cfg.timeUser) : platform::nowUs();
 }
 
 static void _cooperativeYield(const Config& cfg) {
   if (cfg.cooperativeYield != nullptr) {
     cfg.cooperativeYield(cfg.timeUser);
   } else {
-    yield();
+    platform::cooperativeYield();
   }
 }
 
@@ -185,6 +186,10 @@ Status SHT3x::begin(const Config& config) {
   }
   if (config.recoverBackoffMs > MAX_RECOVER_BACKOFF_MS) {
     return Status::Error(Err::INVALID_CONFIG, "Recover backoff too large");
+  }
+  if (config.nowMs == nullptr || config.nowUs == nullptr ||
+      config.cooperativeYield == nullptr) {
+    return Status::Error(Err::INVALID_CONFIG, "Timing callbacks not set");
   }
 
   _config = config;
