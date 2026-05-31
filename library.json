@@ -1,7 +1,7 @@
 {
   "name": "SHT3x",
   "version": "1.5.0",
-  "description": "Production-grade SHT3x temperature/humidity sensor driver.",
+  "description": "Deterministic SHT3x temperature/humidity sensor driver for ESP32.",
   "keywords": [
     "sht3x",
     "sht30",
@@ -30,7 +30,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/janhavelka/SHT3x.git"
+    "url": "https://github.com/janhavelka/SHT3x-main.git"
   },
   "license": "MIT",
   "homepage": "https://www.thymos.cz",
