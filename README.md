@@ -542,6 +542,9 @@ first because relative humidity is temperature-dependent.
 - `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - detailed board/fixture validation procedures
 - `docs/SHT3X_HIL_RUNBOOK.md` - operator runbook for full hardware-in-loop validation
 - `docs/SHT3X_HIL_LOG_TEMPLATE.md` - structured capture template for HIL logs
+- `docs/SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial HIL runner procedure
+- `docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - copy-paste target profile for runner evidence
+- `docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md` - runner implementation and validation report
 - `docs/SHT3X_PRE_HIL_READINESS_REPORT.md` - latest pre-HIL readiness gate report
 - `docs/SHT3X_ALERT_STATUS_FIX_REPORT.md` - ALERT/status behavior and helper design
 - `docs/SHT3X_IDF_CI_DOCS_REPORT.md` - ESP-IDF CI/docs hardening report

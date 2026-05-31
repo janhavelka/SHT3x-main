@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardware validation matrix and API latency/transaction documentation.
 - Pre-HIL runbook, HIL log template, and readiness report to keep hardware
   validation evidence explicit and auditable.
+- Host-side serial I2C HIL runner, contract guard, target template, and
+  self-test report for auditor-ready hardware evidence capture.
 - Framework-neutral private timing/yield shim; real timing is supplied by application callbacks.
 - `docs/IDF_PORT_IMPLEMENTATION.md` with the implemented port structure, validation notes, and remaining hardware checks.
 

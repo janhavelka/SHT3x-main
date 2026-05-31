@@ -51,6 +51,7 @@ wifi_credentials.h
 *.tmp
 *.bak
 *.log
+hil_logs/
 
 # Auto-generated files
 include/SHT3x/Version.h

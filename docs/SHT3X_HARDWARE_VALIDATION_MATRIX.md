@@ -17,6 +17,9 @@ and ALERT GPIO or logic-analyzer capture where applicable.
 The exact operator sequence, output patterns, pass/fail criteria, restore steps,
 and log naming convention are defined in `docs/SHT3X_HIL_RUNBOOK.md`. This
 matrix is a planning index; the runbook is the HIL execution contract.
+The host-side serial evidence runner is `tools/run_i2c_hil.py`; its
+auditor-facing default command contract is documented in
+`docs/SHT3X_I2C_HIL_RUNBOOK.md`.
 
 Default example assumptions: SDA GPIO8, SCL GPIO9, 400 kHz I2C, SHT3x address
 `0x44`. The stock examples are diagnostic bring-up CLIs, not production
