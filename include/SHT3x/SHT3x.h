@@ -86,7 +86,10 @@ struct StatusReadSnapshot {
   bool restored = true;                                       ///< True when no restore was needed or restore succeeded
 };
 
-/// Cached sensor settings for restore-after-reset (RAM only)
+/// Cached sensor settings for restore-after-reset (RAM only).
+/// @note This is a write-through restore plan, not a live hardware snapshot.
+///       Alert entries become valid only after successful driver writes; reads
+///       from hardware do not populate this cache.
 struct CachedSettings {
   Mode mode = Mode::SINGLE_SHOT;                              ///< Mode to restore after reset
   Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Repeatability to restore
@@ -119,11 +122,19 @@ struct AlertLimit {
 /// into normal task/loop context.
 class SHT3x {
 public:
+  SHT3x() = default;
+  SHT3x(const SHT3x&) = delete;
+  SHT3x& operator=(const SHT3x&) = delete;
+  SHT3x(SHT3x&&) = delete;
+  SHT3x& operator=(SHT3x&&) = delete;
+
   // =========================================================================
   // Lifecycle
   // =========================================================================
 
-  /// Initialize the driver with configuration
+  /// Initialize the driver with configuration.
+  /// @note Performs multiple bounded transactions: best-effort Break, soft
+  ///       reset, status probe, and optional periodic/ART start from config.
   /// @param config Configuration including transport callbacks
   /// @return Status::Ok() on success, error otherwise
   Status begin(const Config& config);
@@ -150,14 +161,22 @@ public:
   /// @return Status::Ok() if device responds, error otherwise
   Status probe();
 
-  /// Attempt to recover from DEGRADED/OFFLINE state
+  /// Attempt to recover from DEGRADED/OFFLINE state.
+  /// @note May run multiple bounded transactions through the configured
+  ///       recovery ladder. General-call reset is used only when explicitly
+  ///       enabled because it affects all supporting devices on the bus.
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
 
-  /// Reset sensor to defaults (no restore)
+  /// Reset sensor to defaults (no restore).
+  /// @note May run multiple recovery transactions before resetting the local
+  ///       cache to defaults.
   Status resetToDefaults();
 
-  /// Reset sensor and restore cached settings
+  /// Reset sensor and restore cached settings.
+  /// @note Multi-step operation. Cached settings remain the desired state and
+  ///       are updated only by successful setters; a failure can leave hardware
+  ///       partially restored while the returned Status identifies the step.
   Status resetAndRestore();
 
   // =========================================================================
@@ -183,13 +202,13 @@ public:
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful I2C operation
+  /// Timestamp of last successful tracked I2C operation after begin()
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed I2C operation
+  /// Timestamp of last failed tracked I2C operation after begin()
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
-  /// Timestamp of last I2C bus activity (success or expected NACK)
+  /// Timestamp of last tracked I2C bus activity after begin() (success or expected NACK)
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
   /// Most recent error status
@@ -211,10 +230,10 @@ public:
   // Measurement API
   // =========================================================================
 
-  /// Request a measurement (non-blocking)
-  /// In SINGLE_SHOT mode: triggers measurement
-  /// In PERIODIC/ART mode: schedules next fetch
-  /// Returns IN_PROGRESS if measurement started, BUSY if already pending
+  /// Request a measurement (non-blocking).
+  /// In SINGLE_SHOT mode: sends one command and schedules readiness.
+  /// In PERIODIC/ART mode: schedules the next Fetch Data read for tick().
+  /// Returns IN_PROGRESS if measurement started/scheduled, BUSY if already pending.
   Status requestMeasurement();
 
   /// Check if measurement is ready to read
@@ -255,7 +274,9 @@ public:
   // Configuration
   // =========================================================================
 
-  /// Set operating mode (SINGLE_SHOT, PERIODIC, ART)
+  /// Set operating mode (SINGLE_SHOT, PERIODIC, ART).
+  /// @note Switching into or out of periodic/ART can send Break and/or start
+  ///       commands; cached mode is updated only after success.
   Status setMode(Mode mode);
 
   /// Get current operating mode
@@ -264,7 +285,8 @@ public:
   /// Get a snapshot of current settings/state (no I2C)
   Status getSettings(SettingsSnapshot& out) const;
 
-  /// Get cached settings for restore-after-reset
+  /// Get cached settings for restore-after-reset.
+  /// @note This is the driver's desired restore plan, not a live sensor readback.
   CachedSettings getCachedSettings() const { return _cachedSettings; }
 
   /// Check if cached settings are available
@@ -279,12 +301,12 @@ public:
   // Low-Level Command Access
   // =========================================================================
 
-  /// Issue a raw 16-bit command using the tracked transport path.
+  /// Issue one raw 16-bit command using the tracked transport path.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @return Status::Ok() on success, error otherwise
   Status writeCommand(uint16_t command);
 
-  /// Issue a raw 16-bit command followed by a packed 16-bit data word.
+  /// Issue one raw 16-bit command followed by a packed 16-bit data word.
   /// The CRC byte is computed internally.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @param data Packed 16-bit payload word
@@ -304,6 +326,9 @@ public:
 
   /// Set measurement repeatability; active periodic/ART modes are restarted and
   /// cached settings are updated only after the restart succeeds.
+  /// @note If stopping an active periodic/ART mode succeeds but the restart
+  ///       command fails, the sensor and driver are left in single-shot idle
+  ///       while cached settings still describe the last fully applied plan.
   Status setRepeatability(Repeatability rep);
 
   /// Get current repeatability
@@ -317,18 +342,27 @@ public:
 
   /// Set periodic rate; active periodic/ART modes are restarted and cached
   /// settings are updated only after the restart succeeds.
+  /// @note If stopping an active periodic/ART mode succeeds but the restart
+  ///       command fails, the sensor and driver are left in single-shot idle
+  ///       while cached settings still describe the last fully applied plan.
   Status setPeriodicRate(PeriodicRate rate);
 
   /// Get current periodic rate
   Status getPeriodicRate(PeriodicRate& out) const;
 
-  /// Start periodic measurements
+  /// Start periodic measurements.
+  /// @note Sends one start command when idle. If already in periodic/ART, it
+  ///       first sends Break and only updates cached settings after success.
   Status startPeriodic(PeriodicRate rate, Repeatability rep);
 
-  /// Start ART (accelerated response time) mode
+  /// Start ART (accelerated response time) mode.
+  /// @note Sends one ART command when idle. If already in periodic/ART, it
+  ///       first sends Break and only updates cached settings after success.
   Status startArt();
 
-  /// Stop periodic/ART mode (Break)
+  /// Stop periodic/ART mode (Break).
+  /// @note Sends one Break command when active. After Break is accepted, local
+  ///       state is updated before the bounded 1 ms processing wait.
   Status stopPeriodic();
 
   // =========================================================================
@@ -356,19 +390,26 @@ public:
   /// @note Returns BUSY while periodic/ART acquisition is active.
   Status clearStatus();
 
-  /// Enable/disable heater
+  /// Enable/disable heater.
+  /// @note Sends one command; cached heater state is updated only after success.
   Status setHeater(bool enable);
 
   /// Read heater state from status register
   Status readHeaterStatus(bool& enabled);
 
-  /// Soft reset the device
+  /// Soft reset the device.
+  /// @note Sends one reset command and waits the bounded reset delay. Returns
+  ///       BUSY while periodic/ART is active.
   Status softReset();
 
-  /// Interface reset sequence (SCL pulse recovery)
+  /// Interface reset sequence (SCL pulse recovery).
+  /// @note Uses the application-provided bus reset callback. The callback must
+  ///       not recursively call into the same SHT3x instance.
   Status interfaceReset();
 
-  /// General call reset (bus-wide)
+  /// General call reset (bus-wide).
+  /// @note Resets every supporting device on the bus and is therefore an
+  ///       application/bus-manager decision guarded by Config::allowGeneralCallReset.
   Status generalCallReset();
 
   // =========================================================================
@@ -401,7 +442,9 @@ public:
   /// @note Returns BUSY in active periodic/ART mode.
   Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
 
-  /// Disable alerts by setting LowSet > HighSet
+  /// Disable alerts by setting LowSet > HighSet.
+  /// @note Multi-step operation: HIGH_SET is written before LOW_SET. If LOW_SET
+  ///       fails, HIGH_SET may already be applied and cached.
   Status disableAlerts();
 
   // =========================================================================

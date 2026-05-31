@@ -37,6 +37,8 @@ inline constexpr bool hasCapability(TransportCapability caps, TransportCapabilit
 ///         - Err::I2C_TIMEOUT (timeout)
 ///         - Err::I2C_BUS (bus/arbitration error)
 ///         - Err::I2C_ERROR (unspecified I2C error)
+/// @note Callbacks must not recursively call public APIs on the same SHT3x
+///       instance. Serialize any shared bus access outside the driver.
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
@@ -58,6 +60,8 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @note The driver issues command writes via i2cWrite() and then calls
 ///       i2cWriteRead() with txLen==0 to perform the read after a tIDLE delay.
 ///       Combined write+read (repeated-start) is not allowed for SHT3x flows.
+///       Callbacks must not recursively call public APIs on the same SHT3x
+///       instance. Serialize any shared bus access outside the driver.
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
@@ -65,11 +69,13 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
 /// Optional bus reset callback (SCL pulse sequence)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
+/// @note Must not recursively call public APIs on the same SHT3x instance.
 using BusResetFn = Status (*)(void* user);
 
 /// Optional hard reset callback (nRESET pulse)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
+/// @note Must not recursively call public APIs on the same SHT3x instance.
 using HardResetFn = Status (*)(void* user);
 
 /// Millisecond timestamp callback.
