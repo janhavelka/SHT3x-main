@@ -1,6 +1,6 @@
 # SHT3x ESP-IDF Port Implementation
 
-Last updated: 2026-05-19
+Last updated: 2026-05-31
 
 ## Implemented
 
@@ -16,6 +16,11 @@ Last updated: 2026-05-19
   - a native fixed-buffer command loop that covers the same driver scenarios as
     `examples/01_basic_bringup_cli` without compiling `examples/common/Sht3xCli.*`
     or Arduino compatibility facades into the IDF example.
+  - a single-owner `app_main` loop that keeps calling `tick()` while a separate
+    input task waits on stdin.
+  - no general-call reset handle; production applications that enable
+    general-call reset must create and route an application-owned `0x00` device
+    handle.
 
 ## Core Boundary
 
@@ -42,18 +47,24 @@ because the standard IDF receive API does not prove the NACK phase.
 
 ## Validation
 
+CI is configured to run `tools/check_idf_example_contract.py` directly and build
+`examples/idf/basic` for `esp32s3` and `esp32s2` using
+`espressif/idf:release-v5.4`. Confirm the latest live CI logs before claiming an
+ESP-IDF validation pass. Local validation should still record the exact ESP-IDF
+version and whether `idf.py` was available.
+
 Run these checks from the repository root:
 
 ```bash
 python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
-pio test -e native
-pio run -e esp32s3dev
-pio run -e esp32s2dev
+python -m platformio test -e native
+python -m platformio run -e esp32s3dev
+python -m platformio run -e esp32s2dev
 ```
 
-Run these checks from `examples/idf/basic` in an ESP-IDF v6 environment:
+Run these checks from `examples/idf/basic` in an ESP-IDF 5.4+ environment:
 
 ```bash
 idf.py set-target esp32s3
@@ -68,3 +79,7 @@ idf.py build
 - Verify single-shot non-stretch and periodic fetch behavior against expected ranges.
 - Verify CRC fault handling, reset callbacks, alert limit round trips, and heater status.
 - Verify recovery behavior with injected I2C timeout and NACK failures.
+- Verify ALERT pin/status behavior during periodic mode with
+  `readStatusWithModeRestore()` and explicit `clearStatus()`.
+- Capture production humidity fixture data as described in
+  `docs/HARDWARE_VALIDATION.md`; ambient testing alone is not an accuracy claim.

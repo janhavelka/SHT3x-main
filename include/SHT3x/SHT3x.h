@@ -40,13 +40,13 @@ struct CompensatedSample {
 /// Parsed status register
 struct StatusRegister {
   uint16_t raw = 0;            ///< Raw 16-bit status register value
-  bool alertPending = false;   ///< ALERT_PENDING flag
-  bool heaterOn = false;       ///< HEATER_ON flag
-  bool rhAlert = false;        ///< Humidity alert event flag
-  bool tAlert = false;         ///< Temperature alert event flag
-  bool resetDetected = false;  ///< Reset-detected flag
-  bool commandError = false;   ///< Last command was rejected by the sensor
-  bool writeCrcError = false;  ///< Last command payload failed CRC validation
+  bool alertPending = false;   ///< Bit 15, alert pending; cleared by clearStatus()
+  bool heaterOn = false;       ///< Bit 13, heater status; not cleared by clearStatus()
+  bool rhAlert = false;        ///< Bit 11, humidity alert event; cleared by clearStatus()
+  bool tAlert = false;         ///< Bit 10, temperature alert event; cleared by clearStatus()
+  bool resetDetected = false;  ///< Bit 4, reset detected; cleared by clearStatus()
+  bool commandError = false;   ///< Bit 1, last command rejected; not cleared by clearStatus()
+  bool writeCrcError = false;  ///< Bit 0, last write payload CRC failed; not cleared by clearStatus()
 };
 
 /// Snapshot of driver configuration and state
@@ -70,9 +70,26 @@ struct SettingsSnapshot {
   uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
   StatusRegister status = {};                                 ///< Parsed status-register snapshot when available
   bool statusValid = false;                                   ///< True if status was read successfully for this snapshot
+  Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of the status-read attempt
 };
 
-/// Cached sensor settings for restore-after-reset (RAM only)
+/// Result for status reads that may temporarily stop periodic/ART acquisition
+struct StatusReadSnapshot {
+  StatusRegister status = {};                                 ///< Parsed status register when statusValid is true
+  bool statusValid = false;                                   ///< True if the status read succeeded
+  Status stopStatus = Status::Ok();                           ///< Break/stop result; OK when no stop was needed
+  Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of status read step
+  Status restoreStatus = Status::Ok();                        ///< Restore result; OK when no restore was needed
+  Mode initialMode = Mode::SINGLE_SHOT;                       ///< Mode observed before the operation
+  Mode finalMode = Mode::SINGLE_SHOT;                         ///< Mode after all attempted steps
+  bool modeInterrupted = false;                               ///< True when periodic/ART was stopped for this read
+  bool restored = true;                                       ///< True when no restore was needed or restore succeeded
+};
+
+/// Cached sensor settings for restore-after-reset (RAM only).
+/// @note This is a write-through restore plan, not a live hardware snapshot.
+///       Alert entries become valid only after successful driver writes; reads
+///       from hardware do not populate this cache.
 struct CachedSettings {
   Mode mode = Mode::SINGLE_SHOT;                              ///< Mode to restore after reset
   Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Repeatability to restore
@@ -98,20 +115,36 @@ struct AlertLimit {
   float humidityPct = 0.0f;  ///< Approximate humidity threshold
 };
 
-/// SHT3x driver class
+/// SHT3x driver class.
+///
+/// Public APIs are synchronous, not ISR-safe, and not internally thread-safe.
+/// Serialize access externally and use interrupt handlers only to signal work
+/// into normal task/loop context.
 class SHT3x {
 public:
+  SHT3x() = default;
+  SHT3x(const SHT3x&) = delete;
+  SHT3x& operator=(const SHT3x&) = delete;
+  SHT3x(SHT3x&&) = delete;
+  SHT3x& operator=(SHT3x&&) = delete;
+
   // =========================================================================
   // Lifecycle
   // =========================================================================
 
-  /// Initialize the driver with configuration
+  /// Initialize the driver with configuration.
+  /// @note Performs multiple bounded transactions: best-effort Break, soft
+  ///       reset, status probe, and optional periodic/ART start from config.
   /// @param config Configuration including transport callbacks
   /// @return Status::Ok() on success, error otherwise
   Status begin(const Config& config);
 
-  /// Process pending operations (call regularly from loop)
-  /// @param nowMs Current timestamp in milliseconds
+  /// Process pending measurement work.
+  /// @note This function is bounded, but it may perform one synchronous I2C
+  ///       transaction when a previously requested sample is due. In OFFLINE it
+  ///       clears pending measurement state and does not touch the bus.
+  /// @param nowMs Current timestamp from the same wrapping millisecond timebase
+  ///              used by Config::nowMs
   void tick(uint32_t nowMs);
 
   /// Shutdown the driver and release resources
@@ -120,7 +153,9 @@ public:
   /// Check if begin() completed successfully and end() has not been called
   bool isInitialized() const { return _initialized; }
 
-  /// Get the active configuration snapshot
+  /// Get the active normalized configuration reference.
+  /// @note The returned reference is owned by the driver and remains valid
+  ///       until the next begin() or end().
   const Config& getConfig() const { return _config; }
 
   // =========================================================================
@@ -131,14 +166,24 @@ public:
   /// @return Status::Ok() if device responds, error otherwise
   Status probe();
 
-  /// Attempt to recover from DEGRADED/OFFLINE state
+  /// Attempt to recover from DEGRADED/OFFLINE state.
+  /// @note May run multiple bounded transactions through the configured
+  ///       recovery ladder. General-call reset is used only when explicitly
+  ///       enabled because it affects all supporting devices on the bus.
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
 
-  /// Reset sensor to defaults (no restore)
+  /// Recover communication and reset the driver's desired settings to defaults.
+  /// @note This calls the recovery ladder, sets a safe single-shot baseline,
+  ///       and resets the local restore cache to defaults. The recovery ladder
+  ///       may stop after a successful probe without issuing a sensor reset.
   Status resetToDefaults();
 
-  /// Reset sensor and restore cached settings
+  /// Recover communication and reapply cached settings.
+  /// @note This calls the recovery ladder, sets a safe single-shot baseline,
+  ///       then reapplies cached settings. The recovery ladder may stop after a
+  ///       successful probe without issuing a sensor reset. A failure can leave
+  ///       hardware partially restored while the returned Status identifies the step.
   Status resetAndRestore();
 
   // =========================================================================
@@ -164,13 +209,14 @@ public:
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful I2C operation
+  /// Timestamp of last successful tracked I2C operation after begin()
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed I2C operation
+  /// Timestamp of last failed tracked I2C operation after begin()
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
-  /// Timestamp of last I2C bus activity (success or expected NACK)
+  /// Timestamp of last tracked I2C attempt after begin().
+  /// @note Includes successes, failures, and expected read-header NACKs.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
   /// Most recent error status
@@ -192,10 +238,11 @@ public:
   // Measurement API
   // =========================================================================
 
-  /// Request a measurement (non-blocking)
-  /// In SINGLE_SHOT mode: triggers measurement
-  /// In PERIODIC/ART mode: schedules next fetch
-  /// Returns IN_PROGRESS if measurement started, BUSY if already pending
+  /// Request or schedule a measurement.
+  /// @note In SINGLE_SHOT mode this sends one bounded I2C command immediately
+  ///       and schedules the later read for tick(). In PERIODIC/ART mode this
+  ///       schedules the next Fetch Data operation for tick().
+  /// @return IN_PROGRESS if measurement started/scheduled, BUSY if already pending, or an error.
   Status requestMeasurement();
 
   /// Check if measurement is ready to read
@@ -236,7 +283,9 @@ public:
   // Configuration
   // =========================================================================
 
-  /// Set operating mode (SINGLE_SHOT, PERIODIC, ART)
+  /// Set operating mode (SINGLE_SHOT, PERIODIC, ART).
+  /// @note Switching into or out of periodic/ART can send Break and/or start
+  ///       commands; cached mode is updated only after success.
   Status setMode(Mode mode);
 
   /// Get current operating mode
@@ -245,27 +294,30 @@ public:
   /// Get a snapshot of current settings/state (no I2C)
   Status getSettings(SettingsSnapshot& out) const;
 
-  /// Get cached settings for restore-after-reset
+  /// Get cached settings for restore-after-reset.
+  /// @note This is the driver's desired restore plan, not a live sensor readback.
   CachedSettings getCachedSettings() const { return _cachedSettings; }
 
   /// Check if cached settings are available
   bool hasCachedSettings() const { return _hasCachedSettings; }
 
-  /// Get a snapshot of settings/state and attempt to read status register
-  /// statusValid is true only if the status read succeeds. If periodic mode
-  /// blocks status reads, this returns OK with statusValid=false.
+  /// Get a snapshot of settings/state and attempt a non-disruptive status read.
+  /// statusValid is true only if the status read succeeds; statusReadStatus
+  /// records the exact status-read result when it does not.
+  /// @note In active periodic/ART mode the status read is not issued; the
+  ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
   // Low-Level Command Access
   // =========================================================================
 
-  /// Issue a raw 16-bit command using the tracked transport path.
+  /// Issue one raw 16-bit command using the tracked transport path.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @return Status::Ok() on success, error otherwise
   Status writeCommand(uint16_t command);
 
-  /// Issue a raw 16-bit command followed by a packed 16-bit data word.
+  /// Issue one raw 16-bit command followed by a packed 16-bit data word.
   /// The CRC byte is computed internally.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @param data Packed 16-bit payload word
@@ -285,12 +337,16 @@ public:
 
   /// Set measurement repeatability; active periodic/ART modes are restarted and
   /// cached settings are updated only after the restart succeeds.
+  /// @note If stopping an active periodic/ART mode succeeds but the restart
+  ///       command fails, the sensor and driver are left in single-shot idle
+  ///       while cached settings still describe the last fully applied plan.
   Status setRepeatability(Repeatability rep);
 
   /// Get current repeatability
   Status getRepeatability(Repeatability& out) const;
 
-  /// Set clock stretching mode (single-shot/serial reads)
+  /// Set clock stretching mode for single-shot measurement and serial-number reads.
+  /// @note Periodic/ART modes use Fetch Data and do not use this setting.
   Status setClockStretching(ClockStretching stretch);
 
   /// Get current clock stretching mode
@@ -298,53 +354,91 @@ public:
 
   /// Set periodic rate; active periodic/ART modes are restarted and cached
   /// settings are updated only after the restart succeeds.
+  /// @note If stopping an active periodic/ART mode succeeds but the restart
+  ///       command fails, the sensor and driver are left in single-shot idle
+  ///       while cached settings still describe the last fully applied plan.
   Status setPeriodicRate(PeriodicRate rate);
 
   /// Get current periodic rate
   Status getPeriodicRate(PeriodicRate& out) const;
 
-  /// Start periodic measurements
+  /// Start periodic measurements.
+  /// @note Sends one start command when idle. If already in periodic/ART, it
+  ///       first sends Break and only updates cached settings after success.
   Status startPeriodic(PeriodicRate rate, Repeatability rep);
 
-  /// Start ART (accelerated response time) mode
+  /// Start ART (accelerated response time) mode.
+  /// @note Sends one ART command when idle. If already in periodic/ART, it
+  ///       first sends Break and only updates cached settings after success.
   Status startArt();
 
-  /// Stop periodic/ART mode (Break)
+  /// Stop periodic/ART mode (Break).
+  /// @note Sends one Break command when active. After Break is accepted, local
+  ///       state is updated before the bounded 1 ms processing wait.
   Status stopPeriodic();
 
   // =========================================================================
   // Status / Heater / Resets
   // =========================================================================
 
-  /// Read raw status register
+  /// Read raw status register without clearing flags.
+  /// @note Returns BUSY while periodic/ART acquisition is active; use
+  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
   Status readStatus(uint16_t& raw);
 
-  /// Read and parse status register
+  /// Read and parse status register without clearing flags.
+  /// @note Returns BUSY while periodic/ART acquisition is active; use
+  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
   Status readStatus(StatusRegister& out);
 
-  /// Clear status flags
+  /// Read status, breaking and restoring periodic/ART mode when needed.
+  /// @note This is disruptive in periodic/ART mode: it sends Break, aborts the
+  ///       current acquisition cadence, reads status, and attempts to restore
+  ///       the prior periodic or ART mode. Inspect the snapshot for partial
+  ///       stop/read/restore results when this returns an error.
+  Status readStatusWithModeRestore(StatusReadSnapshot& out);
+
+  /// Clear status flags. This is destructive for status bits 15, 11, 10, and 4.
+  /// @note Returns BUSY while periodic/ART acquisition is active.
   Status clearStatus();
 
-  /// Enable/disable heater
+  /// Enable/disable heater.
+  /// @note The heater is intended for plausibility checks and condensation
+  ///       mitigation workflows, not normal measurement. Self-heating can affect
+  ///       temperature and humidity readings. Stop periodic/ART before changing
+  ///       it. Cached heater state is updated only after success.
   Status setHeater(bool enable);
 
-  /// Read heater state from status register
+  /// Read heater state from status register.
+  /// @note Follows readStatus() restrictions in active periodic/ART mode.
   Status readHeaterStatus(bool& enabled);
 
-  /// Soft reset the device
+  /// Soft reset the device.
+  /// @note Sends one reset command and waits the bounded reset delay. Returns
+  ///       BUSY while periodic/ART is active.
   Status softReset();
 
-  /// Interface reset sequence (SCL pulse recovery)
+  /// Interface reset sequence (SCL pulse recovery).
+  /// @note Uses the application-provided bus reset callback. The callback must
+  ///       not recursively call into the same SHT3x instance.
   Status interfaceReset();
 
-  /// General call reset (bus-wide)
+  /// General call reset (bus-wide).
+  /// @note Resets every supporting device on the bus and is therefore an
+  ///       application/bus-manager decision guarded by Config::allowGeneralCallReset.
   Status generalCallReset();
 
   // =========================================================================
   // Serial Number
   // =========================================================================
 
-  /// Read electronic identification code (serial number)
+  /// Read electronic identification code (serial number).
+  /// @param[out] serial 32-bit serial/EIC value assembled from two CRC-checked words
+  /// @param stretch Command family to use for this read
+  /// @return Status::Ok() on success, BUSY when measurement or periodic/ART
+  ///         activity blocks the read, CRC_MISMATCH on invalid CRC, or an I2C error.
+  /// @note This proves a CRC-valid SHT3x serial/EIC transaction, not the exact
+  ///       product grade or humidity accuracy.
   Status readSerialNumber(uint32_t& serial,
                           ClockStretching stretch = ClockStretching::STRETCH_DISABLED);
 
@@ -352,49 +446,74 @@ public:
   // Alert Limits
   // =========================================================================
 
-  /// Read raw alert limit word
+  /// Read raw alert limit word.
+  /// @note Alert mode is active during periodic acquisition, but alert-limit
+  ///       commands are not documented as valid while periodic/ART is running.
+  ///       This API returns BUSY in active periodic/ART mode.
   Status readAlertLimitRaw(AlertLimitKind kind, uint16_t& value);
 
-  /// Read and decode alert limit
+  /// Read and decode alert limit.
+  /// @note Returns BUSY in active periodic/ART mode.
   Status readAlertLimit(AlertLimitKind kind, AlertLimit& out);
 
-  /// Write raw alert limit word (CRC is computed internally)
+  /// Write raw alert limit word (CRC is computed internally).
+  /// @note Returns BUSY in active periodic/ART mode.
   Status writeAlertLimitRaw(AlertLimitKind kind, uint16_t value);
 
-  /// Encode and write alert limit from physical values
+  /// Encode and write alert limit from physical values.
+  /// @note Returns BUSY in active periodic/ART mode.
   Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
 
-  /// Disable alerts by setting LowSet > HighSet
+  /// Disable alerts by setting LowSet > HighSet.
+  /// @note Multi-step operation: HIGH_SET is written before LOW_SET. If LOW_SET
+  ///       fails, HIGH_SET may already be applied and cached.
   Status disableAlerts();
 
   // =========================================================================
   // Helpers
   // =========================================================================
 
-  /// Encode alert limit word from physical values
+  /// Encode alert limit word from physical values.
+  /// @param temperatureC Temperature threshold in Celsius
+  /// @param humidityPct Relative humidity threshold in percent
+  /// @return Packed RH7/T9 alert-limit word
+  /// @note Inputs are clamped to the SHT3x representable range. Non-finite
+  ///       values are treated as invalid by writeAlertLimit().
   static uint16_t encodeAlertLimit(float temperatureC, float humidityPct);
 
-  /// Decode alert limit word into physical values
+  /// Decode alert limit word into physical values.
+  /// @param limit Packed RH7/T9 alert-limit word
+  /// @param[out] temperatureC Decoded approximate temperature in Celsius
+  /// @param[out] humidityPct Decoded approximate relative humidity in percent
+  /// @note Alert-limit packing is quantized, so decode is approximate.
   static void decodeAlertLimit(uint16_t limit, float& temperatureC, float& humidityPct);
 
   /// Convert raw temperature to Celsius (float)
+  /// @param raw Raw 16-bit temperature word
+  /// @return Temperature in Celsius
   static float convertTemperatureC(uint16_t raw);
 
   /// Convert raw humidity to percent (float)
+  /// @param raw Raw 16-bit humidity word
+  /// @return Relative humidity in percent
   static float convertHumidityPct(uint16_t raw);
 
   /// Convert raw temperature to Celsius * 100
+  /// @param raw Raw 16-bit temperature word
+  /// @return Temperature in centi-degrees Celsius
   static int32_t convertTemperatureC_x100(uint16_t raw);
 
   /// Convert raw humidity to percent * 100
+  /// @param raw Raw 16-bit humidity word
+  /// @return Relative humidity in centi-percent
   static uint32_t convertHumidityPct_x100(uint16_t raw);
 
   // =========================================================================
   // Timing
   // =========================================================================
 
-  /// Estimate max measurement time based on current repeatability
-  /// Returns time in milliseconds
+  /// Estimate max measurement time based on current repeatability.
+  /// @return Measurement time in milliseconds
   uint32_t estimateMeasurementTimeMs() const;
 
 private:
@@ -482,6 +601,7 @@ private:
   static uint16_t _commandForAlertWrite(AlertLimitKind kind);
   static uint32_t _periodMsForRate(PeriodicRate rate);
   static bool _timeElapsed(uint32_t now, uint32_t target);
+  static void _parseStatusRegister(uint16_t raw, StatusRegister& out);
 
   // =========================================================================
   // State

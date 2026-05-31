@@ -1,18 +1,21 @@
-# SHT3x ESP-IDF v6.0.1 Port Status
+# SHT3x ESP-IDF Port Status
 
-Last updated: 2026-05-19
+Last updated: 2026-05-31
 
-Scope: implemented core portability changes plus an ESP-IDF component/example. Arduino/PlatformIO support remains intact.
+Scope: implemented core portability changes plus an ESP-IDF component and a
+native diagnostic example. Arduino/PlatformIO support remains intact.
 
 Official ESP-IDF references:
 - I2C master driver: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/i2c.html
 - Build system and components: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/build-system.html
-- ESP-IDF v6 peripheral migration notes: https://docs.espressif.com/projects/esp-idf/en/release-v6.0/esp32c3/migration-guides/release-6.x/6.0/peripherals.html
+- ESP-IDF v5.4 Docker image / CI usage: https://hub.docker.com/r/espressif/idf/
 
 ## Current State
 
 - Public API is in `include/SHT3x/`; implementation is in `src/SHT3x.cpp`.
 - `library.json` and `platformio.ini` remain Arduino/PlatformIO package files.
+- `idf_component.yml` declares the ESP-IDF component floor as 5.4 because the
+  example and CI use the new `i2c_master` driver and split driver components.
 - Root `CMakeLists.txt` registers the core as an ESP-IDF component.
 - The driver already uses injected I2C callbacks from `Config`; library code does not call `Wire` directly.
 - Supported addresses are `0x44` and `0x45`.
@@ -44,15 +47,21 @@ Implemented:
 1. The core driver compiles without Arduino or ESP-IDF framework headers.
 2. ESP-IDF timing/yield behavior is injected by the example through `Config::nowMs`, `Config::nowUs`, and `Config::cooperativeYield`.
 3. Root `CMakeLists.txt` provides `idf_component_register`.
-4. `examples/idf/basic` provides an ESP-IDF v6 `i2c_master` adapter.
+4. `examples/idf/basic` provides an ESP-IDF 5.4+ `i2c_master` adapter.
 5. Arduino examples remain separate and are not part of the IDF component target.
-6. The IDF example maps `esp_err_t` values to library `Status` codes and advertises only the timeout capability.
+6. The IDF example maps `esp_err_t` values to library `Status` codes and
+   advertises timeout and bus-error capabilities. It does not advertise
+   read-header NACK capability.
+7. CI is configured to build `examples/idf/basic` with ESP-IDF `release-v5.4`
+   for `esp32s3` and `esp32s2`.
 
 Still application-owned:
 
 1. I2C bus/device creation and destruction.
 2. SDA/SCL pins, pullups, clock speed, reset pins, alert pins, and timeout policy.
 3. Hardware smoke testing on target boards.
+4. Production task ownership, shared-bus locking, telemetry, and recovery
+   policy. The shipped IDF example is a diagnostic bring-up CLI.
 
 ## Exact Files and APIs to Change
 
@@ -91,7 +100,7 @@ Still application-owned:
 
 ## IDF Transport Adapter Contract
 
-Use ESP-IDF v6.0.1's new I2C master driver only:
+Use ESP-IDF 5.4+ with the new I2C master driver:
 
 ```cpp
 #include <driver/i2c_master.h>
@@ -167,15 +176,16 @@ If an IDF adapter is built into an example component, that example should declar
 idf_component_register(
   SRCS "main.cpp" "IdfI2cTransport.cpp"
   INCLUDE_DIRS "."
-  REQUIRES SHT3x-main esp_driver_i2c esp_timer esp_driver_gpio
+  REQUIRES esp_driver_i2c esp_driver_gpio esp_timer freertos vfs
 )
 ```
 
-The component name above assumes the repository directory remains
-`SHT3x-main`. If the port renames or copies the component directory to `SHT3x`,
-update the `REQUIRES` value accordingly. `esp_driver_gpio` is only for example
-GPIO reset/bus-recovery code; do not require GPIO from the core component unless
-the core starts using ESP-IDF GPIO APIs, which it should not.
+The example `main` component intentionally does not name the SHT3x component in
+`REQUIRES`; ESP-IDF's `main` component can use project components without
+tying the build to a checkout directory name. `esp_driver_gpio`, `freertos`,
+and `vfs` are example dependencies for GPIO reset/bus recovery, tasking, and
+console input. Do not require them from the core component unless the core
+starts using those ESP-IDF APIs, which it should not.
 
 Do not compile Arduino-only helpers from `examples/common/` into ESP-IDF
 targets. The ESP-IDF example now uses its own native fixed-buffer CLI; keep
@@ -191,21 +201,26 @@ Arduino examples:
 
 ESP-IDF examples:
 
-- Add `examples/idf/basic` with a normal ESP-IDF `main` component.
+- Keep `examples/idf/basic` as a normal ESP-IDF `main` component.
 - Configure SDA, SCL, pullups, and bus frequency in the example only.
 - Use `i2c_new_master_bus()`, `i2c_master_bus_add_device()`, and the callback adapter.
 - Provide `nowMs`, `nowUs`, and `cooperativeYield` callbacks.
 - Build an `SHT3x::Config`, set callbacks and timeout, and call `begin(config)`.
 - Demonstrate single-shot non-stretch measurement first.
-- Add a separate periodic-mode example or mode switch that calls `tick()` from a task loop.
+- Keep `tick()` running outside blocking stdin input. The current example uses a
+  separate input task and a main owner loop that calls `tick()`.
 - Demonstrate optional hard reset and bus reset only when board pins are configured by the example.
 - Print results with ESP-IDF logging from the example, not from the library.
+- Keep the example single-owner. Shared bus or multi-task applications must add
+  external serialization and any general-call device handle themselves.
 
 ## Test and Validation Plan
 
 - Compile the existing Arduino PlatformIO environments.
 - Compile native tests to preserve framework-neutral behavior.
-- Add an ESP-IDF example build for ESP32-S2 and ESP32-S3.
+- CI is configured to compile the ESP-IDF example for ESP32-S2 and ESP32-S3 with
+  `espressif/idf:release-v5.4`.
+- Run `tools/check_idf_example_contract.py` in CI and locally before IDF builds.
 - Hardware smoke test both valid addresses, `0x44` and `0x45`.
 - Verify command CRC and read CRC failure injection.
 - Verify single-shot non-stretch and, if enabled, clock-stretch modes.
@@ -215,7 +230,7 @@ ESP-IDF examples:
 - Verify soft reset, interface reset, optional general-call reset, optional hard reset, and bus-reset recovery.
 - Verify health transitions on injected timeout/NACK and recovery on later success.
 
-## ESP-IDF v6.0.1 Hazards
+## ESP-IDF Hazards
 
 - Do not include `<driver/i2c.h>` or use legacy APIs such as `i2c_param_config()`, `i2c_driver_install()`, `i2c_cmd_link_create()`, or command-link transactions.
 - Use `<driver/i2c_master.h>` and the `esp_driver_i2c` component dependency.
@@ -233,7 +248,10 @@ ESP-IDF examples:
 3. Add an IDF I2C adapter using `<driver/i2c_master.h>` outside the core driver. Done.
 4. Add optional IDF hard-reset and bus-reset callback examples outside the library. Documented as application-owned.
 5. Add `examples/idf/basic` with bus setup, adapter callbacks, timing callbacks, and CLI parity with the Arduino bringup example. Done.
-6. Build with ESP-IDF v6.0.1 for ESP32-S2 and ESP32-S3. Pending local ESP-IDF environment.
-7. Run Arduino and native builds to confirm existing users are unaffected. Pending local validation.
+6. ESP-IDF 5.4 CI build jobs for ESP32-S2 and ESP32-S3 are added; verify the
+   latest workflow logs before claiming validation.
+7. Run Arduino and native builds to confirm existing users are unaffected. See
+   `docs/IDF_PORT_IMPLEMENTATION.md` and `docs/README.md` for the current
+   validation boundary.
 8. Run hardware tests for probe, CRC, single-shot, periodic mode, resets, alerts, heater, and fault injection. Pending hardware.
 9. Update README and changelog for the implemented port. Done.

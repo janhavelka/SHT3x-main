@@ -8,7 +8,11 @@
 
 namespace SHT3x {
 
-/// Transport capability flags
+/// Transport capability flags.
+/// @note READ_HEADER_NACK changes driver behavior for periodic Fetch Data
+///       readiness. TIMEOUT and BUS_ERROR document transport precision for
+///       diagnostics and future policy; callbacks should still return the most
+///       specific Err value they can prove.
 enum class TransportCapability : uint8_t {
   NONE = 0,
   READ_HEADER_NACK = 1 << 0,   ///< Transport can reliably report read-header NACK
@@ -31,12 +35,15 @@ inline constexpr bool hasCapability(TransportCapability caps, TransportCapabilit
 /// @param len      Number of bytes to write
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure. Transport MUST distinguish:
-///         - Err::I2C_NACK_ADDR (address NACK)
-///         - Err::I2C_NACK_DATA (data NACK)
-///         - Err::I2C_TIMEOUT (timeout)
-///         - Err::I2C_BUS (bus/arbitration error)
-///         - Err::I2C_ERROR (unspecified I2C error)
+/// @return Status indicating success or failure. Return the most specific
+///         transport error the adapter can prove:
+///         - Err::I2C_NACK_ADDR for address NACK
+///         - Err::I2C_NACK_DATA for data NACK
+///         - Err::I2C_TIMEOUT for timeout
+///         - Err::I2C_BUS for bus/arbitration error
+///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
+/// @note Callbacks must not recursively call public APIs on the same SHT3x
+///       instance. Serialize any shared bus access outside the driver.
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
@@ -48,16 +55,19 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @param rxLen    Number of bytes to read
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure. Transport MUST distinguish:
-///         - Err::I2C_NACK_ADDR (address NACK)
-///         - Err::I2C_NACK_DATA (data NACK)
-///         - Err::I2C_NACK_READ (read header NACK / no data)
-///         - Err::I2C_TIMEOUT (timeout)
-///         - Err::I2C_BUS (bus/arbitration error)
-///         - Err::I2C_ERROR (unspecified I2C error)
+/// @return Status indicating success or failure. Return the most specific
+///         transport error the adapter can prove:
+///         - Err::I2C_NACK_ADDR for address NACK
+///         - Err::I2C_NACK_DATA for data NACK
+///         - Err::I2C_NACK_READ only when the adapter can prove read-header NACK
+///         - Err::I2C_TIMEOUT for timeout
+///         - Err::I2C_BUS for bus/arbitration error
+///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
 /// @note The driver issues command writes via i2cWrite() and then calls
 ///       i2cWriteRead() with txLen==0 to perform the read after a tIDLE delay.
 ///       Combined write+read (repeated-start) is not allowed for SHT3x flows.
+///       Callbacks must not recursively call public APIs on the same SHT3x
+///       instance. Serialize any shared bus access outside the driver.
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
@@ -65,11 +75,13 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
 /// Optional bus reset callback (SCL pulse sequence)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
+/// @note Must not recursively call public APIs on the same SHT3x instance.
 using BusResetFn = Status (*)(void* user);
 
 /// Optional hard reset callback (nRESET pulse)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
+/// @note Must not recursively call public APIs on the same SHT3x instance.
 using HardResetFn = Status (*)(void* user);
 
 /// Millisecond timestamp callback.
@@ -93,7 +105,8 @@ enum class Repeatability : uint8_t {
   HIGH_REPEATABILITY = 2
 };
 
-/// Clock stretching mode for single-shot/serial reads
+/// Clock stretching mode for single-shot measurement and serial-number reads.
+/// Periodic and ART modes use Fetch Data and do not use this setting.
 enum class ClockStretching : uint8_t {
   STRETCH_DISABLED = 0,
   STRETCH_ENABLED = 1
@@ -145,7 +158,11 @@ struct Config {
   // === Timing ===
   uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE), 1..1000 ms
 
-  /// Periodic mode not-ready timeout (0 = disabled)
+  /// Periodic mode not-ready timeout (0 = disabled).
+  /// @note Applies only when transportCapabilities includes READ_HEADER_NACK.
+  ///       Before this timeout expires, a proven read-header NACK during
+  ///       periodic Fetch Data is treated as MEASUREMENT_NOT_READY and does not
+  ///       increment health failures.
   uint32_t notReadyTimeoutMs = 0;                     ///< 0..600000 ms
 
   /// Periodic fetch margin (ms) to avoid early fetches (0 = auto, max(2, period/20))

@@ -9,6 +9,21 @@
 *.elf
 *.bin
 *.map
+*.tar.gz
+
+# ESP-IDF local build artifacts
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+compile_commands.json
+examples/idf/basic/build/
+examples/idf/basic/sdkconfig
+examples/idf/basic/sdkconfig.old
+examples/idf/basic/dependencies.lock
+examples/idf/basic/managed_components/
+examples/idf/basic/compile_commands.json
 
 # Python (for scripts/)
 __pycache__/
@@ -36,6 +51,8 @@ wifi_credentials.h
 *.tmp
 *.bak
 *.log
+hil_logs/
 
 # Auto-generated files
 include/SHT3x/Version.h
+docs/doxygen/

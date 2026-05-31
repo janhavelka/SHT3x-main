@@ -1,6 +1,10 @@
-# Codex Prompt: Production-Grade SHT3x I2C Driver Library (ESP32 Arduino / PlatformIO)
+# Historical Codex Prompt: SHT3x I2C Driver Library (ESP32 Arduino / PlatformIO)
 
-You are an expert embedded engineer. Implement a **production-grade, reusable SHT3x I2C driver library** for **ESP32-S2 / ESP32-S3** using **Arduino framework** under **PlatformIO**.
+This archived prompt records earlier implementation instructions. It is not a
+current validation claim. Hardware validation, ALERT pin behavior, humidity
+accuracy, and release readiness must be proven separately in the HIL evidence.
+
+You are an expert embedded engineer. Implement a hardened, reusable SHT3x I2C driver library for **ESP32-S2 / ESP32-S3** using **Arduino framework** under **PlatformIO**.
 
 ---
 

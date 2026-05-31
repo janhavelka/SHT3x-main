@@ -532,6 +532,7 @@ Status SHT3x::getSettings(SettingsSnapshot& out) const {
   out.missedSamples = _missedSamples;
   out.status = StatusRegister{};
   out.statusValid = false;
+  out.statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read");
   return Status::Ok();
 }
 
@@ -542,6 +543,7 @@ Status SHT3x::readSettings(SettingsSnapshot& out) {
   }
 
   Status stStatus = readStatus(out.status);
+  out.statusReadStatus = stStatus;
   if (stStatus.ok()) {
     out.statusValid = true;
     return stStatus;
@@ -788,14 +790,71 @@ Status SHT3x::readStatus(StatusRegister& out) {
     return st;
   }
 
-  out.raw = raw;
-  out.alertPending = (raw & cmd::STATUS_ALERT_PENDING) != 0;
-  out.heaterOn = (raw & cmd::STATUS_HEATER_ON) != 0;
-  out.rhAlert = (raw & cmd::STATUS_RH_ALERT) != 0;
-  out.tAlert = (raw & cmd::STATUS_T_ALERT) != 0;
-  out.resetDetected = (raw & cmd::STATUS_RESET_DETECTED) != 0;
-  out.commandError = (raw & cmd::STATUS_COMMAND_ERROR) != 0;
-  out.writeCrcError = (raw & cmd::STATUS_WRITE_CRC_ERROR) != 0;
+  _parseStatusRegister(raw, out);
+  return Status::Ok();
+}
+
+Status SHT3x::readStatusWithModeRestore(StatusReadSnapshot& out) {
+  out = StatusReadSnapshot{};
+
+  if (!_initialized) {
+    Status st = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    out.statusReadStatus = st;
+    return st;
+  }
+
+  const Mode initialMode = _mode;
+  const Repeatability initialRepeatability = _config.repeatability;
+  const PeriodicRate initialRate = _config.periodicRate;
+  const bool restorePeriodic =
+      _periodicActive && (initialMode == Mode::PERIODIC || initialMode == Mode::ART);
+
+  out.initialMode = initialMode;
+  out.finalMode = _mode;
+  out.modeInterrupted = restorePeriodic;
+  out.restored = !restorePeriodic;
+
+  if (!restorePeriodic) {
+    Status st = readStatus(out.status);
+    out.statusReadStatus = st;
+    out.statusValid = st.ok();
+    out.finalMode = _mode;
+    out.restored = true;
+    return st;
+  }
+
+  Status stStop = _stopPeriodicInternal();
+  out.stopStatus = stStop;
+  out.finalMode = _mode;
+  if (!stStop.ok()) {
+    return stStop;
+  }
+
+  uint16_t raw = 0;
+  Status stStatus = _readStatusRaw(raw, true);
+  out.statusReadStatus = stStatus;
+  if (stStatus.ok()) {
+    _parseStatusRegister(raw, out.status);
+    out.statusValid = true;
+  }
+
+  Status stRestore = Status::Ok();
+  {
+    ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
+    stRestore = (initialMode == Mode::ART)
+        ? _enterPeriodic(initialRate, initialRepeatability, true)
+        : _enterPeriodic(initialRate, initialRepeatability, false);
+  }
+  out.restoreStatus = stRestore;
+  out.finalMode = _mode;
+  out.restored = stRestore.ok() && _periodicActive && _mode == initialMode;
+
+  if (!stRestore.ok()) {
+    return stRestore;
+  }
+  if (!stStatus.ok()) {
+    return stStatus;
+  }
   return Status::Ok();
 }
 
@@ -1998,6 +2057,17 @@ uint32_t SHT3x::_periodMsForRate(PeriodicRate rate) {
 
 bool SHT3x::_timeElapsed(uint32_t now, uint32_t target) {
   return static_cast<int32_t>(now - target) >= 0;
+}
+
+void SHT3x::_parseStatusRegister(uint16_t raw, StatusRegister& out) {
+  out.raw = raw;
+  out.alertPending = (raw & cmd::STATUS_ALERT_PENDING) != 0;
+  out.heaterOn = (raw & cmd::STATUS_HEATER_ON) != 0;
+  out.rhAlert = (raw & cmd::STATUS_RH_ALERT) != 0;
+  out.tAlert = (raw & cmd::STATUS_T_ALERT) != 0;
+  out.resetDetected = (raw & cmd::STATUS_RESET_DETECTED) != 0;
+  out.commandError = (raw & cmd::STATUS_COMMAND_ERROR) != 0;
+  out.writeCrcError = (raw & cmd::STATUS_WRITE_CRC_ERROR) != 0;
 }
 
 }  // namespace SHT3x
