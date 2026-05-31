@@ -1,6 +1,6 @@
 # SHT3x Driver Library
 
-Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO and ESP-IDF component use).
+Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO and ESP-IDF component use).
 
 ## Features
 
@@ -540,6 +540,9 @@ first because relative humidity is temperature-dependent.
 - `docs/IDF_PORT_IMPLEMENTATION.md` - implemented IDF component/example notes
 - `docs/HARDWARE_VALIDATION.md` - hardware validation matrix and ambient humidity caveats
 - `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - detailed board/fixture validation procedures
+- `docs/SHT3X_HIL_RUNBOOK.md` - operator runbook for full hardware-in-loop validation
+- `docs/SHT3X_HIL_LOG_TEMPLATE.md` - structured capture template for HIL logs
+- `docs/SHT3X_PRE_HIL_READINESS_REPORT.md` - latest pre-HIL readiness gate report
 - `docs/SHT3X_ALERT_STATUS_FIX_REPORT.md` - ALERT/status behavior and helper design
 - `docs/SHT3X_IDF_CI_DOCS_REPORT.md` - ESP-IDF CI/docs hardening report
 - `docs/SHT3X_HARDENING_FINAL_REPORT.md` - final branch readiness report

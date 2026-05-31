@@ -50,8 +50,8 @@ Implemented:
 4. `examples/idf/basic` provides an ESP-IDF 5.4+ `i2c_master` adapter.
 5. Arduino examples remain separate and are not part of the IDF component target.
 6. The IDF example maps `esp_err_t` values to library `Status` codes and advertises only the timeout capability.
-7. CI builds `examples/idf/basic` with ESP-IDF `release-v5.4` for `esp32s3`
-   and `esp32s2`.
+7. CI is configured to build `examples/idf/basic` with ESP-IDF `release-v5.4`
+   for `esp32s3` and `esp32s2`.
 
 Still application-owned:
 

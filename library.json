@@ -1,7 +1,7 @@
 {
   "name": "SHT3x",
   "version": "1.5.0",
-  "description": "Production-grade SHT3x temperature/humidity sensor driver.",
+  "description": "Deterministic SHT3x temperature/humidity sensor driver for ESP32.",
   "keywords": [
     "sht3x",
     "sht30",

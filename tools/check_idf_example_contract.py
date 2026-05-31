@@ -169,8 +169,13 @@ def main() -> int:
         "selftest",
         "probe",
         "recover",
+        "status_restore",
+        "periodic start <rate> <rep>",
+        "art fetch",
+        "alert show",
     ):
         require_text(shared_cli, command)
+        require_text(idf_main, command)
 
     print("IDF example contract PASSED")
     return 0

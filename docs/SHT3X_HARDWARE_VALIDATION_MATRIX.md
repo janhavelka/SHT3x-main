@@ -14,6 +14,10 @@ values, bus speed, cable length, supply voltage, firmware commit, CLI type
 Arduino/IDF, date/time, ambient/reference temperature and RH, full serial log,
 and ALERT GPIO or logic-analyzer capture where applicable.
 
+The exact operator sequence, output patterns, pass/fail criteria, restore steps,
+and log naming convention are defined in `docs/SHT3X_HIL_RUNBOOK.md`. This
+matrix is a planning index; the runbook is the HIL execution contract.
+
 Default example assumptions: SDA GPIO8, SCL GPIO9, 400 kHz I2C, SHT3x address
 `0x44`. The stock examples are diagnostic bring-up CLIs, not production
 application architectures.
@@ -69,7 +73,7 @@ Repeat on ESP32-S2 with `pio run -e esp32s2dev -t upload` or
 | Clear status | `status`, `clearstatus`, `status` | Clearable bits 15, 11, 10, and 4 clear; heater/command/checksum bits follow datasheet behavior | Not run |
 | ALERT low/high RH threshold | Configure limits near ambient with `alert write`; start periodic; change RH with safe fixture; observe ALERT pin; `stop_periodic`, `status` | ALERT pin asserts/deasserts with hysteresis; `alert` and `rh_alert` bits identify cause | Not run |
 | ALERT temperature threshold | Configure temperature limits near a safe controlled setpoint; start periodic; change temperature slowly; observe ALERT; `stop_periodic`, `status` | ALERT pin and `t_alert` bit identify temperature cause | Not run |
-| ALERT cause while periodic active | Start periodic and induce alert; note stock CLIs do not expose `readStatusWithModeRestore`; use `stop_periodic`, then `status` | Latched ALERT/RH/T bits captured after stopping; cadence interruption is recorded | Not run |
+| ALERT cause while periodic active | Start periodic and induce alert; run `status_restore` while active; then `periodic fetch` | `readStatusWithModeRestore()` logs stop/read/restore sub-statuses, status bits, `statusValid`, and `restored`; fetch after restore succeeds | Not run |
 | Alert-limit read/write round trip | Idle only: `alert write hs 30 55`, `alert read hs`, repeat `hc`, `lc`, `ls`; also `alert raw read <kind>` | Quantized raw/physical values match expected tolerance | Not run |
 | Disable alerts | Idle: `alert disable`, read `hs` and `ls`, start periodic at ambient, observe ALERT/status | Normal ambient does not assert ALERT | Not run |
 | Heater enable/disable | Idle: `heater off`, `heater status`, `read`; `heater on`, wait 30-120 s, `heater status`, repeated `read`; `heater off`, cool down | Heater status bit follows commands; temperature rises/RH shifts; cooldown recorded | Not run |
@@ -116,12 +120,11 @@ alert disable
 stop_periodic
 ```
 
-The stock CLIs intentionally avoid sending status-read commands while
-periodic/ART acquisition is active. The library API has
-`readStatusWithModeRestore()`, but the diagnostic CLIs do not expose it directly.
-For production ALERT validation, either add a temporary test command that calls
-that helper or document the cadence interruption caused by `stop_periodic` plus
-`status`.
+The diagnostic CLIs expose `status_restore`, which calls
+`readStatusWithModeRestore()` and prints `stopStatus`, `statusReadStatus`,
+`restoreStatus`, `statusValid`, and `restored`. Use that command for ALERT
+diagnosis while periodic/ART acquisition is active, then run `periodic fetch` or
+`art fetch` to prove acquisition resumed.
 
 ## Fault-Injection Notes
 

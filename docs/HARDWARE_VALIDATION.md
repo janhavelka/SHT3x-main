@@ -14,23 +14,23 @@ Detailed command-level procedures live in
 
 | Area | Target | Setup required | Expected result | Current result | Evidence |
 |------|--------|----------------|-----------------|----------------|----------|
-| ESP-IDF build | ESP32-S3, ESP-IDF 5.4+ | `idf.py -C examples/idf/basic set-target esp32s3 build` | Build succeeds with native IDF example and no Arduino symbols | CI coverage added; local `idf.py` result recorded in `docs/SHT3X_IDF_CI_DOCS_REPORT.md` | CI logs after workflow run |
-| ESP-IDF build | ESP32-S2, ESP-IDF 5.4+ | `idf.py -C examples/idf/basic set-target esp32s2 build` | Build succeeds with native IDF example and no Arduino symbols | CI coverage added; local `idf.py` result recorded in `docs/SHT3X_IDF_CI_DOCS_REPORT.md` | CI logs after workflow run |
-| Arduino build | ESP32-S3/S2 PlatformIO | `pio run -e esp32s3dev`, `pio run -e esp32s2dev` | Firmware builds with Arduino diagnostic example | Local build PASS on 2026-05-31; hardware smoke still pending | Build logs |
-| Address probe | `0x44` and `0x45` | ADDR strapped low/high, I2C scan/probe | Correct address ACKs, other address does not | Pending hardware | Serial log |
-| Single-shot | No stretch | Stable supply, known ambient | Request, tick, read sample with valid CRC and plausible T/RH | Pending hardware | Serial/IDF log |
-| Single-shot | Clock stretching | Transport timeout >= worst-case tMEAS plus margin | Stretch command completes without timeout | Pending hardware | Serial/IDF log |
-| Periodic fetch | 0.5/1/2/4/10 mps | Known bus speed and pullups | Fetch Data returns CRC-valid samples; Break stops mode | Pending hardware | Serial/IDF log |
-| ART mode | ESP32-S2/S3 | ART start, fetch, Break | ART cadence works and mode restores after Break | Pending hardware | Serial/IDF log |
-| ALERT/status | Periodic mode, ALERT pin wired | Alert thresholds, GPIO capture, status read helper | ALERT pin assertion matches status bits; `readStatusWithModeRestore()` restores mode | Pending hardware | Logic analyzer/log |
-| Status clear | Periodic stopped | Known status flags | `clearStatus()` clears bits 15, 11, 10, and 4 only | Pending hardware | Register log |
-| Alert limits | All four limits | Stop periodic before access | Raw and physical read/write round trips, write CRC errors detected | Pending hardware | Register log |
-| Heater | Controlled ambient | Heater on/off/status | Heater bit changes; self-heating impact is visible and documented | Pending hardware | Temperature/RH log |
-| Soft reset | Sensor idle | `softReset()` | Sensor returns to single-shot defaults; status reset bit behavior recorded | Pending hardware | Serial/IDF log |
-| Interface reset | Bus-reset callback | SCL toggle implementation | Callback succeeds and later probe/read works | Pending hardware | Logic analyzer/log |
+| ESP-IDF build | ESP32-S3, ESP-IDF 5.4+ | `idf.py -C examples/idf/basic set-target esp32s3 build` | Build succeeds with native IDF example and no Arduino symbols | CI configured; local pure-IDF build still Not run where `idf.py` is unavailable | CI logs after workflow run |
+| ESP-IDF build | ESP32-S2, ESP-IDF 5.4+ | `idf.py -C examples/idf/basic set-target esp32s2 build` | Build succeeds with native IDF example and no Arduino symbols | CI configured; local pure-IDF build still Not run where `idf.py` is unavailable | CI logs after workflow run |
+| Arduino build | ESP32-S3/S2 PlatformIO | `pio run -e esp32s3dev`, `pio run -e esp32s2dev` | Firmware builds with Arduino diagnostic example | Software build result is separate from HIL; hardware smoke Not run | Build logs |
+| Address probe | `0x44` and `0x45` | ADDR strapped low/high, I2C scan/probe | Correct address ACKs, other address does not | Not run | Serial log |
+| Single-shot | No stretch | Stable supply, known ambient | Request, tick, read sample with valid CRC and plausible T/RH | Not run | Serial/IDF log |
+| Single-shot | Clock stretching | Transport timeout >= worst-case tMEAS plus margin | Stretch command completes without timeout | Not run | Serial/IDF log |
+| Periodic fetch | 0.5/1/2/4/10 mps | Known bus speed and pullups | Fetch Data returns CRC-valid samples; Break stops mode | Not run | Serial/IDF log |
+| ART mode | ESP32-S2/S3 | ART start, fetch, Break | ART cadence works and mode restores after Break | Not run | Serial/IDF log |
+| ALERT/status | Periodic mode, ALERT pin wired | Alert thresholds, GPIO capture, status restore helper | ALERT pin assertion matches status bits; `status_restore` logs restore outcome | Not run | Logic analyzer/log |
+| Status clear | Periodic stopped | Known status flags | `clearStatus()` clears bits 15, 11, 10, and 4 only | Not run | Register log |
+| Alert limits | All four limits | Stop periodic before access | Raw and physical read/write round trips, write CRC errors detected | Not run | Register log |
+| Heater | Controlled ambient | Heater on/off/status | Heater bit changes; self-heating impact is visible and documented | Not run | Temperature/RH log |
+| Soft reset | Sensor idle | `softReset()` | Sensor returns to single-shot defaults; status reset bit behavior recorded | Not run | Serial/IDF log |
+| Interface reset | Bus-reset callback | SCL toggle implementation | Callback succeeds and later probe/read works | Not run | Logic analyzer/log |
 | General-call reset | Isolated bus only | Dedicated `0x00` handle in application adapter | Every supporting device reset is intentional and documented | Not implemented in shipped IDF diagnostic example | Application evidence |
-| Fault injection | Fake or jig | Timeout, NACK, CRC mismatch | Specific `Status` codes, health transition, manual recovery | Pending hardware/jig | Test log |
-| Humidity production fixture | DUT plus reference sensor(s) | Controlled jig, prestaging, coupling, settling, MSA/Cpk | Limits account for reference accuracy, DUT accuracy, setup variation, and RH offset | Pending fixture validation | Fixture report |
+| Fault injection | Fake or jig | Timeout, NACK, CRC mismatch | Specific `Status` codes, health transition, manual recovery | Not run | Test log |
+| Humidity production fixture | DUT plus reference sensor(s) | Controlled jig, prestaging, coupling, settling, MSA/Cpk | Limits account for reference accuracy, DUT accuracy, setup variation, and RH offset | Not run | Fixture report |
 
 ## Ambient Humidity Test Notes
 

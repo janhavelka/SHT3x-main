@@ -391,6 +391,58 @@ void printStatus(const SHT3x::Status& st) {
   }
 }
 
+const char* statusKindToStr(const SHT3x::Status& st) {
+  if (st.ok()) {
+    return "OK";
+  }
+  if (st.inProgress()) {
+    return "IN_PROGRESS";
+  }
+  return "ERR";
+}
+
+void printLabeledStatus(const char* label, const SHT3x::Status& st) {
+  Serial.printf("%s: %s code=%u detail=%ld msg=%s\n",
+                label,
+                statusKindToStr(st),
+                static_cast<unsigned>(st.code),
+                static_cast<long>(st.detail),
+                st.msg ? st.msg : "");
+}
+
+void printStatusRegisterLine(const char* label, const SHT3x::StatusRegister& reg) {
+  Serial.printf("%s: raw=0x%04X alert=%d heater=%d rh_alert=%d t_alert=%d reset=%d cmd_err=%d crc_err=%d\n",
+                label,
+                static_cast<unsigned>(reg.raw),
+                reg.alertPending ? 1 : 0,
+                reg.heaterOn ? 1 : 0,
+                reg.rhAlert ? 1 : 0,
+                reg.tAlert ? 1 : 0,
+                reg.resetDetected ? 1 : 0,
+                reg.commandError ? 1 : 0,
+                reg.writeCrcError ? 1 : 0);
+}
+
+const char* modeToStr(SHT3x::Mode mode);
+
+void printStatusRestoreSnapshot(const SHT3x::Status& result,
+                                const SHT3x::StatusReadSnapshot& snap) {
+  Serial.println("status_restore:");
+  printLabeledStatus("result", result);
+  Serial.printf("initialMode=%s finalMode=%s modeInterrupted=%d statusValid=%d restored=%d\n",
+                modeToStr(snap.initialMode),
+                modeToStr(snap.finalMode),
+                snap.modeInterrupted ? 1 : 0,
+                snap.statusValid ? 1 : 0,
+                snap.restored ? 1 : 0);
+  printLabeledStatus("stopStatus", snap.stopStatus);
+  printLabeledStatus("statusReadStatus", snap.statusReadStatus);
+  printLabeledStatus("restoreStatus", snap.restoreStatus);
+  if (snap.statusValid) {
+    printStatusRegisterLine("status", snap.status);
+  }
+}
+
 template <typename DriverT>
 struct HealthSnapshot {
   int state = 0;
@@ -562,6 +614,18 @@ void printRuntimeStats() {
     Serial.printf("    periodicRate: %s mps\n", rateToStr(cached.periodicRate));
     Serial.printf("    stretching: %s\n", stretchToStr(cached.clockStretching));
     Serial.printf("    heaterEnabled: %s\n", cached.heaterEnabled ? "true" : "false");
+    static constexpr SHT3x::AlertLimitKind ALERT_KINDS[] = {
+        SHT3x::AlertLimitKind::HIGH_SET,
+        SHT3x::AlertLimitKind::HIGH_CLEAR,
+        SHT3x::AlertLimitKind::LOW_CLEAR,
+        SHT3x::AlertLimitKind::LOW_SET,
+    };
+    for (size_t i = 0; i < (sizeof(ALERT_KINDS) / sizeof(ALERT_KINDS[0])); ++i) {
+      Serial.printf("    alert %s: valid=%s raw=0x%04X\n",
+                    alertKindToStr(ALERT_KINDS[i]),
+                    cached.alertValid[i] ? "true" : "false",
+                    static_cast<unsigned>(cached.alertRaw[i]));
+    }
   }
 }
 
@@ -1140,6 +1204,89 @@ bool parseU16(const CliString& token, uint16_t& out) {
   return true;
 }
 
+void printAlertLimit(SHT3x::AlertLimitKind kind) {
+  SHT3x::AlertLimit limit;
+  const SHT3x::Status st = deviceInstance.readAlertLimit(kind, limit);
+  printLabeledStatus("alert read", st);
+  if (st.ok()) {
+    Serial.printf("alert %s: raw=0x%04X T=%.2fC RH=%.2f%%\n",
+                  alertKindToStr(kind),
+                  static_cast<unsigned>(limit.raw),
+                  static_cast<double>(limit.temperatureC),
+                  static_cast<double>(limit.humidityPct));
+  }
+}
+
+void printAllAlertLimits() {
+  static constexpr SHT3x::AlertLimitKind ALERT_KINDS[] = {
+      SHT3x::AlertLimitKind::HIGH_SET,
+      SHT3x::AlertLimitKind::HIGH_CLEAR,
+      SHT3x::AlertLimitKind::LOW_CLEAR,
+      SHT3x::AlertLimitKind::LOW_SET,
+  };
+  for (size_t i = 0; i < (sizeof(ALERT_KINDS) / sizeof(ALERT_KINDS[0])); ++i) {
+    printAlertLimit(ALERT_KINDS[i]);
+  }
+}
+
+void startPeriodicFromArgs(const CliString& args, const char* label) {
+  const int split = args.indexOf(' ');
+  if (split < 0) {
+    logWarn("Usage: %s <rate> <rep>", label);
+    return;
+  }
+  const CliString rateStr = args.substring(0, split);
+  CliString repStr = args.substring(split + 1);
+  repStr.trim();
+
+  SHT3x::PeriodicRate rate;
+  if (!parseRate(rateStr, rate)) {
+    logWarn("Invalid rate");
+    return;
+  }
+  SHT3x::Repeatability rep;
+  if (!parseRepeatability(repStr, rep)) {
+    logWarn("Invalid repeatability");
+    return;
+  }
+
+  const SHT3x::Status st = deviceInstance.startPeriodic(rate, rep);
+  printLabeledStatus(label, st);
+}
+
+void requestMeasurementCommand(const char* label) {
+  cancelPending();
+  const SHT3x::Status st = scheduleMeasurement();
+  printLabeledStatus(label, st);
+}
+
+void singleShotCommand(const CliString& arg) {
+  SHT3x::Repeatability rep;
+  if (!parseRepeatability(arg, rep)) {
+    logWarn("Usage: single <low|medium|high>");
+    return;
+  }
+
+  cancelPending();
+  SHT3x::Status st = deviceInstance.setMode(SHT3x::Mode::SINGLE_SHOT);
+  printLabeledStatus("single mode", st);
+  if (!st.ok()) {
+    return;
+  }
+  st = deviceInstance.setRepeatability(rep);
+  printLabeledStatus("single repeat", st);
+  if (!st.ok()) {
+    return;
+  }
+  st = deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
+  printLabeledStatus("single stretch", st);
+  if (!st.ok()) {
+    return;
+  }
+  st = scheduleMeasurement();
+  printLabeledStatus("single request", st);
+}
+
 namespace cli {
 static constexpr size_t HELP_COMMAND_WIDTH = 32U;
 
@@ -1341,31 +1488,66 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
+  if (cmd.startsWith("single ")) {
+    CliString arg = cmd.substring(7);
+    arg.trim();
+    singleShotCommand(arg);
+    return;
+  }
+
+  if (cmd.startsWith("periodic ")) {
+    CliString args = cmd.substring(9);
+    args.trim();
+    const int split = args.indexOf(' ');
+    CliString sub = args;
+    CliString rest;
+    if (split >= 0) {
+      sub = args.substring(0, split);
+      rest = args.substring(split + 1);
+      rest.trim();
+    }
+    if (sub == "start") {
+      startPeriodicFromArgs(rest, "periodic start");
+      return;
+    }
+    if (sub == "fetch") {
+      requestMeasurementCommand("periodic fetch");
+      return;
+    }
+    if (sub == "stop") {
+      const SHT3x::Status st = deviceInstance.stopPeriodic();
+      printLabeledStatus("periodic stop", st);
+      return;
+    }
+    logWarn("Usage: periodic start <rate> <rep> | periodic fetch | periodic stop");
+    return;
+  }
+
+  if (cmd.startsWith("art ")) {
+    CliString sub = cmd.substring(4);
+    sub.trim();
+    if (sub == "start") {
+      const SHT3x::Status st = deviceInstance.startArt();
+      printLabeledStatus("art start", st);
+      return;
+    }
+    if (sub == "fetch") {
+      requestMeasurementCommand("art fetch");
+      return;
+    }
+    if (sub == "stop") {
+      const SHT3x::Status st = deviceInstance.stopPeriodic();
+      printLabeledStatus("art stop", st);
+      return;
+    }
+    logWarn("Usage: art start | art fetch | art stop");
+    return;
+  }
+
   if (cmd.startsWith("start_periodic ")) {
     CliString args = cmd.substring(15);
     args.trim();
-    const int split = args.indexOf(' ');
-    if (split < 0) {
-      logWarn("Usage: start_periodic <rate> <rep>");
-      return;
-    }
-    const CliString rateStr = args.substring(0, split);
-    CliString repStr = args.substring(split + 1);
-    repStr.trim();
-
-    SHT3x::PeriodicRate rate;
-    if (!parseRate(rateStr, rate)) {
-      logWarn("Invalid rate");
-      return;
-    }
-    SHT3x::Repeatability rep;
-    if (!parseRepeatability(repStr, rep)) {
-      logWarn("Invalid repeatability");
-      return;
-    }
-
-    SHT3x::Status st = deviceInstance.startPeriodic(rate, rep);
-    printStatus(st);
+    startPeriodicFromArgs(args, "start_periodic");
     return;
   }
 
@@ -1467,15 +1649,14 @@ void processCommandString(const CliString& cmdLine) {
       return;
     }
 
-    Serial.printf("Status: 0x%04X (alert=%d heater=%d rh_alert=%d t_alert=%d reset=%d cmd_err=%d crc_err=%d)\n",
-                  stReg.raw,
-                  stReg.alertPending ? 1 : 0,
-                  stReg.heaterOn ? 1 : 0,
-                  stReg.rhAlert ? 1 : 0,
-                  stReg.tAlert ? 1 : 0,
-                  stReg.resetDetected ? 1 : 0,
-                  stReg.commandError ? 1 : 0,
-                  stReg.writeCrcError ? 1 : 0);
+    printStatusRegisterLine("status", stReg);
+    return;
+  }
+
+  if (cmd == "status_restore") {
+    SHT3x::StatusReadSnapshot snap;
+    const SHT3x::Status st = deviceInstance.readStatusWithModeRestore(snap);
+    printStatusRestoreSnapshot(st, snap);
     return;
   }
 
@@ -1490,7 +1671,7 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
-  if (cmd == "clearstatus") {
+  if (cmd == "clearstatus" || cmd == "clear_status") {
     SHT3x::Status st = deviceInstance.clearStatus();
     printStatus(st);
     return;
@@ -1567,6 +1748,11 @@ void processCommandString(const CliString& cmdLine) {
       rest.trim();
     }
 
+    if (sub == "show") {
+      printAllAlertLimits();
+      return;
+    }
+
     if (sub == "read") {
       SHT3x::AlertLimitKind kind;
       if (!parseAlertKind(rest, kind)) {
@@ -1635,10 +1821,10 @@ void processCommandString(const CliString& cmdLine) {
       return;
     }
 
-    if (sub == "write") {
+    if (sub == "write" || sub == "set") {
       const int split2 = rest.indexOf(' ');
       if (split2 < 0) {
-        logWarn("Usage: alert write <kind> <T> <RH>");
+        logWarn("Usage: alert set <kind> <T> <RH>");
         return;
       }
       const CliString kindStr = rest.substring(0, split2);
@@ -1646,7 +1832,7 @@ void processCommandString(const CliString& cmdLine) {
       rest2.trim();
       const int split3 = rest2.indexOf(' ');
       if (split3 < 0) {
-        logWarn("Usage: alert write <kind> <T> <RH>");
+        logWarn("Usage: alert set <kind> <T> <RH>");
         return;
       }
       const CliString tempStr = rest2.substring(0, split3);
@@ -1699,7 +1885,7 @@ void processCommandString(const CliString& cmdLine) {
       return;
     }
 
-    logWarn("Usage: alert read|write|raw|encode|decode|disable ...");
+    logWarn("Usage: alert show|read|set|write|raw|encode|decode|disable ...");
     return;
   }
 
@@ -1922,6 +2108,13 @@ void printHelp() {
 
   cli::printHelpSection("Operating Mode");
   cli::printHelpItem("mode [single|periodic|art]", "Set or show operating mode");
+  cli::printHelpItem("single <low|medium|high>", "Run one no-stretch single-shot measurement");
+  cli::printHelpItem("periodic start <rate> <rep>", "Alias for start_periodic");
+  cli::printHelpItem("periodic fetch", "Fetch next periodic sample");
+  cli::printHelpItem("periodic stop", "Alias for stop_periodic");
+  cli::printHelpItem("art start", "Alias for start_art");
+  cli::printHelpItem("art fetch", "Fetch next ART sample");
+  cli::printHelpItem("art stop", "Stop ART mode");
   cli::printHelpItem("start_periodic <rate> <rep>", "Start periodic mode");
   cli::printHelpItem("start_art", "Start ART mode");
   cli::printHelpItem("stop_periodic", "Stop periodic or ART mode");
@@ -1931,13 +2124,17 @@ void printHelp() {
 
   cli::printHelpSection("Status And Alerts");
   cli::printHelpItem("status", "Read status register");
+  cli::printHelpItem("status_restore", "Read status with periodic/ART restore snapshot");
   cli::printHelpItem("status_raw", "Read raw status (16-bit)");
   cli::printHelpItem("clearstatus", "Clear status flags");
+  cli::printHelpItem("clear_status", "Alias for clearstatus");
   cli::printHelpItem("heater [on|off|status]", "Control heater");
   cli::printHelpItem("serial [stretch|nostretch]", "Read serial number");
   cli::printHelpItem("command write <hex>", "Issue a raw 16-bit command");
   cli::printHelpItem("command write_data <cmd> <data>", "Issue a command with a packed data word");
   cli::printHelpItem("command read <cmd> <len>", "Issue a command and read raw response bytes");
+  cli::printHelpItem("alert show", "Read all alert limits");
+  cli::printHelpItem("alert set <kind> <T> <RH>", "Alias for alert write");
   cli::printHelpItem("alert read <hs|hc|lc|ls>", "Read alert limit");
   cli::printHelpItem("alert write <kind> <T> <RH>", "Write alert limit");
   cli::printHelpItem("alert raw read <kind>", "Read raw alert limit word");

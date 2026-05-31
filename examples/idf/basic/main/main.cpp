@@ -107,6 +107,85 @@ const char* rateToStr(SHT3x::PeriodicRate rate) {
   }
 }
 
+const char* alertKindToStr(SHT3x::AlertLimitKind kind) {
+  switch (kind) {
+    case SHT3x::AlertLimitKind::HIGH_SET: return "HIGH_SET";
+    case SHT3x::AlertLimitKind::HIGH_CLEAR: return "HIGH_CLEAR";
+    case SHT3x::AlertLimitKind::LOW_CLEAR: return "LOW_CLEAR";
+    case SHT3x::AlertLimitKind::LOW_SET: return "LOW_SET";
+    default: return "UNKNOWN";
+  }
+}
+
+void printStatusRegister(const char* label, const SHT3x::StatusRegister& reg) {
+  std::printf("%s: raw=0x%04X alert=%d heater=%d rh_alert=%d t_alert=%d reset=%d cmd_err=%d crc_err=%d\n",
+              label,
+              reg.raw,
+              reg.alertPending ? 1 : 0,
+              reg.heaterOn ? 1 : 0,
+              reg.rhAlert ? 1 : 0,
+              reg.tAlert ? 1 : 0,
+              reg.resetDetected ? 1 : 0,
+              reg.commandError ? 1 : 0,
+              reg.writeCrcError ? 1 : 0);
+}
+
+void printStatusRestoreSnapshot(const SHT3x::Status& result,
+                                const SHT3x::StatusReadSnapshot& snap) {
+  std::puts("status_restore:");
+  printStatus("result", result);
+  std::printf("initialMode=%s finalMode=%s modeInterrupted=%d statusValid=%d restored=%d\n",
+              modeToStr(snap.initialMode),
+              modeToStr(snap.finalMode),
+              snap.modeInterrupted ? 1 : 0,
+              snap.statusValid ? 1 : 0,
+              snap.restored ? 1 : 0);
+  printStatus("stopStatus", snap.stopStatus);
+  printStatus("statusReadStatus", snap.statusReadStatus);
+  printStatus("restoreStatus", snap.restoreStatus);
+  if (snap.statusValid) {
+    printStatusRegister("status", snap.status);
+  }
+}
+
+void printCachedAlerts(const SHT3x::CachedSettings& cached) {
+  static constexpr SHT3x::AlertLimitKind ALERT_KINDS[] = {
+      SHT3x::AlertLimitKind::HIGH_SET,
+      SHT3x::AlertLimitKind::HIGH_CLEAR,
+      SHT3x::AlertLimitKind::LOW_CLEAR,
+      SHT3x::AlertLimitKind::LOW_SET,
+  };
+  for (size_t i = 0; i < (sizeof(ALERT_KINDS) / sizeof(ALERT_KINDS[0])); ++i) {
+    std::printf("cached_alert_%s_valid=%d cached_alert_%s_raw=0x%04X\n",
+                alertKindToStr(ALERT_KINDS[i]),
+                cached.alertValid[i] ? 1 : 0,
+                alertKindToStr(ALERT_KINDS[i]),
+                cached.alertRaw[i]);
+  }
+}
+
+void printAlertLimit(SHT3x::AlertLimitKind kind) {
+  SHT3x::AlertLimit limit{};
+  const SHT3x::Status st = gDevice.readAlertLimit(kind, limit);
+  printStatus("alert read", st);
+  if (st.ok()) {
+    std::printf("alert_%s raw=0x%04X temperature=%.2f humidity=%.2f\n",
+                alertKindToStr(kind), limit.raw, limit.temperatureC, limit.humidityPct);
+  }
+}
+
+void printAllAlertLimits() {
+  static constexpr SHT3x::AlertLimitKind ALERT_KINDS[] = {
+      SHT3x::AlertLimitKind::HIGH_SET,
+      SHT3x::AlertLimitKind::HIGH_CLEAR,
+      SHT3x::AlertLimitKind::LOW_CLEAR,
+      SHT3x::AlertLimitKind::LOW_SET,
+  };
+  for (size_t i = 0; i < (sizeof(ALERT_KINDS) / sizeof(ALERT_KINDS[0])); ++i) {
+    printAlertLimit(ALERT_KINDS[i]);
+  }
+}
+
 char* trim(char* text) {
   if (text == nullptr) {
     return text;
@@ -278,10 +357,14 @@ void printHelp() {
   std::puts("  begin | end | probe | recover | drv | cfg / settings | state | online");
   std::puts("  read | request | fetch | raw | comp | meastime");
   std::puts("  mode [single|periodic|art] | repeat [low|med|high] | rate [0.5|1|2|4|10] | stretch [0|1]");
+  std::puts("  single <low|medium|high>");
+  std::puts("  periodic start <rate> <rep> | periodic fetch | periodic stop");
+  std::puts("  art start | art fetch | art stop");
   std::puts("  start_periodic <rate> <rep> | start_art | stop_periodic");
-  std::puts("  status | status_raw | clearstatus | heater [on|off|status] | serial [stretch|nostretch]");
+  std::puts("  status | status_restore | status_raw | clearstatus | clear_status");
+  std::puts("  heater [on|off|status] | serial [stretch|nostretch]");
   std::puts("  command write <hex> | command write_data <cmd> <data> | command read <cmd> <len>");
-  std::puts("  alert read <hs|hc|lc|ls> | alert write <kind> <T> <RH>");
+  std::puts("  alert show | alert set <kind> <T> <RH> | alert read <hs|hc|lc|ls> | alert write <kind> <T> <RH>");
   std::puts("  alert raw read <kind> | alert raw write <kind> <hex> | alert encode <T> <RH> | alert decode <hex> | alert disable");
   std::puts("  convert <rawT> <rawRH> | reset | defaults | restore | iface_reset | greset");
   std::puts("  verbose [0|1] | stress [N] | stress_mix [N] | selftest");
@@ -309,12 +392,21 @@ void printSettings(bool readStatus) {
               static_cast<unsigned>(gDevice.consecutiveFailures()),
               static_cast<unsigned long>(gDevice.lastOkMs()),
               static_cast<unsigned long>(gDevice.lastErrorMs()));
+  printStatus("lastError", gDevice.lastError());
+  if (gDevice.hasCachedSettings()) {
+    const SHT3x::CachedSettings cached = gDevice.getCachedSettings();
+    std::printf("cached mode=%s repeat=%s rate=%s stretch=%d heater=%d\n",
+                modeToStr(cached.mode),
+                repeatabilityToStr(cached.repeatability),
+                rateToStr(cached.periodicRate),
+                cached.clockStretching == SHT3x::ClockStretching::STRETCH_ENABLED ? 1 : 0,
+                cached.heaterEnabled ? 1 : 0);
+    printCachedAlerts(cached);
+  } else {
+    std::puts("cached=0");
+  }
   if (snap.statusValid) {
-    std::printf("status=0x%04X alert=%d heater=%d rh_alert=%d t_alert=%d reset=%d cmd_err=%d crc_err=%d\n",
-                snap.status.raw, snap.status.alertPending ? 1 : 0,
-                snap.status.heaterOn ? 1 : 0, snap.status.rhAlert ? 1 : 0,
-                snap.status.tAlert ? 1 : 0, snap.status.resetDetected ? 1 : 0,
-                snap.status.commandError ? 1 : 0, snap.status.writeCrcError ? 1 : 0);
+    printStatusRegister("status", snap.status);
   }
 }
 
@@ -346,6 +438,48 @@ void requestAndWait() {
     return;
   }
   printSample();
+}
+
+void runSingleShotCommand(const char* args) {
+  SHT3x::Repeatability rep{};
+  if (!parseRepeatability(args, &rep)) {
+    std::puts("Usage: single <low|medium|high>");
+    return;
+  }
+
+  SHT3x::Status st = gDevice.setMode(SHT3x::Mode::SINGLE_SHOT);
+  printStatus("single mode", st);
+  if (!st.ok()) {
+    return;
+  }
+  st = gDevice.setRepeatability(rep);
+  printStatus("single repeat", st);
+  if (!st.ok()) {
+    return;
+  }
+  st = gDevice.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
+  printStatus("single stretch", st);
+  if (!st.ok()) {
+    return;
+  }
+  requestAndWait();
+}
+
+void startPeriodicCommand(char* args, const char* label) {
+  char* rateToken = args;
+  char* repToken = std::strchr(args, ' ');
+  if (repToken != nullptr) {
+    *repToken++ = '\0';
+    repToken = trim(repToken);
+  }
+  SHT3x::PeriodicRate rate{};
+  SHT3x::Repeatability rep{};
+  printStatus(label,
+              (repToken != nullptr && parseRate(rateToken, &rate) &&
+               parseRepeatability(repToken, &rep))
+                  ? gDevice.startPeriodic(rate, rep)
+                  : SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
+                                          "usage: periodic start <rate> <rep>"));
 }
 
 void runStress(uint32_t count) {
@@ -414,7 +548,11 @@ void handleCommandLine(char* line) {
   if (std::strcmp(cmd, "help") == 0 || std::strcmp(cmd, "?") == 0) {
     printHelp();
   } else if (std::strcmp(cmd, "version") == 0 || std::strcmp(cmd, "ver") == 0) {
-    std::printf("SHT3x library %s (%s)\n", SHT3x::VERSION, SHT3x::BUILD_TIMESTAMP);
+    std::printf("example_build=%s %s\n", __DATE__, __TIME__);
+    std::printf("library_version=%s\n", SHT3x::VERSION);
+    std::printf("library_full=%s\n", SHT3x::VERSION_FULL);
+    std::printf("library_build=%s\n", SHT3x::BUILD_TIMESTAMP);
+    std::printf("library_commit=%s git_status=%s\n", SHT3x::GIT_COMMIT, SHT3x::GIT_STATUS);
   } else if (std::strcmp(cmd, "scan") == 0) {
     scanBus();
   } else if (std::strcmp(cmd, "begin") == 0) {
@@ -505,20 +643,37 @@ void handleCommandLine(char* line) {
                                      ? SHT3x::ClockStretching::STRETCH_ENABLED
                                      : SHT3x::ClockStretching::STRETCH_DISABLED));
     }
-  } else if (std::strcmp(cmd, "start_periodic") == 0) {
-    char* rateToken = args;
-    char* repToken = std::strchr(args, ' ');
-    if (repToken != nullptr) {
-      *repToken++ = '\0';
-      repToken = trim(repToken);
+  } else if (std::strcmp(cmd, "single") == 0) {
+    runSingleShotCommand(args);
+  } else if (std::strcmp(cmd, "periodic") == 0) {
+    char* sub = nullptr;
+    char* tail = nullptr;
+    splitCommand(args, &sub, &tail);
+    if (sub != nullptr && std::strcmp(sub, "start") == 0) {
+      startPeriodicCommand(tail, "periodic start");
+    } else if (sub != nullptr && std::strcmp(sub, "fetch") == 0) {
+      requestAndWait();
+    } else if (sub != nullptr && std::strcmp(sub, "stop") == 0) {
+      printStatus("periodic stop", gDevice.stopPeriodic());
+    } else {
+      std::puts("Usage: periodic start <rate> <rep> | periodic fetch | periodic stop");
     }
-    SHT3x::PeriodicRate rate{};
-    SHT3x::Repeatability rep{};
-    printStatus("start_periodic",
-                (repToken != nullptr && parseRate(rateToken, &rate) &&
-                 parseRepeatability(repToken, &rep))
-                    ? gDevice.startPeriodic(rate, rep)
-                    : SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "usage: start_periodic <rate> <rep>"));
+  } else if (std::strcmp(cmd, "art") == 0) {
+    char* sub = nullptr;
+    char* tail = nullptr;
+    splitCommand(args, &sub, &tail);
+    (void)tail;
+    if (sub != nullptr && std::strcmp(sub, "start") == 0) {
+      printStatus("art start", gDevice.startArt());
+    } else if (sub != nullptr && std::strcmp(sub, "fetch") == 0) {
+      requestAndWait();
+    } else if (sub != nullptr && std::strcmp(sub, "stop") == 0) {
+      printStatus("art stop", gDevice.stopPeriodic());
+    } else {
+      std::puts("Usage: art start | art fetch | art stop");
+    }
+  } else if (std::strcmp(cmd, "start_periodic") == 0) {
+    startPeriodicCommand(args, "start_periodic");
   } else if (std::strcmp(cmd, "start_art") == 0) {
     printStatus("start_art", gDevice.startArt());
   } else if (std::strcmp(cmd, "stop_periodic") == 0) {
@@ -528,11 +683,12 @@ void handleCommandLine(char* line) {
     SHT3x::Status st = gDevice.readStatus(reg);
     printStatus("status", st);
     if (st.ok()) {
-      std::printf("raw=0x%04X alert=%d heater=%d rh_alert=%d t_alert=%d reset=%d cmd_err=%d crc_err=%d\n",
-                  reg.raw, reg.alertPending ? 1 : 0, reg.heaterOn ? 1 : 0,
-                  reg.rhAlert ? 1 : 0, reg.tAlert ? 1 : 0, reg.resetDetected ? 1 : 0,
-                  reg.commandError ? 1 : 0, reg.writeCrcError ? 1 : 0);
+      printStatusRegister("status", reg);
     }
+  } else if (std::strcmp(cmd, "status_restore") == 0) {
+    SHT3x::StatusReadSnapshot snap{};
+    const SHT3x::Status st = gDevice.readStatusWithModeRestore(snap);
+    printStatusRestoreSnapshot(st, snap);
   } else if (std::strcmp(cmd, "status_raw") == 0) {
     uint16_t raw = 0;
     SHT3x::Status st = gDevice.readStatus(raw);
@@ -540,7 +696,7 @@ void handleCommandLine(char* line) {
     if (st.ok()) {
       std::printf("status=0x%04X\n", raw);
     }
-  } else if (std::strcmp(cmd, "clearstatus") == 0) {
+  } else if (std::strcmp(cmd, "clearstatus") == 0 || std::strcmp(cmd, "clear_status") == 0) {
     printStatus("clearstatus", gDevice.clearStatus());
   } else if (std::strcmp(cmd, "heater") == 0) {
     if (*args == '\0' || std::strcmp(args, "status") == 0) {
@@ -629,6 +785,8 @@ void handleCommandLine(char* line) {
     splitCommand(args, &sub, &tail);
     if (sub != nullptr && std::strcmp(sub, "disable") == 0) {
       printStatus("alert disable", gDevice.disableAlerts());
+    } else if (sub != nullptr && std::strcmp(sub, "show") == 0) {
+      printAllAlertLimits();
     } else if (sub != nullptr && std::strcmp(sub, "encode") == 0) {
       char* rhToken = std::strchr(tail, ' ');
       float temp = 0.0f;
@@ -689,7 +847,7 @@ void handleCommandLine(char* line) {
         std::printf("raw=0x%04X temperature=%.2f humidity=%.2f\n",
                     limit.raw, limit.temperatureC, limit.humidityPct);
       }
-    } else if (sub != nullptr && std::strcmp(sub, "write") == 0) {
+    } else if (sub != nullptr && (std::strcmp(sub, "write") == 0 || std::strcmp(sub, "set") == 0)) {
       char* tempToken = std::strchr(tail, ' ');
       SHT3x::AlertLimitKind kind{};
       if (tempToken != nullptr) {
@@ -707,9 +865,9 @@ void handleCommandLine(char* line) {
                   (tempToken != nullptr && rhToken != nullptr && parseAlertKind(tail, &kind) &&
                    parseFloat(tempToken, &temp) && parseFloat(rhToken, &rh))
                       ? gDevice.writeAlertLimit(kind, temp, rh)
-                      : SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "usage: alert write <kind> <T> <RH>"));
+                      : SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "usage: alert set <kind> <T> <RH>"));
     } else {
-      std::puts("Usage: alert read|write|raw|encode|decode|disable ...");
+      std::puts("Usage: alert show|read|set|write|raw|encode|decode|disable ...");
     }
   } else if (std::strcmp(cmd, "convert") == 0) {
     char* rhToken = std::strchr(args, ' ');

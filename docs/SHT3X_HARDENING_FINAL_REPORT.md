@@ -68,8 +68,9 @@ checks. Their findings are preserved in the prompt-specific reports.
 ## ESP-IDF Example and CI Changes
 
 - CI now runs `tools/check_idf_example_contract.py` directly.
-- CI now builds `examples/idf/basic` for `esp32s3` and `esp32s2` using
-  `espressif/idf:release-v5.4`.
+- CI is configured to build `examples/idf/basic` for `esp32s3` and `esp32s2`
+  using `espressif/idf:release-v5.4`; live workflow proof still depends on the
+  repository CI run.
 - `idf_component.yml` declares `idf: ">=5.4"`.
 - The IDF example no longer depends on checkout-directory component name
   `SHT3x-main`.

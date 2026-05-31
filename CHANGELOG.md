@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/check_idf_example_contract.py` to keep the ESP-IDF example on the same CLI contract.
 - Pure ESP-IDF CI matrix for the native example on `esp32s3` and `esp32s2`.
 - Hardware validation matrix and API latency/transaction documentation.
+- Pre-HIL runbook, HIL log template, and readiness report to keep hardware
+  validation evidence explicit and auditable.
 - Framework-neutral private timing/yield shim; real timing is supplied by application callbacks.
 - `docs/IDF_PORT_IMPLEMENTATION.md` with the implemented port structure, validation notes, and remaining hardware checks.
 
@@ -35,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.
 - `library.json` now declares both Arduino and ESP-IDF framework support, while `idf_component.yml` pins the supported ESP-IDF floor to 5.4.
 - The ESP-IDF example no longer depends on a checkout-directory-derived `SHT3x-main` component name.
+- Arduino and ESP-IDF diagnostic CLIs now expose HIL-friendly aliases and
+  `status_restore` output for stop/status/restore sub-status visibility.
 
 ### Fixed
 - Arduino bringup CLI now injects `nowMs`, `nowUs`, and `cooperativeYield` into the driver config, preventing startup `Command delay timeout` from leaving the CLI in `UNINIT`.
