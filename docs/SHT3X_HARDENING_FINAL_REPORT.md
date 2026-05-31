@@ -3,6 +3,10 @@
 Date: 2026-05-31
 Branch: `hardening/sht3x-industry-readiness`
 
+Note: This report remains the final software-hardening summary. It is superseded
+for pre-HIL execution details by `SHT3X_PRE_HIL_READINESS_REPORT.md` and for the
+documentation hierarchy cleanup by `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`.
+
 ## Starting Audit Verdict
 
 The starting audit classified the merged IDF branch as engineering-grade but
@@ -171,8 +175,9 @@ behavior under real bus failures.
 
 ## Merge Readiness Verdict
 
-Ready to merge if GitHub CI passes. No high-severity software blocker remains in
-the local branch after final validation.
+Locally ready for CI/merge review. Merge remains conditional on live GitHub CI
+and maintainer review; no high-severity software blocker remains in the local
+branch after final validation.
 
 ## Release Readiness Verdict
 

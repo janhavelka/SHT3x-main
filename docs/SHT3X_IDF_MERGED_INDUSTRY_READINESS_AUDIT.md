@@ -15,9 +15,18 @@ IDF merge classification: `QUALIFYING_IDF_MERGED`
 
 ## Executive Summary
 
-The ESP-IDF port is merged into `main`, and the core architecture is generally production-friendly: framework-neutral, injected I2C transport, required monotonic timing hooks, CRC validation, bounded waits, and a native IDF example with a task/queue CLI that keeps `tick()` running.
+The ESP-IDF port is merged into `main`, and the core architecture has
+production-oriented traits: framework-neutral, injected I2C transport, required
+monotonic timing hooks, CRC validation, bounded waits, and a native IDF example
+with a task/queue CLI that keeps `tick()` running.
 
-The major device-specific blocker is alert/status behavior in periodic mode. SHT3x ALERT mode is active in periodic acquisition, but `readStatus()` returns `BUSY` whenever `_periodicActive` is true and `readSettings()` hides that as `statusValid=false`. That prevents normal ALERT interrupt diagnosis while the mode that produces alerts is active. This should be fixed before any production-readiness claim.
+At audit time, the major device-specific blocker was alert/status behavior in
+periodic mode. SHT3x ALERT mode is active in periodic acquisition, but
+`readStatus()` returned `BUSY` whenever `_periodicActive` was true and
+`readSettings()` hid that as `statusValid=false`. That prevented normal ALERT
+interrupt diagnosis while the mode that produces alerts was active. Later
+hardening added the explicit `readStatusWithModeRestore()` helper; hardware
+ALERT validation remains pending.
 
 ## IDF Merge Evidence
 

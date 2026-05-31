@@ -95,10 +95,11 @@ Temp: <number> C, Humidity: <number> %
 Raw: T=0x.... RH=0x....
 status: raw=0x....
 status_restore:
+result: OK code=0
+initialMode=<mode> finalMode=<mode> modeInterrupted=<0|1> statusValid=1 restored=1
 stopStatus: OK code=0
 statusReadStatus: OK code=0
 restoreStatus: OK code=0
-statusValid=1 restored=1
 ```
 
 ESP-IDF diagnostic CLI success evidence may include:
@@ -110,10 +111,11 @@ temperature=<number> C humidity=<number> %RH
 raw=0x....
 status: raw=0x....
 status_restore:
+result: OK code=0
+initialMode=<mode> finalMode=<mode> modeInterrupted=<0|1> statusValid=1 restored=1
 stopStatus: OK code=0
 statusReadStatus: OK code=0
 restoreStatus: OK code=0
-statusValid=1 restored=1
 ```
 
 Any unexpected `ERR`, nonzero `code=`, `CRC_MISMATCH`, `TIMEOUT`, `I2C_*`,
@@ -169,7 +171,8 @@ Pass criteria:
 - `single high` produces one sample after the driver measurement time.
 - `raw` and `comp` show cached data from that sample.
 - `status` prints raw and parsed status bits.
-- `status_restore` prints `stopStatus`, `statusReadStatus`, `restoreStatus`,
+- `status_restore` prints `result`, `initialMode`, `finalMode`,
+  `modeInterrupted`, `stopStatus`, `statusReadStatus`, `restoreStatus`,
   `statusValid`, and `restored`.
 - `selftest` reports zero failures.
 
@@ -344,8 +347,8 @@ thresholds from the current reading:
 ```text
 alert set hs <T_now_plus_20C> <RH_now_minus_2pct>
 alert set hc <T_now_plus_19C> <RH_now_minus_5pct>
-alert set lc <T_now_minus_20C> 5
-alert set ls <T_now_minus_19C> 1
+alert set lc <T_now_minus_19C> 5
+alert set ls <T_now_minus_20C> 1
 alert show
 periodic start 1 high
 ```
@@ -370,8 +373,9 @@ drv
 Pass criteria:
 
 - ALERT pin asserts when thresholds are crossed.
-- `status_restore` prints `stopStatus`, `statusReadStatus`, `restoreStatus`,
-  `statusValid=1`, and `restored=1`.
+- `status_restore` prints `result`, initial/final mode, `modeInterrupted`,
+  `stopStatus`, `statusReadStatus`, `restoreStatus`, `statusValid=1`, and
+  `restored=1`.
 - Parsed status identifies the expected alert cause (`rh_alert` or `t_alert`).
 - `periodic fetch` after `status_restore` succeeds.
 - `clear_status` clears clearable status bits.

@@ -28,7 +28,7 @@ Detailed command-level procedures live in
 | Heater | Controlled ambient | Heater on/off/status | Heater bit changes; self-heating impact is visible and documented | Not run | Temperature/RH log |
 | Soft reset | Sensor idle | `softReset()` | Sensor returns to single-shot defaults; status reset bit behavior recorded | Not run | Serial/IDF log |
 | Interface reset | Bus-reset callback | SCL toggle implementation | Callback succeeds and later probe/read works | Not run | Logic analyzer/log |
-| General-call reset | Isolated bus only | Dedicated `0x00` handle in application adapter | Every supporting device reset is intentional and documented | Not implemented in shipped IDF diagnostic example | Application evidence |
+| General-call reset | Isolated bus only | Dedicated `0x00` handle in application adapter | Every supporting device reset is intentional and documented | Not run / blocked for shipped IDF diagnostic example; application adapter evidence required | Application evidence |
 | Fault injection | Fake or jig | Timeout, NACK, CRC mismatch | Specific `Status` codes, health transition, manual recovery | Not run | Test log |
 | Humidity production fixture | DUT plus reference sensor(s) | Controlled jig, prestaging, coupling, settling, MSA/Cpk | Limits account for reference accuracy, DUT accuracy, setup variation, and RH offset | Not run | Fixture report |
 

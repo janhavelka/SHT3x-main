@@ -2,7 +2,7 @@
 
 Date: 2026-05-31
 Branch: `hardening/sht3x-industry-readiness`
-Mode: implementation and validation
+Mode: implementation and local software validation
 
 ## Scope
 

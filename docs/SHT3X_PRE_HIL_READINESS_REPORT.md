@@ -3,14 +3,20 @@
 Date: 2026-05-31
 Branch: `hardening/sht3x-industry-readiness`
 Base commit before this preparation: `58fd3b1454feff6556370fdc6174dac25e25ffb1`
-Final preparation commit: the commit containing this report; record with
-`git rev-parse HEAD` after commit.
+Final preparation commit: `92f87a3082e05b138ef640a5f4e376f1377f46dc`.
+Later auditor-summary and serial-runner preparation commits are
+`46855ce445b3124fda693037eb805455cc1813e5` and
+`5049e847371bbf3abdfdbbc0ec2c2a01261b05f0`. Documentation hierarchy and
+line-ending cleanup are recorded in `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`.
 
 ## Summary
 
 The repository is prepared to enter full HIL. No full HIL was run during this
 pass. All hardware scenarios remain `Not run` until a real ESP32-S2/S3 plus
 SHT3x setup produces logs and fixture evidence.
+
+Note: this report remains the pre-HIL readiness gate. The later docs cleanup
+report supersedes it only for document hierarchy, link, and line-ending status.
 
 ## What Changed
 
@@ -55,7 +61,7 @@ Results from this pass:
 | Command | Result |
 | --- | --- |
 | `git status --short` | Dirty as expected before commit; only focused pre-HIL files changed. |
-| `git diff --check` | Pass, exit 0. Git emitted a CRLF normalization warning for `docs/CODEX_PROMPT_SHT3X_DRIVER.md`. |
+| `git diff --check` | Pass, exit 0. Git emitted a CRLF normalization warning for `docs/CODEX_PROMPT_SHT3X_DRIVER.md`; the later docs cleanup pass normalized that file. |
 | `python tools/check_core_timing_guard.py` | Pass: `Core timing guard PASSED`. |
 | `python tools/check_cli_contract.py` | Pass: `CLI contract PASSED`. |
 | `python tools/check_idf_example_contract.py` | Pass: `IDF example contract PASSED`. |

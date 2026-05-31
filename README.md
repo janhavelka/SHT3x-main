@@ -6,11 +6,30 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 - **Injected I2C transport** - no Wire dependency in library code
 - **Framework-neutral core** - Arduino and ESP-IDF integration live behind callbacks/adapters
-- **CRC validation** - all 16-bit data words verified
+- **CRC validation** - all 16-bit data words CRC-checked
 - **Alert mode support** - read/write limits, encode/decode helpers
 - **Periodic + ART modes** - 0.5/1/2/4/10 mps and ART
 - **Health monitoring** - automatic state tracking (READY/DEGRADED/OFFLINE)
 - **Deterministic behavior** - no unbounded loops, no heap allocations
+
+## Current State
+
+Branch `hardening/sht3x-industry-readiness` is software-hardened and
+pre-HIL-ready. Local software checks have passed for native tests (70/70),
+guard scripts, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
+
+Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
+in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
+or local ESP-IDF build log.
+
+Hardware validation has not run. ALERT pin behavior, humidity accuracy,
+fault-injection, and soak evidence remain pending and every unexecuted hardware
+row stays `Not run`. Release/tag work is also pending; version `1.5.0` remains
+under `[Unreleased]`.
+
+Next step: execute the HIL runbook and log template, or the optional host-side
+serial HIL runner, on real ESP32-S2/S3 plus SHT3x hardware and attach the
+resulting evidence.
 
 ## Installation
 
@@ -536,16 +555,18 @@ first because relative humidity is temperature-dependent.
 ## Documentation
 
 - `CHANGELOG.md` - full release history
+- `docs/README.md` - documentation index and authoritative-document map
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/IDF_PORT_IMPLEMENTATION.md` - implemented IDF component/example notes
-- `docs/HARDWARE_VALIDATION.md` - hardware validation matrix and ambient humidity caveats
-- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - detailed board/fixture validation procedures
-- `docs/SHT3X_HIL_RUNBOOK.md` - operator runbook for full hardware-in-loop validation
+- `docs/HARDWARE_VALIDATION.md` - maintained hardware validation status; all unrun rows remain `Not run`
+- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - hardware validation planning matrix
+- `docs/SHT3X_HIL_RUNBOOK.md` - authoritative operator runbook for hardware-in-loop validation
 - `docs/SHT3X_HIL_LOG_TEMPLATE.md` - structured capture template for HIL logs
 - `docs/SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial HIL runner procedure
 - `docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - copy-paste target profile for runner evidence
 - `docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md` - runner implementation and validation report
 - `docs/SHT3X_PRE_HIL_READINESS_REPORT.md` - latest pre-HIL readiness gate report
+- `docs/SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md` - docs cleanup report for the final pre-HIL handoff
 - `docs/SHT3X_ALERT_STATUS_FIX_REPORT.md` - ALERT/status behavior and helper design
 - `docs/SHT3X_IDF_CI_DOCS_REPORT.md` - ESP-IDF CI/docs hardening report
 - `docs/SHT3X_HARDENING_FINAL_REPORT.md` - final branch readiness report

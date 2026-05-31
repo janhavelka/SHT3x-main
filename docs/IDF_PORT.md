@@ -215,7 +215,7 @@ ESP-IDF examples:
 
 - Compile the existing Arduino PlatformIO environments.
 - Compile native tests to preserve framework-neutral behavior.
-- CI compiles the ESP-IDF example for ESP32-S2 and ESP32-S3 with
+- CI is configured to compile the ESP-IDF example for ESP32-S2 and ESP32-S3 with
   `espressif/idf:release-v5.4`.
 - Run `tools/check_idf_example_contract.py` in CI and locally before IDF builds.
 - Hardware smoke test both valid addresses, `0x44` and `0x45`.
@@ -245,7 +245,8 @@ ESP-IDF examples:
 3. Add an IDF I2C adapter using `<driver/i2c_master.h>` outside the core driver. Done.
 4. Add optional IDF hard-reset and bus-reset callback examples outside the library. Documented as application-owned.
 5. Add `examples/idf/basic` with bus setup, adapter callbacks, timing callbacks, and CLI parity with the Arduino bringup example. Done.
-6. Build with ESP-IDF 5.4 for ESP32-S2 and ESP32-S3 in CI. Added.
+6. ESP-IDF 5.4 CI build jobs for ESP32-S2 and ESP32-S3 are added; verify the
+   latest workflow logs before claiming validation.
 7. Run Arduino and native builds to confirm existing users are unaffected. See
    `docs/SHT3X_IDF_CI_DOCS_REPORT.md` for the latest local validation.
 8. Run hardware tests for probe, CRC, single-shot, periodic mode, resets, alerts, heater, and fault injection. Pending hardware.

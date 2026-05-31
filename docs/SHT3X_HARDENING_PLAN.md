@@ -14,7 +14,14 @@
 
 ## Audit Summary
 
-The IDF-merged audit classifies the driver as engineering-grade with major gaps, not yet industry-grade. The architecture is strong: framework-neutral core code, injected I2C transport, mandatory monotonic timing hooks, CRC validation, bounded waits, tracked health/offline behavior, and a native ESP-IDF example with CLI/tick separation. The primary production blocker is SHT3x ALERT/status behavior in periodic and ART modes. Pure ESP-IDF CI proof and hardware validation remain missing.
+At plan start, the IDF-merged audit classified the driver as engineering-grade
+with major gaps, not yet industry-grade. The architecture was strong:
+framework-neutral core code, injected I2C transport, mandatory monotonic timing
+hooks, CRC validation, bounded waits, tracked health/offline behavior, and a
+native ESP-IDF example with CLI/tick separation. The primary production blocker
+at plan start was SHT3x ALERT/status behavior in periodic and ART modes. Later
+prompt work addressed that software blocker; pure ESP-IDF live proof and
+hardware validation remain pending.
 
 This prompt did not implement production fixes. Only `AGENTS.md` and this planning document were changed.
 
