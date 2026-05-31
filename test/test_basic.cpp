@@ -456,6 +456,110 @@ static void captureYield(void* user) {
   static_cast<CommandCaptureTransport*>(user)->nowMs++;
 }
 
+struct FrameScriptTransport {
+  uint32_t nowMs = 1000;
+  Status writeStatus = Status::Ok();
+  Status readStatus = Status::Ok();
+  uint16_t failCommand = 0;
+  Status failCommandStatus = Status::Ok();
+  uint16_t statusRaw = 0;
+  bool corruptStatusCrc = false;
+  uint16_t commands[40] = {};
+  size_t commandCount = 0;
+  uint32_t writes = 0;
+  uint32_t reads = 0;
+  uint16_t lastCommand = 0;
+};
+
+static Status frameWrite(uint8_t addr, const uint8_t* data, size_t len,
+                         uint32_t timeoutMs, void* user) {
+  (void)addr;
+  (void)timeoutMs;
+  auto* ctx = static_cast<FrameScriptTransport*>(user);
+  ctx->writes++;
+  uint16_t command = 0;
+  if (data != nullptr && len >= 2) {
+    command = static_cast<uint16_t>((data[0] << 8) | data[1]);
+    ctx->lastCommand = command;
+    if (ctx->commandCount < 40) {
+      ctx->commands[ctx->commandCount++] = command;
+    }
+  }
+  if (ctx->failCommand != 0 && command == ctx->failCommand) {
+    return ctx->failCommandStatus;
+  }
+  return ctx->writeStatus;
+}
+
+static Status frameWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
+                             uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                             void* user) {
+  (void)addr;
+  (void)txData;
+  (void)txLen;
+  (void)timeoutMs;
+  auto* ctx = static_cast<FrameScriptTransport*>(user);
+  ctx->reads++;
+  Status st = ctx->readStatus;
+  if (!st.ok() || rxData == nullptr) {
+    return st;
+  }
+
+  if (rxLen == cmd::STATUS_DATA_LEN) {
+    rxData[0] = static_cast<uint8_t>(ctx->statusRaw >> 8);
+    rxData[1] = static_cast<uint8_t>(ctx->statusRaw & 0xFF);
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
+    if (ctx->corruptStatusCrc) {
+      rxData[2] ^= 0x01;
+    }
+  } else if (rxLen == cmd::MEASUREMENT_DATA_LEN) {
+    rxData[0] = 0x00;
+    rxData[1] = 0x00;
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
+    rxData[3] = 0x00;
+    rxData[4] = 0x00;
+    rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
+  }
+  return st;
+}
+
+static uint32_t frameNowMs(void* user) {
+  return static_cast<FrameScriptTransport*>(user)->nowMs;
+}
+
+static uint32_t frameNowUs(void* user) {
+  return static_cast<FrameScriptTransport*>(user)->nowMs * 1000U;
+}
+
+static void frameYield(void* user) {
+  static_cast<FrameScriptTransport*>(user)->nowMs++;
+}
+
+static Config makeFrameConfig(FrameScriptTransport& ctx) {
+  Config cfg;
+  cfg.i2cWrite = frameWrite;
+  cfg.i2cWriteRead = frameWriteRead;
+  cfg.i2cUser = &ctx;
+  cfg.nowMs = frameNowMs;
+  cfg.nowUs = frameNowUs;
+  cfg.cooperativeYield = frameYield;
+  cfg.timeUser = &ctx;
+  cfg.i2cTimeoutMs = 10;
+  cfg.commandDelayMs = 1;
+  cfg.offlineThreshold = 3;
+  return cfg;
+}
+
+static void clearFrameLog(FrameScriptTransport& ctx) {
+  ctx.commandCount = 0;
+  ctx.writes = 0;
+  ctx.reads = 0;
+  ctx.lastCommand = 0;
+  for (size_t i = 0; i < 40; ++i) {
+    ctx.commands[i] = 0;
+  }
+}
+
 void test_get_settings_snapshot_fields() {
   FakeTransport bus;
   SHT3xDevice device;
@@ -492,6 +596,7 @@ void test_get_settings_snapshot_fields() {
   TEST_ASSERT_EQUAL_UINT32(0u, snap.sampleTimestampMs);
   TEST_ASSERT_EQUAL_UINT32(0u, snap.missedSamples);
   TEST_ASSERT_FALSE(snap.statusValid);
+  TEST_ASSERT_EQUAL(Err::UNSUPPORTED, snap.statusReadStatus.code);
 }
 
 void test_begin_resets_invalid_config_to_uninit_defaults_and_no_startup_health() {
@@ -1207,6 +1312,348 @@ void test_read_paths_no_combined_and_respect_delay() {
   TEST_ASSERT_FALSE(ctx.tooSoon);
 }
 
+void test_read_status_periodic_requires_explicit_restore_helper() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  uint16_t raw = 0;
+  st = device.readStatus(raw);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  StatusRegister parsed;
+  st = device.readStatus(parsed);
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_read_status_with_mode_restore_periodic_reads_alert_and_restores() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_2, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.statusRaw = static_cast<uint16_t>(
+      cmd::STATUS_ALERT_PENDING | cmd::STATUS_HEATER_ON |
+      cmd::STATUS_RH_ALERT | cmd::STATUS_T_ALERT |
+      cmd::STATUS_RESET_DETECTED | cmd::STATUS_COMMAND_ERROR |
+      cmd::STATUS_WRITE_CRC_ERROR);
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(snap.modeInterrupted);
+  TEST_ASSERT_TRUE(snap.restored);
+  TEST_ASSERT_TRUE(snap.statusValid);
+  TEST_ASSERT_TRUE(snap.statusReadStatus.ok());
+  TEST_ASSERT_TRUE(snap.restoreStatus.ok());
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, snap.initialMode);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, snap.finalMode);
+  TEST_ASSERT_TRUE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+  TEST_ASSERT_EQUAL_UINT16(ctx.statusRaw, snap.status.raw);
+  TEST_ASSERT_TRUE(snap.status.alertPending);
+  TEST_ASSERT_TRUE(snap.status.heaterOn);
+  TEST_ASSERT_TRUE(snap.status.rhAlert);
+  TEST_ASSERT_TRUE(snap.status.tAlert);
+  TEST_ASSERT_TRUE(snap.status.resetDetected);
+  TEST_ASSERT_TRUE(snap.status.commandError);
+  TEST_ASSERT_TRUE(snap.status.writeCrcError);
+
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[1]);
+  TEST_ASSERT_EQUAL_UINT16(SHT3xDevice::_commandForPeriodic(
+                               Repeatability::HIGH_REPEATABILITY,
+                               PeriodicRate::MPS_2),
+                           ctx.commands[2]);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+}
+
+void test_read_status_with_mode_restore_art_reads_and_restores_art() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startArt();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.statusRaw = cmd::STATUS_T_ALERT;
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(snap.modeInterrupted);
+  TEST_ASSERT_TRUE(snap.restored);
+  TEST_ASSERT_TRUE(snap.statusValid);
+  TEST_ASSERT_TRUE(snap.status.tAlert);
+  TEST_ASSERT_EQUAL(Mode::ART, snap.initialMode);
+  TEST_ASSERT_EQUAL(Mode::ART, snap.finalMode);
+  TEST_ASSERT_TRUE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::ART, device._mode);
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[1]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_ART, ctx.commands[2]);
+}
+
+void test_read_settings_status_success_sets_status_valid_and_reason() {
+  FrameScriptTransport ctx;
+  ctx.statusRaw = static_cast<uint16_t>(cmd::STATUS_HEATER_ON | cmd::STATUS_RESET_DETECTED);
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  SettingsSnapshot snap;
+  st = device.readSettings(snap);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(snap.statusValid);
+  TEST_ASSERT_TRUE(snap.statusReadStatus.ok());
+  TEST_ASSERT_TRUE(snap.status.heaterOn);
+  TEST_ASSERT_TRUE(snap.status.resetDetected);
+  TEST_ASSERT_EQUAL(1u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+}
+
+void test_read_settings_periodic_exposes_status_busy_reason() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  SettingsSnapshot snap;
+  st = device.readSettings(snap);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(snap.periodicActive);
+  TEST_ASSERT_FALSE(snap.statusValid);
+  TEST_ASSERT_EQUAL(Err::BUSY, snap.statusReadStatus.code);
+  TEST_ASSERT_EQUAL_STRING("Stop periodic mode before reading status", snap.statusReadStatus.msg);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_read_settings_transport_failure_is_preserved() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.readStatus = Status::Error(Err::I2C_TIMEOUT, "status timeout", -77);
+  clearFrameLog(ctx);
+  SettingsSnapshot snap;
+  st = device.readSettings(snap);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(-77, st.detail);
+  TEST_ASSERT_EQUAL_STRING("status timeout", st.msg);
+  TEST_ASSERT_FALSE(snap.statusValid);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, snap.statusReadStatus.code);
+  TEST_ASSERT_EQUAL_INT32(-77, snap.statusReadStatus.detail);
+  TEST_ASSERT_EQUAL(1u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+}
+
+void test_clear_status_command_only_failure_and_busy_modes() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  st = device.clearStatus();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_EQUAL(1u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_CLEAR_STATUS, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  ctx.failCommand = cmd::CMD_CLEAR_STATUS;
+  ctx.failCommandStatus = Status::Error(Err::I2C_TIMEOUT, "clear timeout", -12);
+  clearFrameLog(ctx);
+  st = device.clearStatus();
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(-12, st.detail);
+  TEST_ASSERT_EQUAL(1u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_CLEAR_STATUS, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  ctx.failCommand = 0;
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  clearFrameLog(ctx);
+  st = device.clearStatus();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_status_with_mode_restore_break_failure_leaves_periodic_active() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.failCommand = cmd::CMD_BREAK;
+  ctx.failCommandStatus = Status::Error(Err::I2C_TIMEOUT, "break timeout", -31);
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(-31, st.detail);
+  TEST_ASSERT_TRUE(snap.modeInterrupted);
+  TEST_ASSERT_FALSE(snap.restored);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, snap.stopStatus.code);
+  TEST_ASSERT_EQUAL(Err::UNSUPPORTED, snap.statusReadStatus.code);
+  TEST_ASSERT_TRUE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+  TEST_ASSERT_EQUAL(1u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_status_with_mode_restore_status_write_failure_restores_periodic() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_4, Repeatability::MEDIUM_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.failCommand = cmd::CMD_READ_STATUS;
+  ctx.failCommandStatus = Status::Error(Err::I2C_NACK_DATA, "status command nack", -41);
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_EQUAL(Err::I2C_NACK_DATA, st.code);
+  TEST_ASSERT_EQUAL_INT32(-41, st.detail);
+  TEST_ASSERT_FALSE(snap.statusValid);
+  TEST_ASSERT_EQUAL(Err::I2C_NACK_DATA, snap.statusReadStatus.code);
+  TEST_ASSERT_TRUE(snap.restoreStatus.ok());
+  TEST_ASSERT_TRUE(snap.restored);
+  TEST_ASSERT_TRUE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[1]);
+  TEST_ASSERT_EQUAL_UINT16(SHT3xDevice::_commandForPeriodic(
+                               Repeatability::MEDIUM_REPEATABILITY,
+                               PeriodicRate::MPS_4),
+                           ctx.commands[2]);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_status_with_mode_restore_status_read_failure_restores_periodic() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.readStatus = Status::Error(Err::I2C_TIMEOUT, "status read timeout", -42);
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(-42, st.detail);
+  TEST_ASSERT_FALSE(snap.statusValid);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, snap.statusReadStatus.code);
+  TEST_ASSERT_TRUE(snap.restoreStatus.ok());
+  TEST_ASSERT_TRUE(snap.restored);
+  TEST_ASSERT_TRUE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+}
+
+void test_status_with_mode_restore_crc_mismatch_restores_and_reports_crc() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.statusRaw = cmd::STATUS_ALERT_PENDING;
+  ctx.corruptStatusCrc = true;
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, st.code);
+  TEST_ASSERT_FALSE(snap.statusValid);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, snap.statusReadStatus.code);
+  TEST_ASSERT_TRUE(snap.restoreStatus.ok());
+  TEST_ASSERT_TRUE(snap.restored);
+  TEST_ASSERT_TRUE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+}
+
+void test_status_with_mode_restore_restore_failure_reports_partial_state() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_2, Repeatability::LOW_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  const uint16_t restoreCommand = SHT3xDevice::_commandForPeriodic(
+      Repeatability::LOW_REPEATABILITY, PeriodicRate::MPS_2);
+  ctx.failCommand = restoreCommand;
+  ctx.failCommandStatus = Status::Error(Err::I2C_TIMEOUT, "restore timeout", -51);
+  ctx.statusRaw = cmd::STATUS_RH_ALERT;
+  clearFrameLog(ctx);
+
+  StatusReadSnapshot snap;
+  st = device.readStatusWithModeRestore(snap);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(-51, st.detail);
+  TEST_ASSERT_TRUE(snap.statusValid);
+  TEST_ASSERT_TRUE(snap.status.rhAlert);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, snap.restoreStatus.code);
+  TEST_ASSERT_FALSE(snap.restored);
+  TEST_ASSERT_FALSE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, snap.finalMode);
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[1]);
+  TEST_ASSERT_EQUAL_UINT16(restoreCommand, ctx.commands[2]);
+}
+
 void test_periodic_fetch_margin_blocks_early_fetch() {
   CountTransport ctx;
   SHT3xDevice device;
@@ -1580,6 +2027,18 @@ int main(int argc, char** argv) {
   RUN_TEST(test_setters_restart_art_mode);
   RUN_TEST(test_periodic_setters_do_not_mutate_config_on_restart_failure);
   RUN_TEST(test_read_paths_no_combined_and_respect_delay);
+  RUN_TEST(test_read_status_periodic_requires_explicit_restore_helper);
+  RUN_TEST(test_read_status_with_mode_restore_periodic_reads_alert_and_restores);
+  RUN_TEST(test_read_status_with_mode_restore_art_reads_and_restores_art);
+  RUN_TEST(test_read_settings_status_success_sets_status_valid_and_reason);
+  RUN_TEST(test_read_settings_periodic_exposes_status_busy_reason);
+  RUN_TEST(test_read_settings_transport_failure_is_preserved);
+  RUN_TEST(test_clear_status_command_only_failure_and_busy_modes);
+  RUN_TEST(test_status_with_mode_restore_break_failure_leaves_periodic_active);
+  RUN_TEST(test_status_with_mode_restore_status_write_failure_restores_periodic);
+  RUN_TEST(test_status_with_mode_restore_status_read_failure_restores_periodic);
+  RUN_TEST(test_status_with_mode_restore_crc_mismatch_restores_and_reports_crc);
+  RUN_TEST(test_status_with_mode_restore_restore_failure_reports_partial_state);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_raw_and_compensated_samples_remain_after_measurement_read);
   RUN_TEST(test_zero_timestamp_sample_age_uses_has_sample_flag);

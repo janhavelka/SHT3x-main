@@ -201,7 +201,7 @@ fails with `INVALID_CONFIG`.
 | `driverState()` | Cross-library alias for the current `DriverState`. |
 | `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read; snapshots include `hasSample`. |
 | `writeCommand()` / `writeCommandWithData()` / `readCommand()` | Advanced command-level helpers for upper layers that need direct access to the SHT3x command set. |
-| `readStatus()` / `clearStatus()` / `readHeaterStatus()` | Status-register and heater helpers. |
+| `readStatus()` / `readStatusWithModeRestore()` / `clearStatus()` / `readHeaterStatus()` | Status-register, ALERT-cause, and heater helpers. |
 | `readSerialNumber()` | Read the electronic identification code. |
 | `readAlertLimit*()` / `writeAlertLimit*()` / `disableAlerts()` | Physical and raw alert-threshold access. |
 
@@ -226,6 +226,35 @@ the cached configuration is updated only after that restart succeeds.
 - `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
 - Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
+
+### ALERT and Status Register
+
+SHT3x ALERT mode is associated with periodic acquisition. ALERT cause is exposed
+through the status register bits (`alertPending`, `rhAlert`, and `tAlert`).
+
+`readStatus()` is non-destructive and does not clear status flags. Local
+Sensirion docs only explicitly allow Fetch Data while periodic/ART acquisition
+is active, so `readStatus()` returns `BUSY` in active periodic/ART mode instead
+of issuing an undocumented command sequence.
+
+Use `readStatusWithModeRestore()` when ALERT diagnosis is needed while
+periodic/ART mode is active. It sends Break, reads the status register, then
+attempts to restore the previous periodic or ART mode. This aborts the current
+conversion cadence and restarts timing from the restore point. Inspect
+`StatusReadSnapshot::stopStatus`, `statusReadStatus`, and `restoreStatus` if the
+helper returns an error.
+
+`readSettings()` remains non-disruptive. If it cannot read status, it sets
+`statusValid=false` and records the exact reason in
+`SettingsSnapshot::statusReadStatus`.
+
+`clearStatus()` is destructive for status flags 15, 11, 10, and 4. It is never
+called implicitly by `readStatus()`, `readStatusWithModeRestore()`, or
+`readSettings()`.
+
+Alert-limit read/write commands are not documented as valid during active
+periodic/ART acquisition. Configure alert limits before starting periodic/ART,
+or stop and explicitly restart acquisition around alert-limit changes.
 
 ## Transport Contract (Required)
 
@@ -379,6 +408,29 @@ if (device.readSettings(snap).ok()) {
   Serial.printf("Mode: %d, Heater: %d\n",
                 static_cast<int>(snap.mode),
                 snap.statusValid ? static_cast<int>(snap.status.heaterOn) : -1);
+  if (!snap.statusValid) {
+    Serial.printf("Status unavailable: %d\n",
+                  static_cast<int>(snap.statusReadStatus.code));
+  }
+}
+```
+
+For ALERT diagnosis while periodic/ART acquisition is active:
+
+```cpp
+SHT3x::StatusReadSnapshot status;
+SHT3x::Status st = device.readStatusWithModeRestore(status);
+if (status.statusValid) {
+  Serial.printf("ALERT=%d RH=%d T=%d raw=0x%04X\n",
+                status.status.alertPending ? 1 : 0,
+                status.status.rhAlert ? 1 : 0,
+                status.status.tAlert ? 1 : 0,
+                status.status.raw);
+}
+if (!st.ok()) {
+  Serial.printf("status=%d restore=%d\n",
+                static_cast<int>(status.statusReadStatus.code),
+                static_cast<int>(status.restoreStatus.code));
 }
 ```
 

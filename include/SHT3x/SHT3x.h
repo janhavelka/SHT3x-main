@@ -70,6 +70,20 @@ struct SettingsSnapshot {
   uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
   StatusRegister status = {};                                 ///< Parsed status-register snapshot when available
   bool statusValid = false;                                   ///< True if status was read successfully for this snapshot
+  Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of the status-read attempt
+};
+
+/// Result for status reads that may temporarily stop periodic/ART acquisition
+struct StatusReadSnapshot {
+  StatusRegister status = {};                                 ///< Parsed status register when statusValid is true
+  bool statusValid = false;                                   ///< True if the status read succeeded
+  Status stopStatus = Status::Ok();                           ///< Break/stop result; OK when no stop was needed
+  Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of status read step
+  Status restoreStatus = Status::Ok();                        ///< Restore result; OK when no restore was needed
+  Mode initialMode = Mode::SINGLE_SHOT;                       ///< Mode observed before the operation
+  Mode finalMode = Mode::SINGLE_SHOT;                         ///< Mode after all attempted steps
+  bool modeInterrupted = false;                               ///< True when periodic/ART was stopped for this read
+  bool restored = true;                                       ///< True when no restore was needed or restore succeeded
 };
 
 /// Cached sensor settings for restore-after-reset (RAM only)
@@ -98,7 +112,11 @@ struct AlertLimit {
   float humidityPct = 0.0f;  ///< Approximate humidity threshold
 };
 
-/// SHT3x driver class
+/// SHT3x driver class.
+///
+/// Public APIs are synchronous, not ISR-safe, and not internally thread-safe.
+/// Serialize access externally and use interrupt handlers only to signal work
+/// into normal task/loop context.
 class SHT3x {
 public:
   // =========================================================================
@@ -111,7 +129,8 @@ public:
   Status begin(const Config& config);
 
   /// Process pending operations (call regularly from loop)
-  /// @param nowMs Current timestamp in milliseconds
+  /// @param nowMs Current timestamp from the same wrapping millisecond timebase
+  ///              used by Config::nowMs
   void tick(uint32_t nowMs);
 
   /// Shutdown the driver and release resources
@@ -251,9 +270,9 @@ public:
   /// Check if cached settings are available
   bool hasCachedSettings() const { return _hasCachedSettings; }
 
-  /// Get a snapshot of settings/state and attempt to read status register
-  /// statusValid is true only if the status read succeeds. If periodic mode
-  /// blocks status reads, this returns OK with statusValid=false.
+  /// Get a snapshot of settings/state and attempt a non-disruptive status read.
+  /// statusValid is true only if the status read succeeds; statusReadStatus
+  /// records the exact status-read result when it does not.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
@@ -316,13 +335,25 @@ public:
   // Status / Heater / Resets
   // =========================================================================
 
-  /// Read raw status register
+  /// Read raw status register without clearing flags.
+  /// @note Returns BUSY while periodic/ART acquisition is active; use
+  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
   Status readStatus(uint16_t& raw);
 
-  /// Read and parse status register
+  /// Read and parse status register without clearing flags.
+  /// @note Returns BUSY while periodic/ART acquisition is active; use
+  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
   Status readStatus(StatusRegister& out);
 
-  /// Clear status flags
+  /// Read status, breaking and restoring periodic/ART mode when needed.
+  /// @note This is disruptive in periodic/ART mode: it sends Break, aborts the
+  ///       current acquisition cadence, reads status, and attempts to restore
+  ///       the prior periodic or ART mode. Inspect the snapshot for partial
+  ///       stop/read/restore results when this returns an error.
+  Status readStatusWithModeRestore(StatusReadSnapshot& out);
+
+  /// Clear status flags. This is destructive for status bits 15, 11, 10, and 4.
+  /// @note Returns BUSY while periodic/ART acquisition is active.
   Status clearStatus();
 
   /// Enable/disable heater
@@ -352,16 +383,22 @@ public:
   // Alert Limits
   // =========================================================================
 
-  /// Read raw alert limit word
+  /// Read raw alert limit word.
+  /// @note Alert mode is active during periodic acquisition, but alert-limit
+  ///       commands are not documented as valid while periodic/ART is running.
+  ///       This API returns BUSY in active periodic/ART mode.
   Status readAlertLimitRaw(AlertLimitKind kind, uint16_t& value);
 
-  /// Read and decode alert limit
+  /// Read and decode alert limit.
+  /// @note Returns BUSY in active periodic/ART mode.
   Status readAlertLimit(AlertLimitKind kind, AlertLimit& out);
 
-  /// Write raw alert limit word (CRC is computed internally)
+  /// Write raw alert limit word (CRC is computed internally).
+  /// @note Returns BUSY in active periodic/ART mode.
   Status writeAlertLimitRaw(AlertLimitKind kind, uint16_t value);
 
-  /// Encode and write alert limit from physical values
+  /// Encode and write alert limit from physical values.
+  /// @note Returns BUSY in active periodic/ART mode.
   Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
 
   /// Disable alerts by setting LowSet > HighSet
@@ -482,6 +519,7 @@ private:
   static uint16_t _commandForAlertWrite(AlertLimitKind kind);
   static uint32_t _periodMsForRate(PeriodicRate rate);
   static bool _timeElapsed(uint32_t now, uint32_t target);
+  static void _parseStatusRegister(uint16_t raw, StatusRegister& out);
 
   // =========================================================================
   // State
