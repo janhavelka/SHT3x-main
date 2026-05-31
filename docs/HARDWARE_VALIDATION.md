@@ -7,6 +7,9 @@ tests, CI builds, and fake-transport unit tests are not hardware validation.
 Do not mark a row as pass unless the named board, sensor, bus, firmware, and
 evidence artifact were actually used.
 
+Detailed command-level procedures live in
+`docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md`.
+
 ## Results Matrix
 
 | Area | Target | Setup required | Expected result | Current result | Evidence |

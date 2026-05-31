@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Public `StatusReadSnapshot` and `readStatusWithModeRestore()` for explicit
+  ALERT/status diagnosis that breaks and restores periodic/ART acquisition.
+- `SettingsSnapshot::statusReadStatus` so failed or intentionally skipped
+  status reads are visible instead of hidden behind `statusValid=false`.
 - ESP-IDF component metadata for building the framework-neutral core with `idf_component_register`.
 - ESP-IDF basic diagnostic example with an application-owned `i2c_master` bus/device and SHT3x transport callbacks.
 - Arduino `examples/common/Sht3xCli.*` bringup command processor for diagnostics.
@@ -18,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/IDF_PORT_IMPLEMENTATION.md` with the implemented port structure, validation notes, and remaining hardware checks.
 
 ### Changed
+- `SHT3x` copy and move construction/assignment are now explicitly deleted to
+  prevent duplicate mutable driver instances targeting the same physical sensor.
+- Active periodic/ART status reads now use a documented explicit helper;
+  direct `readStatus()` remains non-disruptive and returns `BUSY` while
+  periodic/ART acquisition is active.
+- Public headers now document thread/ISR safety, callback recursion limits,
+  status-bit clearability, heater caveats, clock-stretch scope, and partial
+  multi-step operation behavior.
 - Core/IDF guard scripts now reject Arduino and ESP-IDF framework headers in core/public headers and `src/`.
 - `begin()` now rejects missing timing/yield callbacks as `INVALID_CONFIG` before touching I2C.
 - README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.

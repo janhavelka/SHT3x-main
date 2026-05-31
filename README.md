@@ -539,8 +539,10 @@ first because relative humidity is temperature-dependent.
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/IDF_PORT_IMPLEMENTATION.md` - implemented IDF component/example notes
 - `docs/HARDWARE_VALIDATION.md` - hardware validation matrix and ambient humidity caveats
+- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - detailed board/fixture validation procedures
 - `docs/SHT3X_ALERT_STATUS_FIX_REPORT.md` - ALERT/status behavior and helper design
 - `docs/SHT3X_IDF_CI_DOCS_REPORT.md` - ESP-IDF CI/docs hardening report
+- `docs/SHT3X_HARDENING_FINAL_REPORT.md` - final branch readiness report
 - `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
 - `docs/SHT3x_HT_AN_AlertMode.pdf` - Sensirion alert-mode application note
 - `docs/Sensirion_Humidity_Sensors_Testing_at_Ambient_Conditions.pdf` - ambient humidity production-test guidance
