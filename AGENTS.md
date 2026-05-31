@@ -55,6 +55,29 @@ Rules:
 
 ---
 
+# SHT3x hardening rules
+
+- Core library code in `include/` and `src/` must remain framework-neutral: no Arduino, Wire, ESP-IDF, FreeRTOS, logging framework, heap-heavy framework types, or platform timing calls.
+- I2C ownership must stay external/injected. The core driver must not own the bus, pins, global `Wire`, IDF bus/device handles, locks, or OS tasks.
+- Public fallible APIs must return `Status`; do not add exceptions or hidden fatal behavior.
+- Timing hooks (`nowMs`, `nowUs`, `cooperativeYield`) are required for bounded waits; do not silently degrade timing behavior.
+- Public APIs are not ISR-safe and the driver instance is not internally thread-safe unless explicitly changed and tested.
+- SHT3x status/ALERT behavior must follow the datasheet, especially periodic and ART acquisition modes.
+- Do not hide ALERT/status diagnostics behind `statusValid=false` without exposing the reason.
+- General-call reset is a bus-manager/application policy, not an automatic shared-bus recovery action.
+- Multi-step operations must either be proven rollback-safe or expose/document possible partial hardware state.
+- Examples must be labeled honestly as diagnostic, bring-up, or production-style.
+- Do not claim hardware validation, ALERT validation, or pure ESP-IDF validation unless the commands/builds actually ran.
+
+## Planned hardening subagents
+
+- `sht3x-datasheet-agent`: Re-check datasheet and local extracted docs for status, ALERT, periodic, ART, and command-validity facts without inferring undocumented behavior.
+- `core-contracts-agent`: Inspect public API and core implementation for framework neutrality, timing, health/offline behavior, copy/move semantics, and thread/ISR contracts.
+- `tests-agent`: Inspect native tests and fake transports, then identify focused public API and partial-transaction tests.
+- `idf-ci-agent`: Inspect ESP-IDF example, component metadata, guard scripts, and CI gaps for pure ESP-IDF validation.
+
+---
+
 ## I2C Manager + Transport (Required)
 
 - The library MUST NOT own I2C. It never touches `Wire` directly.

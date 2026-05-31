@@ -44,7 +44,7 @@ SHT3x::Status validate(uint8_t addr, const void* user) {
     return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG,
                                 "IDF I2C device handle is null");
   }
-  if (addr != ctx->address && !(ctx->allowGeneralCall && addr == 0x00U)) {
+  if (addr != ctx->address) {
     return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
                                 "Unexpected I2C address");
   }
