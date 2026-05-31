@@ -14,6 +14,9 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+// Diagnostic bring-up example only. It owns one I2C bus/device handle and
+// calls the driver from app_main; production multi-task/shared-bus use must
+// serialize driver access externally and provide any general-call device handle.
 #include "IdfI2cTransport.h"
 #include "SHT3x/SHT3x.h"
 

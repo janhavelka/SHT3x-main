@@ -1,5 +1,12 @@
 # SHT3X IDF-Merged Industry-Readiness Audit
 
+Historical note, 2026-05-31: this report is retained as a snapshot of the
+pre-hardening audit. The ALERT/status blocker described below was addressed by
+`readStatusWithModeRestore()` and follow-up tests; see
+`docs/SHT3X_ALERT_STATUS_FIX_REPORT.md`. Current ESP-IDF CI/docs status is in
+`docs/SHT3X_IDF_CI_DOCS_REPORT.md`, and hardware evidence is tracked in
+`docs/HARDWARE_VALIDATION.md`.
+
 Date: 2026-05-29
 Repository: `C:\Users\HonzovoSpectre\Documents\Projects\SHT3x-main`
 Branch: `audit/sht3x-idf-merged-industry-readiness`

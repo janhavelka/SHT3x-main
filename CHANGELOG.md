@@ -9,17 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - ESP-IDF component metadata for building the framework-neutral core with `idf_component_register`.
-- ESP-IDF basic example with an application-owned `i2c_master` bus/device and SHT3x transport callbacks.
-- Framework-neutral `examples/common/Sht3xCli.*` command processor used by both Arduino and ESP-IDF examples.
+- ESP-IDF basic diagnostic example with an application-owned `i2c_master` bus/device and SHT3x transport callbacks.
+- Arduino `examples/common/Sht3xCli.*` bringup command processor for diagnostics.
 - `tools/check_idf_example_contract.py` to keep the ESP-IDF example on the same CLI contract.
+- Pure ESP-IDF CI matrix for the native example on `esp32s3` and `esp32s2`.
+- Hardware validation matrix and API latency/transaction documentation.
 - Framework-neutral private timing/yield shim; real timing is supplied by application callbacks.
 - `docs/IDF_PORT_IMPLEMENTATION.md` with the implemented port structure, validation notes, and remaining hardware checks.
 
 ### Changed
-- Core timing guard now rejects Arduino and ESP-IDF framework headers in core/public headers and `src/`.
+- Core/IDF guard scripts now reject Arduino and ESP-IDF framework headers in core/public headers and `src/`.
 - `begin()` now rejects missing timing/yield callbacks as `INVALID_CONFIG` before touching I2C.
 - README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.
-- `library.json` now declares both Arduino and ESP-IDF framework support.
+- `library.json` now declares both Arduino and ESP-IDF framework support, while `idf_component.yml` pins the supported ESP-IDF floor to 5.4.
+- The ESP-IDF example no longer depends on a checkout-directory-derived `SHT3x-main` component name.
 
 ### Fixed
 - Arduino bringup CLI now injects `nowMs`, `nowUs`, and `cooperativeYield` into the driver config, preventing startup `Command delay timeout` from leaving the CLI in `UNINIT`.

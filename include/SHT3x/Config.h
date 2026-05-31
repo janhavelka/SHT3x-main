@@ -99,7 +99,8 @@ enum class Repeatability : uint8_t {
   HIGH_REPEATABILITY = 2
 };
 
-/// Clock stretching mode for single-shot/serial reads
+/// Clock stretching mode for single-shot measurement and serial-number reads.
+/// Periodic and ART modes use Fetch Data and do not use this setting.
 enum class ClockStretching : uint8_t {
   STRETCH_DISABLED = 0,
   STRETCH_ENABLED = 1

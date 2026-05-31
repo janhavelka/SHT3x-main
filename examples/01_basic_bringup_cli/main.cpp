@@ -1,6 +1,6 @@
 /// @file main.cpp
-/// @brief Arduino bringup CLI example for SHT3x.
-/// @note This is an EXAMPLE, not part of the library.
+/// @brief Arduino diagnostic bringup CLI example for SHT3x.
+/// @note This is an EXAMPLE, not part of the library or a production architecture.
 
 #include <Arduino.h>
 

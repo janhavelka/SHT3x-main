@@ -86,7 +86,8 @@ Findings:
 - `tools/check_idf_example_contract.py` exists and passed locally, but is not wired into CI.
 - `idf_component.yml` declares `esp32s2` and `esp32s3`; ESP-IDF CI should build both targets.
 - The IDF version should be pinned deliberately. The example uses `driver/i2c_master.h` and `REQUIRES esp_driver_i2c`, so CI should use a known-compatible ESP-IDF release.
-- `examples/idf/basic/main/CMakeLists.txt` currently requires component `SHT3x-main`, which is checkout-path fragile.
+- Resolved on 2026-05-31: `examples/idf/basic/main/CMakeLists.txt` no longer
+  requires checkout-derived component `SHT3x-main`.
 - Pure IDF CI should run `python scripts/generate_version.py check` because `Version.h` is generated and included by public headers.
 
 Recommended future CI shape:

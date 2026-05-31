@@ -40,13 +40,13 @@ struct CompensatedSample {
 /// Parsed status register
 struct StatusRegister {
   uint16_t raw = 0;            ///< Raw 16-bit status register value
-  bool alertPending = false;   ///< ALERT_PENDING flag
-  bool heaterOn = false;       ///< HEATER_ON flag
-  bool rhAlert = false;        ///< Humidity alert event flag
-  bool tAlert = false;         ///< Temperature alert event flag
-  bool resetDetected = false;  ///< Reset-detected flag
-  bool commandError = false;   ///< Last command was rejected by the sensor
-  bool writeCrcError = false;  ///< Last command payload failed CRC validation
+  bool alertPending = false;   ///< Bit 15, alert pending; cleared by clearStatus()
+  bool heaterOn = false;       ///< Bit 13, heater status; not cleared by clearStatus()
+  bool rhAlert = false;        ///< Bit 11, humidity alert event; cleared by clearStatus()
+  bool tAlert = false;         ///< Bit 10, temperature alert event; cleared by clearStatus()
+  bool resetDetected = false;  ///< Bit 4, reset detected; cleared by clearStatus()
+  bool commandError = false;   ///< Bit 1, last command rejected; not cleared by clearStatus()
+  bool writeCrcError = false;  ///< Bit 0, last write payload CRC failed; not cleared by clearStatus()
 };
 
 /// Snapshot of driver configuration and state
@@ -295,6 +295,8 @@ public:
   /// Get a snapshot of settings/state and attempt a non-disruptive status read.
   /// statusValid is true only if the status read succeeds; statusReadStatus
   /// records the exact status-read result when it does not.
+  /// @note In active periodic/ART mode the status read is not issued; the
+  ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
@@ -334,7 +336,8 @@ public:
   /// Get current repeatability
   Status getRepeatability(Repeatability& out) const;
 
-  /// Set clock stretching mode (single-shot/serial reads)
+  /// Set clock stretching mode for single-shot measurement and serial-number reads.
+  /// @note Periodic/ART modes use Fetch Data and do not use this setting.
   Status setClockStretching(ClockStretching stretch);
 
   /// Get current clock stretching mode
@@ -391,10 +394,14 @@ public:
   Status clearStatus();
 
   /// Enable/disable heater.
-  /// @note Sends one command; cached heater state is updated only after success.
+  /// @note The heater is intended for plausibility checks and condensation
+  ///       mitigation workflows, not normal measurement. Self-heating can affect
+  ///       temperature and humidity readings. Stop periodic/ART before changing
+  ///       it. Cached heater state is updated only after success.
   Status setHeater(bool enable);
 
-  /// Read heater state from status register
+  /// Read heater state from status register.
+  /// @note Follows readStatus() restrictions in active periodic/ART mode.
   Status readHeaterStatus(bool& enabled);
 
   /// Soft reset the device.
