@@ -3,62 +3,70 @@
 Date: 2026-05-31
 Branch: `hardening/sht3x-industry-readiness`
 
-This index maps the documentation set by purpose. It does not record a HIL pass;
-all hardware evidence remains pending until logs from real ESP32-S2/S3 plus
-SHT3x hardware are attached.
+This file is the documentation map for the branch. It is the current place to
+check which documents are active and which ones are historical snapshots.
 
-## Authoritative Current Documents
+No physical HIL run has been performed in this workspace. All hardware rows stay
+`Not run` until a real ESP32-S2/S3 and SHT3x target produce logs and fixture
+evidence.
 
-- Current software readiness: `SHT3X_PRE_HIL_READINESS_REPORT.md`.
-- Final software-hardening summary: `SHT3X_HARDENING_FINAL_REPORT.md`.
-- Current docs cleanup status: `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`.
-- HIL execution: `SHT3X_HIL_RUNBOOK.md`.
-- HIL logging: `SHT3X_HIL_LOG_TEMPLATE.md`.
-- Hardware validation status: `HARDWARE_VALIDATION.md`.
-- Hardware scenario planning: `SHT3X_HARDWARE_VALIDATION_MATRIX.md`.
+## Current Status
 
-## Audit / Planning
+- Current branch changes are still under `CHANGELOG.md` `[Unreleased]`.
+- `library.json` is still version `1.5.0`; the current branch HEAD is not a
+  release tag.
+- Local software checks have passed for the native test suite, guard scripts,
+  and Arduino PlatformIO ESP32-S3/S2 builds.
+- Pure ESP-IDF S2/S3 builds are configured in CI, but local `idf.py` was not
+  available in this shell. Use a passing CI log or local ESP-IDF build log
+  before claiming pure ESP-IDF validation.
+- Hardware validation, ALERT pin validation, humidity accuracy, fault injection,
+  and soak testing are not done.
 
-- `SHT3X_IDF_MERGED_INDUSTRY_READINESS_AUDIT.md` - historical pre-hardening audit.
-- `SHT3X_HARDENING_PLAN.md` - prompt 00 hardening plan.
-- `SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md` - auditor summary of prompts 00-05.
-- `CODEX_PROMPT_SHT3X_DRIVER.md` - original driver prompt/instruction capture.
+## Active Documents
 
-## Prompt-Specific Hardening Reports
-
-- `SHT3X_ALERT_STATUS_FIX_REPORT.md` - ALERT/status behavior and helper design.
-- `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contracts and partial-state coverage.
-- `SHT3X_IDF_CI_DOCS_REPORT.md` - ESP-IDF CI/docs hardening report.
-
-## Final Software Hardening Status
-
-- `SHT3X_HARDENING_FINAL_REPORT.md` - final software-hardening summary.
-- `SHT3X_PRE_HIL_READINESS_REPORT.md` - pre-HIL readiness gate.
-- `SHT3X_I2C_HIL_SELFTEST_REPORT.md` - host-side serial runner self-test; software preparation only.
-
-## HIL Execution
-
-- `SHT3X_HIL_RUNBOOK.md` - authoritative manual HIL procedure.
-- `SHT3X_HIL_LOG_TEMPLATE.md` - template for real HIL evidence capture.
-- `SHT3X_HARDWARE_VALIDATION_MATRIX.md` - scenario matrix and planning index.
-- `HARDWARE_VALIDATION.md` - maintained hardware result status; unexecuted rows stay `Not run`.
-- `SHT3X_I2C_HIL_RUNBOOK.md` - optional host-side serial runner procedure.
-- `SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - target profile for runner evidence.
-
-## ESP-IDF And Porting
-
-- `IDF_PORT.md` - ESP-IDF port guidance.
+- `HARDWARE_VALIDATION.md` - maintained hardware and build evidence status.
+- `SHT3X_HARDWARE_VALIDATION_MATRIX.md` - detailed HIL scenario matrix.
+- `SHT3X_HIL_RUNBOOK.md` - manual HIL procedure.
+- `SHT3X_HIL_LOG_TEMPLATE.md` - manual HIL evidence template.
+- `SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial runner procedure.
+- `SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - target profile for serial runner runs.
+- `SHT3X_I2C_HIL_SELFTEST_REPORT.md` - serial runner software self-test report.
+- `SHT3X_PRE_HIL_READINESS_REPORT.md` - current pre-HIL readiness summary.
+- `SHT3X_ALERT_STATUS_FIX_REPORT.md` - rationale for ALERT/status mode-restore support.
+- `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contract and partial-state notes.
+- `SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md` - historical summary of prompts 00-05.
+- `IDF_PORT.md` - ESP-IDF porting guidance.
 - `IDF_PORT_IMPLEMENTATION.md` - implemented ESP-IDF component/example notes.
 
-## Reference Extraction
+## Reference Material
 
+- `CODEX_PROMPT_SHT3X_DRIVER.md` - original driver prompt/instruction capture.
 - `SHT3x_driver_extraction.md` - extraction and split notes.
-- `pdf-extracted-md/` - local extracted Sensirion reference text used for audit.
+- `extracted-md/` - compact local SHT3x protocol notes.
+- `pdf-extracted-md/` - local extracted Sensirion reference text.
+- Vendor PDFs and `HT_AlertMode_BitConversion.xlsx` - source references.
+
+## Removed During Cleanup
+
+The branch cleanup removed stale planning and snapshot reports that duplicated
+the active docs:
+
+- `SHT3X_HARDENING_PLAN.md`
+- `SHT3X_HARDENING_FINAL_REPORT.md`
+- `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`
+- `SHT3X_IDF_CI_DOCS_REPORT.md`
+- `SHT3X_IDF_MERGED_INDUSTRY_READINESS_AUDIT.md`
+
+Their useful current-state content is now covered by this index,
+`SHT3X_PRE_HIL_READINESS_REPORT.md`, `IDF_PORT_IMPLEMENTATION.md`,
+`HARDWARE_VALIDATION.md`, and the changelog.
 
 ## Claim Boundary
 
-Safe current wording is software-hardened, locally tested, pre-HIL-ready, and CI
-configured. Do not claim hardware validation, ALERT pin validation, humidity
-accuracy validation, local pure ESP-IDF success, release/tag publication,
-field-proven behavior, or industry-grade status until the corresponding evidence
-exists.
+Safe wording today: software-hardened, locally software-tested,
+pre-HIL-ready, and CI-configured.
+
+Do not claim hardware validation, ALERT pin validation, humidity accuracy
+validation, pure ESP-IDF validation, release publication, field-proven behavior,
+or industry-grade status until the corresponding evidence exists.

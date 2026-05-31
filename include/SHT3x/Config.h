@@ -8,7 +8,11 @@
 
 namespace SHT3x {
 
-/// Transport capability flags
+/// Transport capability flags.
+/// @note READ_HEADER_NACK changes driver behavior for periodic Fetch Data
+///       readiness. TIMEOUT and BUS_ERROR document transport precision for
+///       diagnostics and future policy; callbacks should still return the most
+///       specific Err value they can prove.
 enum class TransportCapability : uint8_t {
   NONE = 0,
   READ_HEADER_NACK = 1 << 0,   ///< Transport can reliably report read-header NACK
@@ -152,7 +156,11 @@ struct Config {
   // === Timing ===
   uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE), 1..1000 ms
 
-  /// Periodic mode not-ready timeout (0 = disabled)
+  /// Periodic mode not-ready timeout (0 = disabled).
+  /// @note Applies only when transportCapabilities includes READ_HEADER_NACK.
+  ///       Before this timeout expires, a proven read-header NACK during
+  ///       periodic Fetch Data is treated as MEASUREMENT_NOT_READY and does not
+  ///       increment health failures.
   uint32_t notReadyTimeoutMs = 0;                     ///< 0..600000 ms
 
   /// Periodic fetch margin (ms) to avoid early fetches (0 = auto, max(2, period/20))

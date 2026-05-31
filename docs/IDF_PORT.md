@@ -248,6 +248,7 @@ ESP-IDF examples:
 6. ESP-IDF 5.4 CI build jobs for ESP32-S2 and ESP32-S3 are added; verify the
    latest workflow logs before claiming validation.
 7. Run Arduino and native builds to confirm existing users are unaffected. See
-   `docs/SHT3X_IDF_CI_DOCS_REPORT.md` for the latest local validation.
+   `docs/IDF_PORT_IMPLEMENTATION.md` and `docs/README.md` for the current
+   validation boundary.
 8. Run hardware tests for probe, CRC, single-shot, periodic mode, resets, alerts, heater, and fault injection. Pending hardware.
 9. Update README and changelog for the implemented port. Done.

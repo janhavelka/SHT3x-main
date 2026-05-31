@@ -139,7 +139,10 @@ public:
   /// @return Status::Ok() on success, error otherwise
   Status begin(const Config& config);
 
-  /// Process pending operations (call regularly from loop)
+  /// Process pending measurement work.
+  /// @note This function is bounded, but it may perform one synchronous I2C
+  ///       transaction when a previously requested sample is due. In OFFLINE it
+  ///       clears pending measurement state and does not touch the bus.
   /// @param nowMs Current timestamp from the same wrapping millisecond timebase
   ///              used by Config::nowMs
   void tick(uint32_t nowMs);
@@ -150,7 +153,9 @@ public:
   /// Check if begin() completed successfully and end() has not been called
   bool isInitialized() const { return _initialized; }
 
-  /// Get the active configuration snapshot
+  /// Get the active normalized configuration reference.
+  /// @note The returned reference is owned by the driver and remains valid
+  ///       until the next begin() or end().
   const Config& getConfig() const { return _config; }
 
   // =========================================================================
@@ -168,15 +173,17 @@ public:
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
 
-  /// Reset sensor to defaults (no restore).
-  /// @note May run multiple recovery transactions before resetting the local
-  ///       cache to defaults.
+  /// Recover communication and reset the driver's desired settings to defaults.
+  /// @note This calls the recovery ladder, sets a safe single-shot baseline,
+  ///       and resets the local restore cache to defaults. The recovery ladder
+  ///       may stop after a successful probe without issuing a sensor reset.
   Status resetToDefaults();
 
-  /// Reset sensor and restore cached settings.
-  /// @note Multi-step operation. Cached settings remain the desired state and
-  ///       are updated only by successful setters; a failure can leave hardware
-  ///       partially restored while the returned Status identifies the step.
+  /// Recover communication and reapply cached settings.
+  /// @note This calls the recovery ladder, sets a safe single-shot baseline,
+  ///       then reapplies cached settings. The recovery ladder may stop after a
+  ///       successful probe without issuing a sensor reset. A failure can leave
+  ///       hardware partially restored while the returned Status identifies the step.
   Status resetAndRestore();
 
   // =========================================================================
@@ -208,7 +215,8 @@ public:
   /// Timestamp of last failed tracked I2C operation after begin()
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
-  /// Timestamp of last tracked I2C bus activity after begin() (success or expected NACK)
+  /// Timestamp of last tracked I2C attempt after begin().
+  /// @note Includes successes, failures, and expected read-header NACKs.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
   /// Most recent error status
@@ -230,10 +238,11 @@ public:
   // Measurement API
   // =========================================================================
 
-  /// Request a measurement (non-blocking).
-  /// In SINGLE_SHOT mode: sends one command and schedules readiness.
-  /// In PERIODIC/ART mode: schedules the next Fetch Data read for tick().
-  /// Returns IN_PROGRESS if measurement started/scheduled, BUSY if already pending.
+  /// Request or schedule a measurement.
+  /// @note In SINGLE_SHOT mode this sends one bounded I2C command immediately
+  ///       and schedules the later read for tick(). In PERIODIC/ART mode this
+  ///       schedules the next Fetch Data operation for tick().
+  /// @return IN_PROGRESS if measurement started/scheduled, BUSY if already pending, or an error.
   Status requestMeasurement();
 
   /// Check if measurement is ready to read
@@ -423,7 +432,13 @@ public:
   // Serial Number
   // =========================================================================
 
-  /// Read electronic identification code (serial number)
+  /// Read electronic identification code (serial number).
+  /// @param[out] serial 32-bit serial/EIC value assembled from two CRC-checked words
+  /// @param stretch Command family to use for this read
+  /// @return Status::Ok() on success, BUSY when measurement or periodic/ART
+  ///         activity blocks the read, CRC_MISMATCH on invalid CRC, or an I2C error.
+  /// @note This proves a CRC-valid SHT3x serial/EIC transaction, not the exact
+  ///       product grade or humidity accuracy.
   Status readSerialNumber(uint32_t& serial,
                           ClockStretching stretch = ClockStretching::STRETCH_DISABLED);
 
@@ -458,30 +473,47 @@ public:
   // Helpers
   // =========================================================================
 
-  /// Encode alert limit word from physical values
+  /// Encode alert limit word from physical values.
+  /// @param temperatureC Temperature threshold in Celsius
+  /// @param humidityPct Relative humidity threshold in percent
+  /// @return Packed RH7/T9 alert-limit word
+  /// @note Inputs are clamped to the SHT3x representable range. Non-finite
+  ///       values are treated as invalid by writeAlertLimit().
   static uint16_t encodeAlertLimit(float temperatureC, float humidityPct);
 
-  /// Decode alert limit word into physical values
+  /// Decode alert limit word into physical values.
+  /// @param limit Packed RH7/T9 alert-limit word
+  /// @param[out] temperatureC Decoded approximate temperature in Celsius
+  /// @param[out] humidityPct Decoded approximate relative humidity in percent
+  /// @note Alert-limit packing is quantized, so decode is approximate.
   static void decodeAlertLimit(uint16_t limit, float& temperatureC, float& humidityPct);
 
   /// Convert raw temperature to Celsius (float)
+  /// @param raw Raw 16-bit temperature word
+  /// @return Temperature in Celsius
   static float convertTemperatureC(uint16_t raw);
 
   /// Convert raw humidity to percent (float)
+  /// @param raw Raw 16-bit humidity word
+  /// @return Relative humidity in percent
   static float convertHumidityPct(uint16_t raw);
 
   /// Convert raw temperature to Celsius * 100
+  /// @param raw Raw 16-bit temperature word
+  /// @return Temperature in centi-degrees Celsius
   static int32_t convertTemperatureC_x100(uint16_t raw);
 
   /// Convert raw humidity to percent * 100
+  /// @param raw Raw 16-bit humidity word
+  /// @return Relative humidity in centi-percent
   static uint32_t convertHumidityPct_x100(uint16_t raw);
 
   // =========================================================================
   // Timing
   // =========================================================================
 
-  /// Estimate max measurement time based on current repeatability
-  /// Returns time in milliseconds
+  /// Estimate max measurement time based on current repeatability.
+  /// @return Measurement time in milliseconds
   uint32_t estimateMeasurementTimeMs() const;
 
 private:

@@ -15,6 +15,7 @@ RUNBOOK = ROOT / "docs" / "SHT3X_I2C_HIL_RUNBOOK.md"
 TARGET_TEMPLATE = ROOT / "docs" / "SHT3X_I2C_HIL_TARGET_TEMPLATE.md"
 SELFTEST_REPORT = ROOT / "docs" / "SHT3X_I2C_HIL_SELFTEST_REPORT.md"
 README = ROOT / "README.md"
+DOCS_INDEX = ROOT / "docs" / "README.md"
 MATRIX = ROOT / "docs" / "SHT3X_HARDWARE_VALIDATION_MATRIX.md"
 GITIGNORE = ROOT / ".gitignore"
 
@@ -84,7 +85,7 @@ def documented_commands(runbook_text: str) -> list[str]:
 
 
 def check_claims() -> None:
-    for path in (RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT, README, MATRIX):
+    for path in (RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT, README, DOCS_INDEX, MATRIX):
         text = read(path).lower()
         for phrase in FORBIDDEN_CLAIMS:
             if phrase in text:
@@ -92,7 +93,7 @@ def check_claims() -> None:
 
 
 def main() -> int:
-    for path in (RUNNER, RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT, README, MATRIX, GITIGNORE):
+    for path in (RUNNER, RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT, README, DOCS_INDEX, MATRIX, GITIGNORE):
         if not path.exists():
             fail(f"missing required file: {path.relative_to(ROOT)}")
 
@@ -134,10 +135,14 @@ def main() -> int:
         fail("self-test report must use software-prepared only verdict")
 
     readme_text = read(README)
+    if "docs/README.md" not in readme_text:
+        fail("README must point to docs/README.md")
+    docs_index_text = read(DOCS_INDEX)
     for path in (RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT):
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
-        if rel not in readme_text:
-            fail(f"README missing documentation link: {rel}")
+        bare = path.name
+        if rel not in docs_index_text and bare not in docs_index_text:
+            fail(f"docs/README.md missing documentation link: {rel}")
 
     matrix_text = read(MATRIX)
     if "tools/run_i2c_hil.py" not in matrix_text or "docs/SHT3X_I2C_HIL_RUNBOOK.md" not in matrix_text:

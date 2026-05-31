@@ -4,10 +4,8 @@ Date: 2026-05-31
 Branch: `hardening/sht3x-industry-readiness`
 Base commit before this preparation: `58fd3b1454feff6556370fdc6174dac25e25ffb1`
 Final preparation commit: `92f87a3082e05b138ef640a5f4e376f1377f46dc`.
-Later auditor-summary and serial-runner preparation commits are
-`46855ce445b3124fda693037eb805455cc1813e5` and
-`5049e847371bbf3abdfdbbc0ec2c2a01261b05f0`. Documentation hierarchy and
-line-ending cleanup are recorded in `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`.
+Later commits added the auditor summary, serial HIL runner, and documentation
+cleanup. The current documentation map is `docs/README.md`.
 
 ## Summary
 
@@ -15,8 +13,8 @@ The repository is prepared to enter full HIL. No full HIL was run during this
 pass. All hardware scenarios remain `Not run` until a real ESP32-S2/S3 plus
 SHT3x setup produces logs and fixture evidence.
 
-Note: this report remains the pre-HIL readiness gate. The later docs cleanup
-report supersedes it only for document hierarchy, link, and line-ending status.
+Note: this report is a readiness snapshot. Use `docs/README.md` for the current
+documentation map and claim boundary.
 
 ## What Changed
 

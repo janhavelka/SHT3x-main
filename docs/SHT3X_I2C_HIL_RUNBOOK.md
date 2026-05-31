@@ -93,6 +93,11 @@ The runner creates a unique `hil_logs/i2c_<timestamp>/` directory and writes:
 - `summary.json`
 - `operator_checklist.md`
 
+`hil_logs/` is local scratch output and is ignored by git. For an audit record,
+copy the selected transcript, summaries, target template, and operator notes
+into the curated `docs/hil/` evidence set described by
+`docs/SHT3X_HIL_RUNBOOK.md`.
+
 ## Default Executable Command Sequence
 
 The default sequence is safe by design: it avoids status clearing, heater

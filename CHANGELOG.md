@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core/IDF guard scripts now reject Arduino and ESP-IDF framework headers in core/public headers and `src/`.
 - `begin()` now rejects missing timing/yield callbacks as `INVALID_CONFIG` before touching I2C.
 - README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.
+- Documentation was consolidated around `docs/README.md`, active HIL/runbook
+  files, and technical rationale reports; stale planning snapshots were removed.
 - `library.json` now declares both Arduino and ESP-IDF framework support, while `idf_component.yml` pins the supported ESP-IDF floor to 5.4.
 - The ESP-IDF example no longer depends on a checkout-directory-derived `SHT3x-main` component name.
 - Arduino and ESP-IDF diagnostic CLIs now expose HIL-friendly aliases and
@@ -45,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Arduino bringup CLI now injects `nowMs`, `nowUs`, and `cooperativeYield` into the driver config, preventing startup `Command delay timeout` from leaving the CLI in `UNINIT`.
 - Arduino I2C scan now uses the same table-format `0x08..0x77` timeout-aware diagnostic scanner as the other maintained I2C examples.
+- Public Doxygen comments now describe bounded synchronous behavior, reset/recover
+  semantics, serial-number restrictions, alert-limit packing, and transport
+  capability boundaries more accurately.
+
+### Removed
+- Stale branch-planning and snapshot reports that duplicated the active
+  documentation set.
 
 ## [1.5.0] - 2026-05-14
 
