@@ -1,7 +1,7 @@
 version: "1.5.0"
 description: "Production-grade SHT3x temperature/humidity sensor driver."
-url: "https://github.com/janhavelka/SHT3x"
-repository: "https://github.com/janhavelka/SHT3x.git"
+url: "https://github.com/janhavelka/SHT3x-main"
+repository: "https://github.com/janhavelka/SHT3x-main.git"
 license: "MIT"
 targets:
   - esp32s2

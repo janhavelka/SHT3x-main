@@ -108,7 +108,8 @@ restore command failure.
 ## Remaining Gaps
 
 - Hardware validation is still required for partial-state recovery expectations.
-- Pure ESP-IDF CI/build proof remains for a later prompt.
+- Pure ESP-IDF CI jobs are now configured, but live CI or local ESP-IDF logs
+  are still required before claiming ESP-IDF validation for a specific commit.
 - A fully position-indexed transport harness could broaden reset/recover matrix
   coverage further, but the current focused tests cover the highest-risk Prompt
   02 surfaces without adding noisy infrastructure.

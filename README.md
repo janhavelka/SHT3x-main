@@ -40,7 +40,7 @@ Add to `platformio.ini`:
 
 ```ini
 lib_deps = 
-  https://github.com/janhavelka/SHT3x.git
+  https://github.com/janhavelka/SHT3x-main.git
 ```
 
 ### Manual
@@ -532,26 +532,14 @@ configuration storage, telemetry, and recovery policy.
 ## Hardware Validation
 
 Software tests and CI do not prove electrical behavior, board layout, fixture
-quality, or sensor accuracy. Maintain real hardware results in
-`docs/HARDWARE_VALIDATION.md` before making production claims.
+quality, or sensor accuracy. `docs/HARDWARE_VALIDATION.md` is the evidence
+status file. `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md`,
+`docs/SHT3X_HIL_RUNBOOK.md`, and `docs/SHT3X_I2C_HIL_RUNBOOK.md` describe the
+hardware scenarios and runner procedure.
 
-Minimum hardware coverage:
-
-| Area | Required evidence |
-|------|-------------------|
-| ESP-IDF build and smoke | ESP32-S2 and ESP32-S3 board, ESP-IDF version, bus speed, address, log, date. |
-| Addressing | `0x44` and `0x45` probe/read behavior. |
-| Measurement modes | Single-shot no-stretch, optional stretch, periodic rates, ART, Fetch Data, Break. |
-| ALERT/status | Alert-limit write/read, ALERT pin observation, `readStatusWithModeRestore()` while periodic/ART is active, explicit `clearStatus()`. |
-| Resets/recovery | Soft reset, interface reset callback, optional hard reset, opt-in general-call reset on an isolated bus. |
-| Fault handling | Timeout/NACK injection, CRC mismatch injection, offline/recovery transition. |
-| Humidity fixture | Reference sensor, settling time, coupling method, local gradients, reflow-offset allowance, MSA/Cpk or equivalent production evidence. |
-
-Sensirion's ambient-test guidance treats ambient production testing as a
-throughput compromise. Fixture coupling, temperature/humidity gradients,
-settling time, airflow, prestaging, product housings, and reflow-related RH
-offset can dominate the result. Temperature validation should be stabilized
-first because relative humidity is temperature-dependent.
+Do not claim hardware validation, ALERT pin validation, humidity accuracy,
+fault recovery on real buses, soak stability, or production readiness until
+those rows have real logs and fixture evidence.
 
 ## Documentation
 

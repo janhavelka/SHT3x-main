@@ -49,7 +49,9 @@ Implemented:
 3. Root `CMakeLists.txt` provides `idf_component_register`.
 4. `examples/idf/basic` provides an ESP-IDF 5.4+ `i2c_master` adapter.
 5. Arduino examples remain separate and are not part of the IDF component target.
-6. The IDF example maps `esp_err_t` values to library `Status` codes and advertises only the timeout capability.
+6. The IDF example maps `esp_err_t` values to library `Status` codes and
+   advertises timeout and bus-error capabilities. It does not advertise
+   read-header NACK capability.
 7. CI is configured to build `examples/idf/basic` with ESP-IDF `release-v5.4`
    for `esp32s3` and `esp32s2`.
 
@@ -174,15 +176,16 @@ If an IDF adapter is built into an example component, that example should declar
 idf_component_register(
   SRCS "main.cpp" "IdfI2cTransport.cpp"
   INCLUDE_DIRS "."
-  REQUIRES esp_driver_i2c esp_timer esp_driver_gpio
+  REQUIRES esp_driver_i2c esp_driver_gpio esp_timer freertos vfs
 )
 ```
 
 The example `main` component intentionally does not name the SHT3x component in
-`REQUIRES`; ESP-IDF's `main` component can require project components without
-tying the build to a checkout directory name. `esp_driver_gpio` is only for
-example GPIO reset/bus-recovery code; do not require GPIO from the core
-component unless the core starts using ESP-IDF GPIO APIs, which it should not.
+`REQUIRES`; ESP-IDF's `main` component can use project components without
+tying the build to a checkout directory name. `esp_driver_gpio`, `freertos`,
+and `vfs` are example dependencies for GPIO reset/bus recovery, tasking, and
+console input. Do not require them from the core component unless the core
+starts using those ESP-IDF APIs, which it should not.
 
 Do not compile Arduino-only helpers from `examples/common/` into ESP-IDF
 targets. The ESP-IDF example now uses its own native fixed-buffer CLI; keep

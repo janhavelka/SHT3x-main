@@ -36,10 +36,15 @@ INPUT                  = README.md CHANGELOG.md include \
                          docs/IDF_PORT.md \
                          docs/IDF_PORT_IMPLEMENTATION.md \
                          docs/HARDWARE_VALIDATION.md \
+                         docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md \
                          docs/SHT3X_HIL_RUNBOOK.md \
+                         docs/SHT3X_HIL_LOG_TEMPLATE.md \
                          docs/SHT3X_I2C_HIL_RUNBOOK.md \
+                         docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md \
+                         docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md \
                          docs/SHT3X_ALERT_STATUS_FIX_REPORT.md \
-                         docs/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md
+                         docs/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md \
+                         docs/SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/*
@@ -59,7 +64,7 @@ GENERATE_XML           = NO
 GENERATE_RTF           = NO
 GENERATE_MAN           = NO
 
-WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_UNDOCUMENTED   = NO
 WARN_NO_PARAMDOC       = YES
 WARN_IF_DOC_ERROR      = YES
 WARN_AS_ERROR          = NO

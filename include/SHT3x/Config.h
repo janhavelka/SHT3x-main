@@ -35,12 +35,13 @@ inline constexpr bool hasCapability(TransportCapability caps, TransportCapabilit
 /// @param len      Number of bytes to write
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure. Transport MUST distinguish:
-///         - Err::I2C_NACK_ADDR (address NACK)
-///         - Err::I2C_NACK_DATA (data NACK)
-///         - Err::I2C_TIMEOUT (timeout)
-///         - Err::I2C_BUS (bus/arbitration error)
-///         - Err::I2C_ERROR (unspecified I2C error)
+/// @return Status indicating success or failure. Return the most specific
+///         transport error the adapter can prove:
+///         - Err::I2C_NACK_ADDR for address NACK
+///         - Err::I2C_NACK_DATA for data NACK
+///         - Err::I2C_TIMEOUT for timeout
+///         - Err::I2C_BUS for bus/arbitration error
+///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
 /// @note Callbacks must not recursively call public APIs on the same SHT3x
 ///       instance. Serialize any shared bus access outside the driver.
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
@@ -54,13 +55,14 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @param rxLen    Number of bytes to read
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure. Transport MUST distinguish:
-///         - Err::I2C_NACK_ADDR (address NACK)
-///         - Err::I2C_NACK_DATA (data NACK)
-///         - Err::I2C_NACK_READ (read header NACK / no data)
-///         - Err::I2C_TIMEOUT (timeout)
-///         - Err::I2C_BUS (bus/arbitration error)
-///         - Err::I2C_ERROR (unspecified I2C error)
+/// @return Status indicating success or failure. Return the most specific
+///         transport error the adapter can prove:
+///         - Err::I2C_NACK_ADDR for address NACK
+///         - Err::I2C_NACK_DATA for data NACK
+///         - Err::I2C_NACK_READ only when the adapter can prove read-header NACK
+///         - Err::I2C_TIMEOUT for timeout
+///         - Err::I2C_BUS for bus/arbitration error
+///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
 /// @note The driver issues command writes via i2cWrite() and then calls
 ///       i2cWriteRead() with txLen==0 to perform the read after a tIDLE delay.
 ///       Combined write+read (repeated-start) is not allowed for SHT3x flows.

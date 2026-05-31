@@ -15,13 +15,11 @@ evidence.
 - Current branch changes are still under `CHANGELOG.md` `[Unreleased]`.
 - `library.json` is still version `1.5.0`; the current branch HEAD is not a
   release tag.
-- Local software checks have passed for the native test suite, guard scripts,
-  and Arduino PlatformIO ESP32-S3/S2 builds.
-- Pure ESP-IDF S2/S3 builds are configured in CI, but local `idf.py` was not
-  available in this shell. Use a passing CI log or local ESP-IDF build log
-  before claiming pure ESP-IDF validation.
-- Hardware validation, ALERT pin validation, humidity accuracy, fault injection,
-  and soak testing are not done.
+- Last recorded local cleanup checks covered the native test suite, guard
+  scripts, Doxygen, and Arduino PlatformIO ESP32-S3/S2 builds.
+- Pure ESP-IDF S2/S3 builds are configured in CI. Use a passing CI log or local
+  ESP-IDF build log before claiming pure ESP-IDF validation.
+- Hardware status is tracked only in `HARDWARE_VALIDATION.md`.
 
 ## Active Documents
 
@@ -32,12 +30,14 @@ evidence.
 - `SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial runner procedure.
 - `SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - target profile for serial runner runs.
 - `SHT3X_I2C_HIL_SELFTEST_REPORT.md` - serial runner software self-test report.
-- `SHT3X_PRE_HIL_READINESS_REPORT.md` - current pre-HIL readiness summary.
 - `SHT3X_ALERT_STATUS_FIX_REPORT.md` - rationale for ALERT/status mode-restore support.
 - `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contract and partial-state notes.
-- `SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md` - historical summary of prompts 00-05.
 - `IDF_PORT.md` - ESP-IDF porting guidance.
 - `IDF_PORT_IMPLEMENTATION.md` - implemented ESP-IDF component/example notes.
+
+## Historical Context
+
+- `SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md` - historical summary of prompts 00-05.
 
 ## Reference Material
 
@@ -57,10 +57,10 @@ the active docs:
 - `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`
 - `SHT3X_IDF_CI_DOCS_REPORT.md`
 - `SHT3X_IDF_MERGED_INDUSTRY_READINESS_AUDIT.md`
+- `SHT3X_PRE_HIL_READINESS_REPORT.md`
 
 Their useful current-state content is now covered by this index,
-`SHT3X_PRE_HIL_READINESS_REPORT.md`, `IDF_PORT_IMPLEMENTATION.md`,
-`HARDWARE_VALIDATION.md`, and the changelog.
+`IDF_PORT_IMPLEMENTATION.md`, `HARDWARE_VALIDATION.md`, and the changelog.
 
 ## Claim Boundary
 

@@ -66,7 +66,8 @@ Native tests cover:
 - `python tools/check_cli_contract.py`: passed.
 - `python tools/check_idf_example_contract.py`: passed.
 - `python scripts/generate_version.py check`: `include/SHT3x/Version.h` up to date.
-- `python -m platformio test -e native`: passed, 58/58 tests.
+- `python -m platformio test -e native`: passed; later branch validation
+  covers 70/70 tests.
 - `python -m platformio run -e esp32s3dev`: success.
 - `python -m platformio run -e esp32s2dev`: success.
 - `idf.py --version`: unavailable in this shell (`idf.py` not recognized), so
@@ -75,8 +76,8 @@ Native tests cover:
 ## Remaining Issues
 
 - Hardware ALERT validation is still required.
-- Pure ESP-IDF CI/build proof is still missing because `idf.py` is unavailable
-  locally and no ESP-IDF CI job exists yet.
+- Pure ESP-IDF CI jobs are now configured, but live CI or local ESP-IDF logs
+  are still required before claiming ESP-IDF validation for a specific commit.
 - Alert-limit updates during active periodic/ART are still intentionally blocked;
   callers must configure limits before starting acquisition or explicitly stop
   and restart around limit changes.

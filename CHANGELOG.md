@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/check_idf_example_contract.py` to keep the ESP-IDF example on the same CLI contract.
 - Pure ESP-IDF CI matrix for the native example on `esp32s3` and `esp32s2`.
 - Hardware validation matrix and API latency/transaction documentation.
-- Pre-HIL runbook, HIL log template, and readiness report to keep hardware
-  validation evidence explicit and auditable.
+- Pre-HIL runbook and HIL log template to keep hardware validation evidence
+  explicit and auditable.
 - Host-side serial I2C HIL runner, contract guard, target template, and
   self-test report for auditor-ready hardware evidence capture.
 - Framework-neutral private timing/yield shim; real timing is supplied by application callbacks.
@@ -37,8 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core/IDF guard scripts now reject Arduino and ESP-IDF framework headers in core/public headers and `src/`.
 - `begin()` now rejects missing timing/yield callbacks as `INVALID_CONFIG` before touching I2C.
 - README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.
-- Documentation was consolidated around `docs/README.md`, active HIL/runbook
-  files, and technical rationale reports; stale planning snapshots were removed.
+- Documentation was consolidated around `docs/README.md`, `HARDWARE_VALIDATION.md`,
+  active HIL/runbook files, and technical rationale reports; stale planning
+  snapshots and duplicate status reports were removed.
 - `library.json` now declares both Arduino and ESP-IDF framework support, while `idf_component.yml` pins the supported ESP-IDF floor to 5.4.
 - The ESP-IDF example no longer depends on a checkout-directory-derived `SHT3x-main` component name.
 - Arduino and ESP-IDF diagnostic CLIs now expose HIL-friendly aliases and
@@ -50,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public Doxygen comments now describe bounded synchronous behavior, reset/recover
   semantics, serial-number restrictions, alert-limit packing, and transport
   capability boundaries more accurately.
+- Repository URLs in README, changelog links, `library.json`, and
+  `idf_component.yml` now match the current `SHT3x-main` remote.
 
 ### Removed
 - Stale branch-planning and snapshot reports that duplicated the active
@@ -206,14 +209,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.5.0...HEAD
-[1.5.0]: https://github.com/janhavelka/SHT3x/compare/v1.4.2...v1.5.0
-[1.4.2]: https://github.com/janhavelka/SHT3x/compare/v1.4.1...v1.4.2
-[1.4.1]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...v1.4.1
-[1.4.0]: https://github.com/janhavelka/SHT3x/compare/v1.3.2...v1.4.0
-[1.3.2]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...v1.3.2
-[1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
-[1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
-[1.1.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.1.0
-[1.0.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.0.0
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.2...v1.5.0
+[1.4.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.1...v1.4.2
+[1.4.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.2...v1.4.0
+[1.3.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.3.0
+[1.2.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.2.0
+[1.1.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.1.0
+[1.0.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.0.0

@@ -17,60 +17,15 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 ## Hardware Preflight
 
-Fill these fields before running:
-
-- Operator:
-- Date/time:
-- Branch:
-- Commit hash:
-- Worktree state, clean or dirty:
-- MCU board:
-- Framework, Arduino/PlatformIO or native ESP-IDF:
-- Build target:
-- Serial port:
-- Baud rate: `115200`
-- I2C address: `0x44` default or `0x45` when ADDR is high
-- I2C bus speed:
-- Supply voltage:
-- Pull-up values:
-- Reset wiring:
-- ALERT/interrupt pin wiring:
-- Device/module model:
-- Chip marking:
-- Fixture details:
-- Firmware version:
+Complete `docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md` before running. It records the
+operator, commit, board, framework, serial port, I2C wiring, supply, pull-ups,
+sensor identity, reset/ALERT wiring, and fixture details.
 
 ## Build And Upload
 
-Arduino / PlatformIO build:
-
-```bash
-python -m platformio run -e esp32s3dev
-python -m platformio run -e esp32s2dev
-```
-
-Arduino / PlatformIO upload, replace `COMx` with the operator-confirmed port:
-
-```bash
-python -m platformio run -e esp32s3dev -t upload --upload-port COMx
-python -m platformio run -e esp32s2dev -t upload --upload-port COMx
-```
-
-Arduino serial monitor:
-
-```bash
-python -m platformio device monitor -e esp32s3dev --port COMx
-python -m platformio device monitor -e esp32s2dev --port COMx
-```
-
-Native ESP-IDF build and upload, from an ESP-IDF 5.4+ shell:
-
-```bash
-idf.py -C examples/idf/basic set-target esp32s3 build
-idf.py -C examples/idf/basic -p COMx flash monitor
-idf.py -C examples/idf/basic set-target esp32s2 build
-idf.py -C examples/idf/basic -p COMx flash monitor
-```
+Use `docs/SHT3X_HIL_RUNBOOK.md` for firmware build, upload, and manual monitor
+commands. This runner starts after the diagnostic CLI firmware is already
+flashed and responding on the selected serial port.
 
 ## Runner Command
 
