@@ -11,30 +11,44 @@
 
 #include <stdint.h>
 
+/// @def SHT3X_VERSION_STRING
+/// @brief Semantic version string from library.json.
 #ifndef SHT3X_VERSION_STRING
 #define SHT3X_VERSION_STRING "1.5.0"
 #endif
 
+/// @def SHT3X_BUILD_DATE
+/// @brief Build date macro used for generated firmware/application metadata.
 #ifndef SHT3X_BUILD_DATE
 #define SHT3X_BUILD_DATE __DATE__
 #endif
 
+/// @def SHT3X_BUILD_TIME
+/// @brief Build time macro used for generated firmware/application metadata.
 #ifndef SHT3X_BUILD_TIME
 #define SHT3X_BUILD_TIME __TIME__
 #endif
 
+/// @def SHT3X_BUILD_TIMESTAMP
+/// @brief Build timestamp assembled from date and time macros.
 #ifndef SHT3X_BUILD_TIMESTAMP
 #define SHT3X_BUILD_TIMESTAMP SHT3X_BUILD_DATE " " SHT3X_BUILD_TIME
 #endif
 
+/// @def SHT3X_GIT_COMMIT
+/// @brief Git commit embedded by build tooling, or "unknown" outside a configured build.
 #ifndef SHT3X_GIT_COMMIT
 #define SHT3X_GIT_COMMIT "unknown"
 #endif
 
+/// @def SHT3X_GIT_STATUS
+/// @brief Git worktree status embedded by build tooling, or "unknown" outside a configured build.
 #ifndef SHT3X_GIT_STATUS
 #define SHT3X_GIT_STATUS "unknown"
 #endif
 
+/// @def SHT3X_VERSION_FULL
+/// @brief Full version string including semantic version, commit, timestamp, and status.
 #ifndef SHT3X_VERSION_FULL
 #define SHT3X_VERSION_FULL SHT3X_VERSION_STRING " (" SHT3X_GIT_COMMIT ", " SHT3X_BUILD_TIMESTAMP ", " SHT3X_GIT_STATUS ")"
 #endif

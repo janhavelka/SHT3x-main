@@ -88,7 +88,7 @@ DEFAULT_COMMAND_SEQUENCE: tuple[CommandSpec, ...] = (
     CommandSpec("help", "Capture CLI command surface.", expected_any=("SHT3x CLI Help", "Commands:"), completion=("selftest", "Commands:")),
     CommandSpec("scan", "I2C address ACK scan.", expected_any=("0x44", "0x45", "Scan complete", "scan:", "found 0x"), validators=("expected_address",), notes="ACK alone is not chip identity."),
     CommandSpec("probe", "Driver probe using SHT3x status-frame path.", expected_any=("Status: OK", "probe: OK", "probe: OK code=0"), failures=("DEVICE_NOT_FOUND", "I2C_NACK_ADDR", "I2C_TIMEOUT")),
-    CommandSpec("settings", "Record configuration and state.", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",)),
+    CommandSpec("settings", "Record configuration and state.", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready", "configured_address")),
     CommandSpec("drv", "Record health and last-error state.", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready",)),
     CommandSpec("status", "Read parsed status bits without clearing them.", expected_any=("status: raw=0x", "raw=0x"), validators=("status_word",)),
     CommandSpec("status_raw", "Read raw status word.", expected_any=("Status raw:", "status=0x"), validators=("status_word",)),
@@ -112,11 +112,11 @@ DEFAULT_COMMAND_SEQUENCE: tuple[CommandSpec, ...] = (
     CommandSpec("alert decode 0x3869", "Decode vendor alert low-clear vector.", expected_any=("Alert decoded:", "temperature="), validators=("alert_decoded",), expected_temperature_c=-9.0, expected_humidity_pct=22.0),
     CommandSpec("alert encode -10 20", "Encode vendor alert low-set vector.", expected_any=("Alert encoded:", "encoded=0x"), validators=("alert_encoded",), expected_encoded="0x3466"),
     CommandSpec("alert decode 0x3466", "Decode vendor alert low-set vector.", expected_any=("Alert decoded:", "temperature="), validators=("alert_decoded",), expected_temperature_c=-10.0, expected_humidity_pct=20.0),
-    CommandSpec("status_restore", "Exercise readStatusWithModeRestore() and log sub-statuses.", expected=("status_restore:", "statusReadStatus", "statusValid=1"), expected_any=("restored=1", "restored=true"), validators=("status_restore",), timeout_s=12.0),
     CommandSpec("periodic start 0.5 high", "Start volatile 0.5 mps periodic acquisition.", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop"),
     CommandSpec("periodic fetch", "Fetch one 0.5 mps periodic sample.", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), pre_delay_s=2.6, timeout_s=14.0),
     CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
     CommandSpec("periodic start 1 high", "Start volatile 1 mps periodic acquisition.", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop"),
+    CommandSpec("status_restore", "Exercise readStatusWithModeRestore() while periodic mode is active.", expected=("status_restore:", "statusReadStatus"), expected_any=("restored=1", "restored=true", "restored=yes", "restored=on"), validators=("status_restore", "status_restore_active"), timeout_s=12.0, recovery_command="periodic stop"),
     CommandSpec("periodic fetch", "Fetch one 1 mps periodic sample.", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), pre_delay_s=1.4, timeout_s=12.0),
     CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
     CommandSpec("periodic start 2 medium", "Start volatile 2 mps periodic acquisition.", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop"),
@@ -151,7 +151,7 @@ def soak_commands(count: int) -> list[CommandSpec]:
     return [
         CommandSpec("stress 10", "Short stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=90.0),
         CommandSpec(f"stress {count}", "Configured bounded stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(count) * 3.0)),
-        CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=("stress_mix summary", "Total:", "stress_mix"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
+        CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=("stress_mix summary", "Total:", "stress_mix", "stress: ok="), requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
         CommandSpec("drv", "Final health after stress.", group="soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), requires_opt_in="--include-soak"),
         CommandSpec("settings", "Final settings after stress.", group="soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), requires_opt_in="--include-soak"),
     ]
@@ -272,6 +272,11 @@ def iso_timestamp() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def parse_boolish(value: str) -> int:
+    text = value.strip().lower()
+    return 1 if text in ("1", "true", "yes", "on") else 0
+
+
 def default_executable_commands() -> list[str]:
     return [step.command for step in DEFAULT_COMMAND_SEQUENCE if step.send]
 
@@ -337,6 +342,32 @@ def build_plan(args: argparse.Namespace) -> tuple[list[CommandSpec], list[dict[s
                 "notes": spec.notes,
             })
     return executable, skipped
+
+
+def recovery_spec_for(spec: CommandSpec) -> CommandSpec | None:
+    if not spec.recovery_command:
+        return None
+    command = spec.recovery_command
+    expected_any: tuple[str, ...]
+    validators: tuple[str, ...] = ()
+    if command == "periodic stop":
+        expected_any = ("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")
+    elif command == "art stop":
+        expected_any = ("art stop: OK", "stop_periodic: OK", "Status: OK", "art stop: OK code=0")
+    elif command == "settings":
+        expected_any = ("=== Config ===", "state=", "mode=")
+        validators = ("driver_ready",)
+    else:
+        expected_any = ("Status: OK", f"{command}: OK", f"{command}: OK code=0")
+    return CommandSpec(
+        command,
+        f"Automatic cleanup after failed `{spec.command}`.",
+        group=f"{spec.group}-recovery",
+        expected_any=expected_any,
+        validators=validators,
+        timeout_s=max(spec.timeout_s, DEFAULT_TIMEOUT_S),
+        notes="Recovery command configured by the failed step.",
+    )
 
 
 def make_log_dir(base: Path) -> Path:
@@ -460,15 +491,21 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     if match:
         parsed["heater"] = "OFF" if match.group(1) == "OFF" or match.group(2) == "0" else "ON"
 
-    match = re.search(r"\b(?:State:\s*|state=)(UNINIT|READY|DEGRADED|OFFLINE)", plain)
+    match = re.search(r"\b(?:State:\s*|state=)([A-Za-z_]+)", plain)
     if match:
-        parsed["state"] = match.group(1)
+        state = match.group(1).upper()
+        if state in ("UNINIT", "READY", "DEGRADED", "OFFLINE"):
+            parsed["state"] = state
+        else:
+            parsed["invalid_state"] = match.group(1)
     match = re.search(r"\b(?:Online:\s*|online=)(true|false|YES|NO|0|1)", plain, re.IGNORECASE)
     if match:
         parsed["online"] = match.group(1).lower() in ("true", "yes", "1")
     match = re.search(r"Consecutive failures:\s*(\d+)", plain)
     if not match:
         match = re.search(r"\bconsec=(\d+)", plain)
+    if not match:
+        match = re.search(r"\bconsecutive=(\d+)", plain)
     if match:
         parsed["consecutive_failures"] = int(match.group(1))
     match = re.search(r"Total success:\s*(\d+)", plain)
@@ -495,6 +532,9 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     if match:
         value = match.group(1).upper()
         parsed["clock_stretching"] = "ENABLED" if value in ("ENABLED", "1") else "DISABLED"
+    match = re.search(r"\b(?:I2C address:\s*|addr=)0x([0-9A-Fa-f]{2})", plain)
+    if match:
+        parsed["configured_i2c_address"] = f"0x{match.group(1).upper()}"
 
     encoded = re.search(r"(?:Alert encoded:\s*|encoded=)0x([0-9A-Fa-f]{4})", plain)
     if encoded:
@@ -515,14 +555,19 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
             parsed["alert_raw"] = f"0x{match.group(1).upper()}"
 
     if "status_restore:" in plain:
-        restore = re.search(r"initialMode=(\w+)\s+finalMode=(\w+)\s+modeInterrupted=(\d)\s+statusValid=(\d)\s+restored=(\d)", plain)
+        boolish = r"(?:\d|true|false|yes|no|on|off)"
+        restore = re.search(
+            rf"initialMode=(\w+)\s+finalMode=(\w+)\s+modeInterrupted=({boolish})\s+statusValid=({boolish})\s+restored=({boolish})",
+            plain,
+            re.IGNORECASE,
+        )
         if restore:
             parsed["status_restore"] = {
                 "initialMode": restore.group(1),
                 "finalMode": restore.group(2),
-                "modeInterrupted": int(restore.group(3)),
-                "statusValid": int(restore.group(4)),
-                "restored": int(restore.group(5)),
+                "modeInterrupted": parse_boolish(restore.group(3)),
+                "statusValid": parse_boolish(restore.group(4)),
+                "restored": parse_boolish(restore.group(5)),
             }
         for label in ("result", "stopStatus", "statusReadStatus", "restoreStatus"):
             match = re.search(rf"{label}:\s*(OK|ERR|IN_PROGRESS)\s+code=(\d+)", plain)
@@ -546,17 +591,34 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
             seen = [str(addr).lower() for addr in parsed.get("i2c_addresses_seen", [])]
             if expected_addr not in seen:
                 errors.append(f"expected address {args.expect_address} not seen")
+        elif validator == "configured_address":
+            configured = str(parsed.get("configured_i2c_address", "")).lower()
+            expected_addr = str(args.expect_address).lower()
+            if not configured:
+                errors.append("configured I2C address not parsed")
+            elif configured != expected_addr:
+                errors.append(f"configured I2C address {configured} != expected {expected_addr}")
         elif validator == "driver_ready":
             state = str(parsed.get("state", "")).upper()
             online = parsed.get("online")
+            if parsed.get("invalid_state"):
+                errors.append(f"driver state is unrecognized: {parsed.get('invalid_state')}")
+            elif not state:
+                errors.append("driver state not parsed")
             if state and state != "READY":
                 errors.append(f"driver state is {state}, expected READY")
+            if spec.command == "drv" and online is None:
+                errors.append("driver online flag not parsed")
             if online is False:
                 errors.append("driver is not online")
         elif validator == "zero_failures":
-            if parsed.get("consecutive_failures", 0) != 0:
+            if "consecutive_failures" not in parsed:
+                errors.append("consecutive failures not parsed")
+            elif parsed.get("consecutive_failures") != 0:
                 errors.append("consecutive failures is nonzero")
-            if parsed.get("total_failures", 0) != 0:
+            if "total_failures" not in parsed:
+                errors.append("total failures not parsed")
+            elif parsed.get("total_failures") != 0:
                 errors.append("total failures is nonzero")
         elif validator == "status_word":
             if not parsed.get("status_word"):
@@ -614,6 +676,16 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
                     errors.append(f"status_restore missing {label}")
                 elif statuses[label].get("kind") not in ("OK", "IN_PROGRESS"):
                     errors.append(f"status_restore {label} is {statuses[label].get('kind')}")
+        elif validator == "status_restore_active":
+            snap = parsed.get("status_restore") or {}
+            initial = str(snap.get("initialMode", "")).lower()
+            final_mode = str(snap.get("finalMode", "")).lower()
+            if initial not in ("periodic", "art"):
+                errors.append(f"status_restore initialMode is {snap.get('initialMode')}, expected periodic or art")
+            if initial and final_mode and final_mode != initial:
+                errors.append(f"status_restore finalMode is {snap.get('finalMode')}, expected {snap.get('initialMode')}")
+            if snap.get("modeInterrupted") != 1:
+                errors.append("status_restore modeInterrupted is not 1")
     return errors
 
 
@@ -628,11 +700,11 @@ def classify(text: str, spec: CommandSpec, timed_out: bool, parsed: dict[str, An
         return RESULT_SKIP, SKIP_UNSUPPORTED
     if has_failure(text, spec):
         return RESULT_FAIL, "failure token detected"
-    if not expected(text, spec):
-        return (RESULT_OPERATOR, "custom command requires review") if spec.review_only else (RESULT_FAIL, "expected output token missing")
     validation_errors = validate_parsed(spec, parsed, args)
     if validation_errors:
         return RESULT_FAIL, "; ".join(validation_errors)
+    if not expected(text, spec):
+        return (RESULT_OPERATOR, "custom command requires review") if spec.review_only else (RESULT_FAIL, "expected output token missing")
     if spec.review_only:
         return RESULT_OPERATOR, "custom command requires review"
     return RESULT_PASS, ""
@@ -703,10 +775,14 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
             last_rx = now
         plain = strip_ansi("".join(parts))
         token_seen = bool(tokens) and any(token in plain for token in tokens)
+        unsupported_seen = has_unsupported(plain, spec)
         idle = (now - last_rx) >= idle_s
         prompt_seen = plain.rstrip().endswith(">")
-        if (token_seen or (not tokens and prompt_seen) or (not tokens and plain.strip())) and idle:
-            reason = "completion-token+idle" if token_seen else "serial-idle"
+        if (token_seen or unsupported_seen or (not tokens and prompt_seen) or (not tokens and plain.strip())) and idle:
+            if unsupported_seen and not token_seen:
+                reason = "unsupported-token+idle"
+            else:
+                reason = "completion-token+idle" if token_seen else "serial-idle"
             break
         time.sleep(0.02)
     output = "".join(parts)
@@ -898,7 +974,7 @@ def write_summary_md(path: Path, args: argparse.Namespace, log_dir: Path, result
         fh.write(f"\n## Final Verdict\n\n`{final}`\n\n")
         fh.write(f"## Claim Boundary\n\n{CLAIM_BOUNDARY}\n\n")
         fh.write("## Artifacts\n\n")
-        for name in ("serial_transcript.txt", "summary.json", "operator_checklist.md", "environment.txt"):
+        for name in ("serial_transcript.txt", "summary.md", "summary.json", "operator_checklist.md", "environment.txt"):
             fh.write(f"- `{log_dir / name}`\n")
         if args.include_output_tests or args.include_fault_tests:
             for name in ("operator_notes.md", "photos_or_evidence_manifest.md", "alert_gpio_capture.csv", "logic_analyzer_reference.txt"):
@@ -907,6 +983,22 @@ def write_summary_md(path: Path, args: argparse.Namespace, log_dir: Path, result
 
 
 def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, results: list[dict[str, Any]], skipped: list[dict[str, str]], final: str, state: dict[str, str], initial_output: str, aggregate: dict[str, Any]) -> None:
+    artifacts = {
+        "log_dir": str(log_dir),
+        "serial_transcript": str(log_dir / "serial_transcript.txt"),
+        "summary_md": str(log_dir / "summary.md"),
+        "summary_json": str(path),
+        "operator_checklist": str(log_dir / "operator_checklist.md"),
+        "environment": str(log_dir / "environment.txt"),
+    }
+    for key, name in (
+        ("operator_notes", "operator_notes.md"),
+        ("photos_or_evidence_manifest", "photos_or_evidence_manifest.md"),
+        ("alert_gpio_capture", "alert_gpio_capture.csv"),
+        ("logic_analyzer_reference", "logic_analyzer_reference.txt"),
+    ):
+        if (log_dir / name).exists():
+            artifacts[key] = str(log_dir / name)
     payload = {
         "timestamp_utc": iso_timestamp(),
         "branch": state["branch"],
@@ -927,14 +1019,7 @@ def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, resu
         "skipped": skipped,
         "final_verdict": final,
         "claim_boundary": CLAIM_BOUNDARY,
-        "artifacts": {
-            "log_dir": str(log_dir),
-            "serial_transcript": str(log_dir / "serial_transcript.txt"),
-            "summary_md": str(log_dir / "summary.md"),
-            "summary_json": str(path),
-            "operator_checklist": str(log_dir / "operator_checklist.md"),
-            "environment": str(log_dir / "environment.txt"),
-        },
+        "artifacts": artifacts,
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1000,7 +1085,11 @@ def main(argv: list[str]) -> int:
         try:
             initial_output = drain_initial_output(ser, args.idle)
             for spec in specs:
-                results.append(run_serial(ser, spec, args.idle, args))
+                row = run_serial(ser, spec, args.idle, args)
+                results.append(row)
+                recovery = recovery_spec_for(spec)
+                if row["result"] == RESULT_FAIL and recovery is not None:
+                    results.append(run_serial(ser, recovery, args.idle, args))
         finally:
             ser.close()
 

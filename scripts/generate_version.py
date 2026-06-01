@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 ENV = None
 try:
@@ -73,6 +74,45 @@ def _write_library_json(path: Path, data: Dict[str, object]) -> None:
         handle.write("\n")
 
 
+def _git_text(project_root: Path, args: List[str]) -> Optional[str]:
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=str(project_root),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return None
+    return completed.stdout.strip()
+
+
+def _git_build_metadata(project_root: Path) -> Tuple[str, str]:
+    commit = _git_text(project_root, ["rev-parse", "--short=12", "HEAD"]) or "unknown"
+    status_text = _git_text(project_root, ["status", "--porcelain", "--untracked-files=no"])
+    status = "unknown" if status_text is None else ("dirty" if status_text else "clean")
+    return commit, status
+
+
+def _cpp_define_string_literal(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'\\"{escaped}\\"'
+
+
+def _apply_platformio_build_metadata(project_root: Path) -> None:
+    if ENV is None:
+        return
+    commit, status = _git_build_metadata(project_root)
+    ENV.Append(
+        BUILD_FLAGS=[
+            f"-DSHT3X_GIT_COMMIT={_cpp_define_string_literal(commit)}",
+            f"-DSHT3X_GIT_STATUS={_cpp_define_string_literal(status)}",
+        ]
+    )
+
+
 def _parse_semver(version: str) -> Tuple[int, int, int]:
     match = SEMVER_RE.match(version)
     if not match:
@@ -113,30 +153,44 @@ def _render_version_header(namespace: str, version: str) -> str:
 
 #include <stdint.h>
 
+/// @def {prefix}_VERSION_STRING
+/// @brief Semantic version string from library.json.
 #ifndef {prefix}_VERSION_STRING
 #define {prefix}_VERSION_STRING "{version}"
 #endif
 
+/// @def {prefix}_BUILD_DATE
+/// @brief Build date macro used for generated firmware/application metadata.
 #ifndef {prefix}_BUILD_DATE
 #define {prefix}_BUILD_DATE __DATE__
 #endif
 
+/// @def {prefix}_BUILD_TIME
+/// @brief Build time macro used for generated firmware/application metadata.
 #ifndef {prefix}_BUILD_TIME
 #define {prefix}_BUILD_TIME __TIME__
 #endif
 
+/// @def {prefix}_BUILD_TIMESTAMP
+/// @brief Build timestamp assembled from date and time macros.
 #ifndef {prefix}_BUILD_TIMESTAMP
 #define {prefix}_BUILD_TIMESTAMP {prefix}_BUILD_DATE " " {prefix}_BUILD_TIME
 #endif
 
+/// @def {prefix}_GIT_COMMIT
+/// @brief Git commit embedded by build tooling, or "unknown" outside a configured build.
 #ifndef {prefix}_GIT_COMMIT
 #define {prefix}_GIT_COMMIT "unknown"
 #endif
 
+/// @def {prefix}_GIT_STATUS
+/// @brief Git worktree status embedded by build tooling, or "unknown" outside a configured build.
 #ifndef {prefix}_GIT_STATUS
 #define {prefix}_GIT_STATUS "unknown"
 #endif
 
+/// @def {prefix}_VERSION_FULL
+/// @brief Full version string including semantic version, commit, timestamp, and status.
 #ifndef {prefix}_VERSION_FULL
 #define {prefix}_VERSION_FULL {prefix}_VERSION_STRING " (" {prefix}_GIT_COMMIT ", " {prefix}_BUILD_TIMESTAMP ", " {prefix}_GIT_STATUS ")"
 #endif
@@ -239,6 +293,7 @@ def main(args: List[str]) -> int:
 
     if not args:
         _sync_outputs(project_root, check_only=False, quiet=True)
+        _apply_platformio_build_metadata(project_root)
         return 0
 
     command = args[0]

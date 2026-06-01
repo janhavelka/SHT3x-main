@@ -77,9 +77,9 @@ struct SettingsSnapshot {
 struct StatusReadSnapshot {
   StatusRegister status = {};                                 ///< Parsed status register when statusValid is true
   bool statusValid = false;                                   ///< True if the status read succeeded
-  Status stopStatus = Status::Ok();                           ///< Break/stop result; OK when no stop was needed
+  Status stopStatus = Status::Ok();                           ///< Break/stop result; OK when no stop was needed or stop succeeded
   Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of status read step
-  Status restoreStatus = Status::Ok();                        ///< Restore result; OK when no restore was needed
+  Status restoreStatus = Status::Ok();                        ///< Restore result; OK when no restore was needed or restore succeeded
   Mode initialMode = Mode::SINGLE_SHOT;                       ///< Mode observed before the operation
   Mode finalMode = Mode::SINGLE_SHOT;                         ///< Mode after all attempted steps
   bool modeInterrupted = false;                               ///< True when periodic/ART was stopped for this read
@@ -140,14 +140,27 @@ public:
   Status begin(const Config& config);
 
   /// Process pending measurement work.
-  /// @note This function is bounded, but it may perform one synchronous I2C
-  ///       transaction when a previously requested sample is due. In OFFLINE it
-  ///       clears pending measurement state and does not touch the bus.
+  /// @note This function is bounded, but it may perform one measurement step
+  ///       when a previously requested sample is due. Single-shot completion
+  ///       performs one receive-only read; periodic/ART completion performs a
+  ///       Fetch Data command write plus receive-only read. In OFFLINE it clears
+  ///       pending measurement state and does not touch the bus.
+  /// @note The return type is void. I2C failures are observable through
+  ///       lastError(), consecutiveFailures(), totalFailures(), driverState(),
+  ///       and retry scheduling. Protocol failures after a successful bus
+  ///       transaction, such as CRC mismatch, do not update transport health;
+  ///       they leave no ready sample and are retried through normal scheduling.
+  ///       Use explicit read APIs when the caller must handle a synchronous
+  ///       Status at the call site.
   /// @param nowMs Current timestamp from the same wrapping millisecond timebase
   ///              used by Config::nowMs
   void tick(uint32_t nowMs);
 
-  /// Shutdown the driver and release resources
+  /// End the local driver session.
+  /// @note This clears runtime/session state and returns the instance to
+  ///       UNINIT. It does not send Break, reset the sensor, or guarantee that
+  ///       physical periodic/ART acquisition has stopped. Call stopPeriodic()
+  ///       before end() when hardware acquisition state matters.
   void end();
 
   /// Check if begin() completed successfully and end() has not been called
@@ -162,14 +175,20 @@ public:
   // Diagnostics
   // =========================================================================
 
-  /// Check if device is present on the bus (no health tracking)
+  /// Raw diagnostic presence check with no health tracking.
+  /// @note Uses the status-register command path through raw transport wrappers.
+  ///       This can issue I2C outside normal health accounting and is not an
+  ///       online-state verdict. Avoid calling during active acquisition unless
+  ///       that diagnostic side effect is intentional.
   /// @return Status::Ok() if device responds, error otherwise
   Status probe();
 
-  /// Attempt to recover from DEGRADED/OFFLINE state.
+  /// Run the manual communication recovery ladder after begin().
   /// @note May run multiple bounded transactions through the configured
-  ///       recovery ladder. General-call reset is used only when explicitly
-  ///       enabled because it affects all supporting devices on the bus.
+  ///       recovery ladder and is destructive to pending measurement/acquisition
+  ///       state. On success the driver is left in safe SINGLE_SHOT idle mode.
+  ///       General-call reset is used only when explicitly enabled because it
+  ///       affects all supporting devices on the bus.
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
 
@@ -209,26 +228,29 @@ public:
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful tracked I2C operation after begin()
+  /// Timestamp of last successful tracked transport operation after begin()
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed tracked I2C operation after begin()
+  /// Timestamp of last failed tracked transport operation after begin()
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
   /// Timestamp of last tracked I2C attempt after begin().
   /// @note Includes successes, failures, and expected read-header NACKs.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
-  /// Most recent error status
+  /// Most recent tracked transport error status.
+  /// @note Validation, precondition, CRC, and sensor status-bit errors are
+  ///       returned by the API that observes them but do not replace this value
+  ///       unless they occur through a tracked transport wrapper.
   Status lastError() const { return _lastError; }
 
-  /// Consecutive failures since last success
+  /// Consecutive tracked transport failures since last tracked success
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
 
-  /// Total failure count (lifetime)
+  /// Total tracked transport failure count for the current driver session
   uint32_t totalFailures() const { return _totalFailures; }
 
-  /// Total success count (lifetime)
+  /// Total tracked transport success count for the current driver session
   uint32_t totalSuccess() const { return _totalSuccess; }
 
   /// Count of consecutive "not-ready" responses during periodic fetch
@@ -306,6 +328,10 @@ public:
   /// records the exact status-read result when it does not.
   /// @note In active periodic/ART mode the status read is not issued; the
   ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
+  ///       The same OK snapshot behavior applies while a single-shot
+  ///       measurement is pending.
+  ///       In OFFLINE state, readSettings() returns BUSY like other normal
+  ///       public I2C APIs.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
@@ -314,6 +340,11 @@ public:
 
   /// Issue one raw 16-bit command using the tracked transport path.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
+  /// @note Expert escape hatch. This bypasses high-level mode safety for
+  ///       periodic/ART, so the caller owns datasheet command legality,
+  ///       hardware desynchronization risk, local cache coherence, and any
+  ///       status side effects. Stop periodic/ART before raw commands unless
+  ///       the datasheet explicitly permits the command in the active mode.
   /// @return Status::Ok() on success, error otherwise
   Status writeCommand(uint16_t command);
 
@@ -321,6 +352,11 @@ public:
   /// The CRC byte is computed internally.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @param data Packed 16-bit payload word
+  /// @note Expert escape hatch. This bypasses high-level mode safety for
+  ///       periodic/ART, so the caller owns datasheet command legality,
+  ///       hardware desynchronization risk, local cache coherence,
+  ///       write-payload meaning, and status side effects. Stop periodic/ART before raw commands unless the
+  ///       datasheet explicitly permits the command in the active mode.
   /// @return Status::Ok() on success, error otherwise
   Status writeCommandWithData(uint16_t command, uint16_t data);
 
@@ -331,6 +367,12 @@ public:
   /// @param len Number of bytes to read; SHT3x responses are limited to 6 bytes
   /// @param allowNoData Map a read-header NACK to MEASUREMENT_NOT_READY when supported
   /// @note Invalid buffers and oversized reads are rejected before any I2C command is sent.
+  /// @note Expert escape hatch. This bypasses high-level mode safety for
+  ///       periodic/ART, so the caller owns datasheet command legality,
+  ///       response length, response CRC interpretation, and desynchronization
+  ///       risk. Raw reads do not update local mode/heater/alert caches. Stop
+  ///       periodic/ART before raw commands unless the datasheet explicitly
+  ///       permits the command in the active mode.
   /// @return Status::Ok() on success, error otherwise
   Status readCommand(uint16_t command, uint8_t* out, size_t len,
                      bool allowNoData = false);
@@ -382,20 +424,27 @@ public:
   // =========================================================================
 
   /// Read raw status register without clearing flags.
-  /// @note Returns BUSY while periodic/ART acquisition is active; use
-  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
+  /// @note Returns BUSY while a single-shot measurement is pending or
+  ///       periodic/ART acquisition is active. Use readStatusWithModeRestore()
+  ///       when ALERT diagnosis is needed in periodic/ART modes.
   Status readStatus(uint16_t& raw);
 
   /// Read and parse status register without clearing flags.
-  /// @note Returns BUSY while periodic/ART acquisition is active; use
-  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
+  /// @note Returns BUSY while a single-shot measurement is pending or
+  ///       periodic/ART acquisition is active. Use readStatusWithModeRestore()
+  ///       when ALERT diagnosis is needed in periodic/ART modes.
   Status readStatus(StatusRegister& out);
 
   /// Read status, breaking and restoring periodic/ART mode when needed.
   /// @note This is disruptive in periodic/ART mode: it sends Break, aborts the
   ///       current acquisition cadence, reads status, and attempts to restore
   ///       the prior periodic or ART mode. Inspect the snapshot for partial
-  ///       stop/read/restore results when this returns an error.
+  ///       stop/read/restore results when this returns an error. statusValid is
+  ///       true only when the status read step succeeded; restored is true only
+  ///       when no restore was needed or the previous periodic/ART mode was
+  ///       restarted successfully. If both status read and restore fail, the
+  ///       top-level return reports restoreStatus; inspect statusReadStatus for
+  ///       the earlier status-read failure.
   Status readStatusWithModeRestore(StatusReadSnapshot& out);
 
   /// Clear status flags. This is destructive for status bits 15, 11, 10, and 4.
@@ -415,17 +464,27 @@ public:
 
   /// Soft reset the device.
   /// @note Sends one reset command and waits the bounded reset delay. Returns
-  ///       BUSY while periodic/ART is active.
+  ///       BUSY while periodic/ART is active. A pending single-shot conversion
+  ///       is not preserved; on reset success pending measurement/sample state
+  ///       is cleared, mode is set to SINGLE_SHOT, and the restore cache is not
+  ///       automatically rewritten.
   Status softReset();
 
   /// Interface reset sequence (SCL pulse recovery).
   /// @note Uses the application-provided bus reset callback. The callback must
-  ///       not recursively call into the same SHT3x instance.
+  ///       be bounded, must not recursively call into the same SHT3x instance,
+  ///       and must own any GPIO/SCL sequencing externally. Direct calls clear
+  ///       pending/sample state and update command spacing, but callback failure
+  ///       is not a tracked transport failure and success does not prove a
+  ///       sensor reset occurred.
   Status interfaceReset();
 
   /// General call reset (bus-wide).
   /// @note Resets every supporting device on the bus and is therefore an
   ///       application/bus-manager decision guarded by Config::allowGeneralCallReset.
+  ///       It is disabled by default and is used by recover() only when that
+  ///       explicit opt-in is set. On success, local measurement state is
+  ///       cleared and mode is set to SINGLE_SHOT.
   Status generalCallReset();
 
   // =========================================================================
@@ -450,23 +509,33 @@ public:
   /// @note Alert mode is active during periodic acquisition, but alert-limit
   ///       commands are not documented as valid while periodic/ART is running.
   ///       This API returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success, CRC_MISMATCH on invalid response CRC, BUSY
+  ///         when acquisition blocks access, or an I2C/precondition error.
   Status readAlertLimitRaw(AlertLimitKind kind, uint16_t& value);
 
   /// Read and decode alert limit.
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success or the status from readAlertLimitRaw().
   Status readAlertLimit(AlertLimitKind kind, AlertLimit& out);
 
   /// Write raw alert limit word (CRC is computed internally).
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success, COMMAND_FAILED or WRITE_CRC_ERROR when
+  ///         status verification reports a sensor-side rejection, BUSY when
+  ///         acquisition blocks access, or an I2C/precondition error.
   Status writeAlertLimitRaw(AlertLimitKind kind, uint16_t value);
 
   /// Encode and write alert limit from physical values.
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success, INVALID_PARAM for non-finite inputs, or
+  ///         the status from writeAlertLimitRaw().
   Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
 
   /// Disable alerts by setting LowSet > HighSet.
   /// @note Multi-step operation: HIGH_SET is written before LOW_SET. If LOW_SET
   ///       fails, HIGH_SET may already be applied and cached.
+  /// @return Status::Ok() only after both writes succeed; otherwise the first
+  ///         failing write status is returned and partial hardware/cache state is possible.
   Status disableAlerts();
 
   // =========================================================================
@@ -479,6 +548,14 @@ public:
   /// @return Packed RH7/T9 alert-limit word
   /// @note Inputs are clamped to the SHT3x representable range. Non-finite
   ///       values are treated as invalid by writeAlertLimit().
+  /// @note The Sensirion alert application-note reset-default labels
+  ///       (80/60, 79/58, 22/-9, 20/-10 in RH%/degC order) encode to the
+  ///       documented default raw words through this API as
+  ///       encodeAlertLimit(60, 80) -> 0xCD33,
+  ///       encodeAlertLimit(58, 79) -> 0xC92D,
+  ///       encodeAlertLimit(-9, 22) -> 0x3869, and
+  ///       encodeAlertLimit(-10, 20) -> 0x3466. Other values use reduced
+  ///       RH7/T9 quantization.
   static uint16_t encodeAlertLimit(float temperatureC, float humidityPct);
 
   /// Decode alert limit word into physical values.
@@ -512,7 +589,8 @@ public:
   // Timing
   // =========================================================================
 
-  /// Estimate max measurement time based on current repeatability.
+  /// Estimate max measurement time based on current repeatability, Config::lowVdd,
+  /// and the driver's safety margin.
   /// @return Measurement time in milliseconds
   uint32_t estimateMeasurementTimeMs() const;
 

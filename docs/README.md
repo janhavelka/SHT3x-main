@@ -1,23 +1,26 @@
 # SHT3x Documentation Index
 
-Date: 2026-05-31
-Branch: `main`
+Last updated: 2026-06-01
 
-This file is the documentation map for the repository. It is the current place
-to check which documents are active and which ones are historical snapshots.
+Branch: `hardening/sht3x-release-readiness-gaps`
 
-A prior automated smoke-HIL log exists under `hil_logs/i2c_20260531T155925Z/`.
-It proves only the selected serial smoke sequence for that recorded target and
-commit. All unexecuted hardware rows stay `Not run` until a real ESP32-S2/S3
-and SHT3x target produce logs and fixture evidence for those rows.
+This file is the documentation map for the repository. It separates maintained
+status/procedure docs from historical reports and raw reference material.
 
 ## Current Status
 
 - Current branch changes are still under `CHANGELOG.md` `[Unreleased]`.
-- `library.json` is still version `1.5.0`; the current branch HEAD is not a
-  release tag.
-- Last recorded local cleanup checks covered the native test suite, guard
-  scripts, Doxygen, and Arduino PlatformIO ESP32-S3/S2 builds.
+- `library.json` is still version `1.5.0`; this branch head is not a release tag.
+- Latest curated default serial HIL evidence is
+  `docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md`.
+  It summarizes a local generated run at `hil_logs/i2c_20260601T183017Z`:
+  ESP32-S3 on COM17, SHT3x address `0x44`, final verdict `PASS`, branch
+  `hardening/sht3x-release-readiness-gaps`, code commit
+  `7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`, and clean firmware metadata.
+- That HIL evidence is limited to the default automated serial command sequence.
+  It does not validate physical ALERT pin behavior, humidity accuracy, fault
+  injection, clock stretching, ESP32-S2 hardware, address `0x45`, alert writes,
+  destructive reset flows, or long-soak stability.
 - Pure ESP-IDF S2/S3 builds are configured in CI. Use a passing CI log or local
   ESP-IDF build log before claiming pure ESP-IDF validation.
 - Hardware status is tracked only in `HARDWARE_VALIDATION.md`.
@@ -31,45 +34,63 @@ and SHT3x target produce logs and fixture evidence for those rows.
 - `SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial runner procedure.
 - `SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - target profile for serial runner runs.
 - `SHT3X_I2C_HIL_SELFTEST_REPORT.md` - serial runner software self-test report.
-- `SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md` - release-readiness fix notes.
-- `SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md` - read-only readiness audit.
-- `SHT3X_ALERT_STATUS_FIX_REPORT.md` - rationale for ALERT/status mode-restore support.
-- `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contract and partial-state notes.
 - `IDF_PORT.md` - ESP-IDF porting guidance.
 - `IDF_PORT_IMPLEMENTATION.md` - implemented ESP-IDF component/example notes.
 
-## Historical Context
+## Rationale Notes
 
-- `SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md` - historical summary of prompts 00-05.
+These are maintained technical rationale notes. They are not release status
+documents.
+
+- `rationale/SHT3X_ALERT_STATUS_FIX_REPORT.md` - ALERT/status restore design.
+- `rationale/SHT3X_ALERT_ENCODING_FIX_REPORT.md` - alert-limit vector fix and coverage.
+- `rationale/SHT3X_API_CONTRACT_CLEANUP_REPORT.md` - public API contract cleanup.
+- `rationale/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - partial-state behavior.
+
+## HIL Evidence
+
+- `hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md` - curated summary
+  of the latest default ESP32-S3 serial HIL run.
+
+Generated `hil_logs/` directories remain local scratch output by default. Commit
+only curated summaries or fixture artifacts that are intended to become project
+evidence.
+
+## Archive
+
+Historical audit, planning, and branch reports live under `archive/`. They are
+kept for provenance and may describe old branches, old CI failures, old HIL
+state, or superseded release-gate decisions. Do not use archived reports as the
+current project status; use this index plus `HARDWARE_VALIDATION.md`.
+
+- `archive/reports/` - historical readiness, runner, package, and prompt reports.
+- `archive/prompts/` - original task/prompt captures.
+- `archive/notes/` - historical extraction and split notes.
 
 ## Reference Material
 
-- `CODEX_PROMPT_SHT3X_DRIVER.md` - original driver prompt/instruction capture.
-- `SHT3x_driver_extraction.md` - extraction and split notes.
-- `extracted-md/` - compact local SHT3x protocol notes.
-- `pdf-extracted-md/` - local extracted Sensirion reference text.
-- Vendor PDFs and `HT_AlertMode_BitConversion.xlsx` - source references.
+Local reference material lives under `reference/` and is excluded from the
+PlatformIO package payload.
 
-## Removed During Cleanup
+- `reference/vendor/` - vendor PDFs and the alert bit-conversion spreadsheet.
+- `reference/extracted/sht3x/` - compact local SHT3x protocol notes.
+- `reference/extracted/vendor/` - extracted vendor PDF/application-note text.
 
-The branch cleanup removed stale planning and snapshot reports that duplicated
-the active docs:
+## Package Boundary
 
-- `SHT3X_HARDENING_PLAN.md`
-- `SHT3X_HARDENING_FINAL_REPORT.md`
-- `SHT3X_DOCS_CLEANUP_BEFORE_HIL_REPORT.md`
-- `SHT3X_IDF_CI_DOCS_REPORT.md`
-- `SHT3X_IDF_MERGED_INDUSTRY_READINESS_AUDIT.md`
-- `SHT3X_PRE_HIL_READINESS_REPORT.md`
-
-Their useful current-state content is now covered by this index,
-`IDF_PORT_IMPLEMENTATION.md`, `HARDWARE_VALIDATION.md`, and the changelog.
+The package export is library-focused. It keeps source, public headers,
+examples, README/changelog, component metadata, the maintained active docs,
+rationale notes, and the host-side serial HIL runner entrypoints. It excludes
+generated HIL logs, build outputs, Doxygen output, vendor PDFs, extracted
+reference text, and archived reports.
 
 ## Claim Boundary
 
-Safe wording today: software-hardened, locally software-tested, limited
-smoke-HIL evidence exists, and CI is configured.
+Safe wording today: software-hardened, locally software-tested, CI-configured,
+and default ESP32-S3 serial HIL-smoke passed for the curated `7847ed0` evidence
+summary.
 
-Do not claim hardware validation, ALERT pin validation, humidity accuracy
-validation, pure ESP-IDF validation, release publication, field-proven behavior,
-or industry-grade status until the corresponding evidence exists.
+Do not claim full hardware validation, physical ALERT pin validation, humidity
+accuracy validation, pure ESP-IDF validation, fault-injection validation,
+long-soak stability, release publication, field-proven behavior, or
+industrial-grade status until the corresponding evidence exists.

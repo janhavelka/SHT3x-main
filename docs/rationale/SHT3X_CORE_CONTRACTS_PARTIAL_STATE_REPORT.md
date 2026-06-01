@@ -36,14 +36,15 @@ physical sensor.
 |---|---|---|---|
 | `begin()` | best-effort Break, wait, soft reset, wait, status probe, optional periodic/ART start | Multi-transaction; may leave hardware changed on failure | Startup can stop/reset the sensor even if `begin()` fails. Health counters intentionally start after initialization. |
 | `requestMeasurement()` single-shot | one measurement command | One transaction | Schedules readiness only after command success. |
-| `tick()` single-shot read | one read plus CRC checks | One transaction | Failure preserves no false ready sample. |
+| `tick()` single-shot read | one read plus CRC checks | One transaction | Failure preserves no false ready sample. Transport failures update health; CRC/protocol failures after a successful bus transaction do not. |
 | periodic/ART fetch | Fetch Data command, read, CRC checks | Multi-transaction; no config mutation | Not-ready NACK is non-failure when transport can prove it. |
 | inactive `startPeriodic()` / `startArt()` | one start command | One transaction | Cache updates only after success. |
 | active periodic/ART restart | Break, wait, new start command | Multi-transaction; may leave hardware stopped | If Break succeeds and restart fails, driver reports single-shot idle and cached desired settings are not advanced. |
 | `stopPeriodic()` | Break, wait | One command plus wait | If Break write fails, old mode remains active. If Break succeeds but wait fails, driver already reflects stopped state. |
 | `setRepeatability()` / `setPeriodicRate()` while active | restart path | Multi-transaction; may leave hardware stopped | Cache updates only after full restart success. |
-| `readStatus()` / `readSettings()` | status command, read, CRC | Read-only multi-transaction | `readSettings()` exposes `statusReadStatus` when status is unavailable. |
-| `readStatusWithModeRestore()` active | Break, status read, restore start | Multi-transaction; may leave hardware stopped | Snapshot exposes stop/read/restore status and partial-state flags. |
+| raw command helpers | caller-selected command/read frame | Expert escape hatch | Tracked transport and tIDLE apply, but periodic/ART command legality, response CRC interpretation, and cache coherence are caller-owned. |
+| `readStatus()` / `readSettings()` | status command, read, CRC | Read-only multi-transaction | `readStatus()` returns `BUSY` during pending single-shot or periodic/ART. `readSettings()` returns OK with `statusValid=false` for pending/active status unavailability, but returns `BUSY` while OFFLINE. |
+| `readStatusWithModeRestore()` active | Break, status read, restore start | Multi-transaction; may leave hardware stopped | Snapshot exposes stop/read/restore status and partial-state flags. If status read and restore both fail, top-level return reports restore failure. |
 | `clearStatus()` | clear command | One destructive command | Clears status flags 15, 11, 10, and 4 only when explicitly called. |
 | `setHeater()` | heater command | One transaction | Cache updates only after command success. |
 | `writeAlertLimitRaw()` | data+CRC write, status verification read | Multi-transaction; may leave hardware changed | Cache updates only after write and verification fully succeed. |

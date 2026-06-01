@@ -9,13 +9,13 @@ periodic-mode exception and recommends stopping periodic acquisition before
 sending another command.
 
 Checked references:
-- `docs/pdf-extracted-md/SHT3x_datasheet.md`, section 4.6, Table 11: Fetch Data `0xE000`.
-- `docs/pdf-extracted-md/SHT3x_datasheet.md`, section 4.7, Table 12: ART `0x2B32` follows periodic start/readout/stop flow.
-- `docs/pdf-extracted-md/SHT3x_datasheet.md`, section 4.8, Table 13: Break `0x3093` stops periodic mode.
-- `docs/pdf-extracted-md/SHT3x_datasheet.md`, section 4.11, Table 17: status read `0xF32D`, 16-bit status word plus CRC.
-- `docs/pdf-extracted-md/SHT3x_datasheet.md`, section 4.11, Table 18: status bits 15, 13, 11, 10, 4, 1, and 0.
-- `docs/pdf-extracted-md/SHT3x_datasheet.md`, section 4.11, Table 19: clear status `0x3041`, clearing bits 15, 11, 10, and 4.
-- `docs/pdf-extracted-md/SHT3x_HT_AN_AlertMode.md`: ALERT mode is active during periodic acquisition and status bits indicate alert cause.
+- `docs/reference/extracted/vendor/SHT3x_datasheet.md`, section 4.6, Table 11: Fetch Data `0xE000`.
+- `docs/reference/extracted/vendor/SHT3x_datasheet.md`, section 4.7, Table 12: ART `0x2B32` follows periodic start/readout/stop flow.
+- `docs/reference/extracted/vendor/SHT3x_datasheet.md`, section 4.8, Table 13: Break `0x3093` stops periodic mode.
+- `docs/reference/extracted/vendor/SHT3x_datasheet.md`, section 4.11, Table 17: status read `0xF32D`, 16-bit status word plus CRC.
+- `docs/reference/extracted/vendor/SHT3x_datasheet.md`, section 4.11, Table 18: status bits 15, 13, 11, 10, 4, 1, and 0.
+- `docs/reference/extracted/vendor/SHT3x_datasheet.md`, section 4.11, Table 19: clear status `0x3041`, clearing bits 15, 11, 10, and 4.
+- `docs/reference/extracted/vendor/SHT3x_HT_AN_AlertMode.md`: ALERT mode is active during periodic acquisition and status bits indicate alert cause.
 
 ## Contract Decision
 
