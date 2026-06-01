@@ -6,15 +6,12 @@ Branch: `hardening/sht3x-release-readiness-gaps`
 This file is a scenario index, not a status tracker. Current evidence status is
 tracked in `docs/HARDWARE_VALIDATION.md`.
 
-The only tracked automated smoke-HIL `PASS` at this point is
-`hil_logs/i2c_20260531T155925Z/summary.md`: address `0x44`, COM17, branch
-`hardening/sht3x-industry-readiness`, host runner/worktree commit
-`8661a38cc70e629cd337ac45c42a1885aefb0cfc`, limited to the serial commands in
-that log. The flashed firmware reported its git commit as `unknown`, so do not
-use this artifact as exact firmware-source evidence without a matching build or
-upload record. Current-head release evidence still needs a rerun after branch
-changes. Operator reports are context only until the matching log or fixture
-artifact is committed.
+The latest curated automated default serial HIL `PASS` is
+`docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md`: address
+`0x44`, COM17, branch `hardening/sht3x-release-readiness-gaps`, code commit
+`7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`, and clean firmware metadata. It is
+limited to the default serial commands in that evidence summary. Operator
+reports are context only until the matching log or fixture artifact is committed.
 
 Manual operator procedures live in `docs/SHT3X_HIL_RUNBOOK.md`. The host-side
 serial runner is `tools/run_sht3x_hil.py` / `tools/run_i2c_hil.py`, and its

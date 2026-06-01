@@ -153,30 +153,44 @@ def _render_version_header(namespace: str, version: str) -> str:
 
 #include <stdint.h>
 
+/// @def {prefix}_VERSION_STRING
+/// @brief Semantic version string from library.json.
 #ifndef {prefix}_VERSION_STRING
 #define {prefix}_VERSION_STRING "{version}"
 #endif
 
+/// @def {prefix}_BUILD_DATE
+/// @brief Build date macro used for generated firmware/application metadata.
 #ifndef {prefix}_BUILD_DATE
 #define {prefix}_BUILD_DATE __DATE__
 #endif
 
+/// @def {prefix}_BUILD_TIME
+/// @brief Build time macro used for generated firmware/application metadata.
 #ifndef {prefix}_BUILD_TIME
 #define {prefix}_BUILD_TIME __TIME__
 #endif
 
+/// @def {prefix}_BUILD_TIMESTAMP
+/// @brief Build timestamp assembled from date and time macros.
 #ifndef {prefix}_BUILD_TIMESTAMP
 #define {prefix}_BUILD_TIMESTAMP {prefix}_BUILD_DATE " " {prefix}_BUILD_TIME
 #endif
 
+/// @def {prefix}_GIT_COMMIT
+/// @brief Git commit embedded by build tooling, or "unknown" outside a configured build.
 #ifndef {prefix}_GIT_COMMIT
 #define {prefix}_GIT_COMMIT "unknown"
 #endif
 
+/// @def {prefix}_GIT_STATUS
+/// @brief Git worktree status embedded by build tooling, or "unknown" outside a configured build.
 #ifndef {prefix}_GIT_STATUS
 #define {prefix}_GIT_STATUS "unknown"
 #endif
 
+/// @def {prefix}_VERSION_FULL
+/// @brief Full version string including semantic version, commit, timestamp, and status.
 #ifndef {prefix}_VERSION_FULL
 #define {prefix}_VERSION_FULL {prefix}_VERSION_STRING " (" {prefix}_GIT_COMMIT ", " {prefix}_BUILD_TIMESTAMP ", " {prefix}_GIT_STATUS ")"
 #endif

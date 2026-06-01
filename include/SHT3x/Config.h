@@ -43,7 +43,10 @@ inline constexpr bool hasCapability(TransportCapability caps, TransportCapabilit
 ///         - Err::I2C_BUS for bus/arbitration error
 ///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
 /// @note Callbacks must not recursively call public APIs on the same SHT3x
-///       instance. Serialize any shared bus access outside the driver.
+///       instance. Serialize any shared bus access outside the driver. They
+///       must return within timeoutMs, avoid unbounded waits, and must not
+///       secretly own/configure bus pins, reset pins, global bus timeout, or
+///       unrelated bus-manager policy.
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
@@ -67,7 +70,10 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 ///       i2cWriteRead() with txLen==0 to perform the read after a tIDLE delay.
 ///       Combined write+read (repeated-start) is not allowed for SHT3x flows.
 ///       Callbacks must not recursively call public APIs on the same SHT3x
-///       instance. Serialize any shared bus access outside the driver.
+///       instance. Serialize any shared bus access outside the driver. They
+///       must return within timeoutMs, avoid unbounded waits, and must not
+///       secretly own/configure bus pins, reset pins, global bus timeout, or
+///       unrelated bus-manager policy.
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
@@ -156,7 +162,7 @@ struct Config {
   bool lowVdd = false;                                ///< Use low-VDD timing limits
 
   // === Timing ===
-  uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE), 1..1000 ms
+  uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE), 0 normalizes to 1; max 1000 ms
 
   /// Periodic mode not-ready timeout (0 = disabled).
   /// @note Applies only when transportCapabilities includes READ_HEADER_NACK.
@@ -172,7 +178,7 @@ struct Config {
   uint32_t recoverBackoffMs = 100;                    ///< 0..600000 ms
 
   // === Health Tracking ===
-  uint8_t offlineThreshold = 5;                       ///< Consecutive failures before OFFLINE
+  uint8_t offlineThreshold = 5;                       ///< Consecutive failures before OFFLINE; 0 normalizes to 1
 
   // === Reset Safety ===
   bool allowGeneralCallReset = false;                 ///< Allow general call reset on the bus

@@ -21,7 +21,7 @@ evidence. Dry-run artifacts are non-evidence for sensor electrical behavior.
 - `docs/SHT3X_I2C_HIL_RUNBOOK.md`
 - `docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md`
 - `docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md`
-- `docs/SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md`
+- `docs/archive/reports/SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md`
 - `tools/check_hil_contract.py`
 - `tools/run_i2c_hil.py`
 - `tools/run_sht3x_hil.py`

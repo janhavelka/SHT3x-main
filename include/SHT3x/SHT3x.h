@@ -140,9 +140,11 @@ public:
   Status begin(const Config& config);
 
   /// Process pending measurement work.
-  /// @note This function is bounded, but it may perform one synchronous I2C
-  ///       transaction when a previously requested sample is due. In OFFLINE it
-  ///       clears pending measurement state and does not touch the bus.
+  /// @note This function is bounded, but it may perform one measurement step
+  ///       when a previously requested sample is due. Single-shot completion
+  ///       performs one receive-only read; periodic/ART completion performs a
+  ///       Fetch Data command write plus receive-only read. In OFFLINE it clears
+  ///       pending measurement state and does not touch the bus.
   /// @note The return type is void. I2C failures are observable through
   ///       lastError(), consecutiveFailures(), totalFailures(), driverState(),
   ///       and retry scheduling. Protocol failures after a successful bus
@@ -173,14 +175,20 @@ public:
   // Diagnostics
   // =========================================================================
 
-  /// Check if device is present on the bus (no health tracking)
+  /// Raw diagnostic presence check with no health tracking.
+  /// @note Uses the status-register command path through raw transport wrappers.
+  ///       This can issue I2C outside normal health accounting and is not an
+  ///       online-state verdict. Avoid calling during active acquisition unless
+  ///       that diagnostic side effect is intentional.
   /// @return Status::Ok() if device responds, error otherwise
   Status probe();
 
-  /// Attempt to recover from DEGRADED/OFFLINE state.
+  /// Run the manual communication recovery ladder after begin().
   /// @note May run multiple bounded transactions through the configured
-  ///       recovery ladder. General-call reset is used only when explicitly
-  ///       enabled because it affects all supporting devices on the bus.
+  ///       recovery ladder and is destructive to pending measurement/acquisition
+  ///       state. On success the driver is left in safe SINGLE_SHOT idle mode.
+  ///       General-call reset is used only when explicitly enabled because it
+  ///       affects all supporting devices on the bus.
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
 
@@ -220,26 +228,29 @@ public:
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful tracked I2C operation after begin()
+  /// Timestamp of last successful tracked transport operation after begin()
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed tracked I2C operation after begin()
+  /// Timestamp of last failed tracked transport operation after begin()
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
   /// Timestamp of last tracked I2C attempt after begin().
   /// @note Includes successes, failures, and expected read-header NACKs.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
-  /// Most recent error status
+  /// Most recent tracked transport error status.
+  /// @note Validation, precondition, CRC, and sensor status-bit errors are
+  ///       returned by the API that observes them but do not replace this value
+  ///       unless they occur through a tracked transport wrapper.
   Status lastError() const { return _lastError; }
 
-  /// Consecutive failures since last success
+  /// Consecutive tracked transport failures since last tracked success
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
 
-  /// Total failure count (lifetime)
+  /// Total tracked transport failure count for the current driver session
   uint32_t totalFailures() const { return _totalFailures; }
 
-  /// Total success count (lifetime)
+  /// Total tracked transport success count for the current driver session
   uint32_t totalSuccess() const { return _totalSuccess; }
 
   /// Count of consecutive "not-ready" responses during periodic fetch
@@ -461,7 +472,11 @@ public:
 
   /// Interface reset sequence (SCL pulse recovery).
   /// @note Uses the application-provided bus reset callback. The callback must
-  ///       not recursively call into the same SHT3x instance.
+  ///       be bounded, must not recursively call into the same SHT3x instance,
+  ///       and must own any GPIO/SCL sequencing externally. Direct calls clear
+  ///       pending/sample state and update command spacing, but callback failure
+  ///       is not a tracked transport failure and success does not prove a
+  ///       sensor reset occurred.
   Status interfaceReset();
 
   /// General call reset (bus-wide).
@@ -494,23 +509,33 @@ public:
   /// @note Alert mode is active during periodic acquisition, but alert-limit
   ///       commands are not documented as valid while periodic/ART is running.
   ///       This API returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success, CRC_MISMATCH on invalid response CRC, BUSY
+  ///         when acquisition blocks access, or an I2C/precondition error.
   Status readAlertLimitRaw(AlertLimitKind kind, uint16_t& value);
 
   /// Read and decode alert limit.
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success or the status from readAlertLimitRaw().
   Status readAlertLimit(AlertLimitKind kind, AlertLimit& out);
 
   /// Write raw alert limit word (CRC is computed internally).
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success, COMMAND_FAILED or WRITE_CRC_ERROR when
+  ///         status verification reports a sensor-side rejection, BUSY when
+  ///         acquisition blocks access, or an I2C/precondition error.
   Status writeAlertLimitRaw(AlertLimitKind kind, uint16_t value);
 
   /// Encode and write alert limit from physical values.
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @return Status::Ok() on success, INVALID_PARAM for non-finite inputs, or
+  ///         the status from writeAlertLimitRaw().
   Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
 
   /// Disable alerts by setting LowSet > HighSet.
   /// @note Multi-step operation: HIGH_SET is written before LOW_SET. If LOW_SET
   ///       fails, HIGH_SET may already be applied and cached.
+  /// @return Status::Ok() only after both writes succeed; otherwise the first
+  ///         failing write status is returned and partial hardware/cache state is possible.
   Status disableAlerts();
 
   // =========================================================================
@@ -525,8 +550,12 @@ public:
   ///       values are treated as invalid by writeAlertLimit().
   /// @note The Sensirion alert application-note reset-default labels
   ///       (80/60, 79/58, 22/-9, 20/-10 in RH%/degC order) encode to the
-  ///       documented default raw words. Other values use reduced RH7/T9
-  ///       quantization.
+  ///       documented default raw words through this API as
+  ///       encodeAlertLimit(60, 80) -> 0xCD33,
+  ///       encodeAlertLimit(58, 79) -> 0xC92D,
+  ///       encodeAlertLimit(-9, 22) -> 0x3869, and
+  ///       encodeAlertLimit(-10, 20) -> 0x3466. Other values use reduced
+  ///       RH7/T9 quantization.
   static uint16_t encodeAlertLimit(float temperatureC, float humidityPct);
 
   /// Decode alert limit word into physical values.
@@ -560,7 +589,8 @@ public:
   // Timing
   // =========================================================================
 
-  /// Estimate max measurement time based on current repeatability.
+  /// Estimate max measurement time based on current repeatability, Config::lowVdd,
+  /// and the driver's safety margin.
   /// @return Measurement time in milliseconds
   uint32_t estimateMeasurementTimeMs() const;
 

@@ -11,7 +11,7 @@ You are an expert embedded engineer. Implement a hardened, reusable SHT3x I2C dr
 ## Baseline Contracts (DO NOT RESTATE)
 
 - **`AGENTS.md`** defines: repository layout, non-blocking architecture, injected I2C transport rules, deterministic tick behavior, managed synchronous driver pattern, transport wrapper architecture, health tracking, and DriverState model.
-- **`docs/SHT3x_driver_extraction.md`** is the authoritative command map and behavior reference.
+- **`docs/archive/notes/SHT3x_driver_extraction.md`** is the archived command map and behavior reference for this historical prompt.
 - **Do not duplicate those requirements.** Implement them and only document what is *not already covered*.
 
 ---

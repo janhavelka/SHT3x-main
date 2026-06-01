@@ -6,7 +6,7 @@ Branch: `hardening/sht3x-release-readiness-gaps`
 ## Scope
 
 This chunk clarifies public API side-effect contracts identified by
-`docs/SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md`.
+`docs/archive/reports/SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md`.
 
 No physical ALERT pin validation, humidity accuracy validation, fault injection,
 soak test, full HIL, release metadata change, or CI workflow fix was run or
@@ -114,9 +114,9 @@ Runtime behavior did not change.
 - `README.md`
 - `test/test_basic.cpp`
 - `docs/IDF_PORT.md`
-- `docs/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md`
-- `docs/SHT3x_driver_extraction.md`
-- `docs/SHT3X_API_CONTRACT_CLEANUP_REPORT.md`
+- `docs/rationale/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md`
+- `docs/archive/notes/SHT3x_driver_extraction.md`
+- `docs/rationale/SHT3X_API_CONTRACT_CLEANUP_REPORT.md`
 
 ## Validation Commands
 

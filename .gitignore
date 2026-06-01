@@ -56,6 +56,5 @@ wifi_credentials.h
 *.log
 hil_logs/
 
-# Auto-generated files
-include/SHT3x/Version.h
+# Generated documentation
 docs/doxygen/

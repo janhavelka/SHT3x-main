@@ -6,7 +6,7 @@ Branch: `hardening/sht3x-release-readiness-gaps`
 ## Scope
 
 This chunk closes the software alert-limit encoding P0 item from
-`docs/SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md`.
+`docs/archive/reports/SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md`.
 
 No physical ALERT pin validation, humidity accuracy validation, fault
 injection, soak test, or full HIL was run or claimed.
@@ -14,7 +14,7 @@ injection, soak test, or full HIL was run or claimed.
 ## Vectors Tested
 
 The tests use the local Sensirion alert-mode application-note defaults from
-`docs/pdf-extracted-md/SHT3x_HT_AN_AlertMode.md`.
+`docs/reference/extracted/vendor/SHT3x_HT_AN_AlertMode.md`.
 
 | Limit | API input `(temperatureC, humidityPct)` | Expected word |
 | --- | ---: | ---: |

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit and auditable.
 - Host-side serial I2C HIL runner, contract guard, target template, and
   self-test report for auditor-ready hardware evidence capture.
+- Curated ESP32-S3/COM17 serial HIL evidence summary for the 2026-06-01
+  default command run under `docs/hil/`.
 - Framework-neutral private timing/yield shim; real timing is supplied by application callbacks.
 - `docs/IDF_PORT_IMPLEMENTATION.md` with the implemented port structure, validation notes, and remaining hardware checks.
 
@@ -37,9 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core/IDF guard scripts now reject Arduino and ESP-IDF framework headers in core/public headers and `src/`.
 - `begin()` now rejects missing timing/yield callbacks as `INVALID_CONFIG` before touching I2C.
 - README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.
-- Documentation was consolidated around `docs/README.md`, `HARDWARE_VALIDATION.md`,
-  active HIL/runbook files, and technical rationale reports; stale planning
-  snapshots and duplicate status reports were removed.
+- Documentation is now split into active guides/status, curated HIL evidence
+  under `docs/hil/`, rationale reports under `docs/rationale/`, historical
+  snapshots under `docs/archive/`, and vendor/source material under
+  `docs/reference/`.
+- README and hardware-validation docs now point at the current ESP32-S3/COM17
+  default serial HIL evidence while keeping hardware-only blockers explicit.
+- Package export hygiene now keeps active docs and curated evidence while
+  excluding archived reports, generated Doxygen output, and bulky vendor
+  reference material.
 - `library.json` now declares both Arduino and ESP-IDF framework support, while `idf_component.yml` pins the supported ESP-IDF floor to 5.4.
 - The ESP-IDF example no longer depends on a checkout-directory-derived `SHT3x-main` component name.
 - Arduino and ESP-IDF diagnostic CLIs now expose HIL-friendly aliases and
@@ -51,12 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public Doxygen comments now describe bounded synchronous behavior, reset/recover
   semantics, serial-number restrictions, alert-limit packing, and transport
   capability boundaries more accurately.
+- PlatformIO firmware builds now embed generated version/git metadata so serial
+  HIL evidence records the code revision and clean/dirty state.
 - Repository URLs in README, changelog links, `library.json`, and
   `idf_component.yml` now match the current `SHT3x-main` remote.
 
 ### Removed
-- Stale branch-planning and snapshot reports that duplicated the active
-  documentation set.
+- Stale branch-planning and snapshot reports from the active documentation
+  index; historical copies now live under `docs/archive/`.
 
 ## [1.5.0] - 2026-05-14
 
@@ -71,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Doxyfile project metadata now matches `library.json` and references the
   maintained docs tree instead of removed template files.
-- Reference documentation now uses human-readable vendor PDF names and separates compact SHT3x notes from full PDF/application-note extractions under `docs/extracted-md/` and `docs/pdf-extracted-md/`.
+- Reference documentation now uses human-readable vendor PDF names; after later
+  cleanup, maintained extracts live under `docs/reference/extracted/`.
 - Explicit recovery/reset bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - `readCommand()` now validates read buffers and rejects responses larger than the largest documented SHT3x frame before sending the command.
 - `getRawSample()` and `getCompensatedSample()` now remain available after `getMeasurement()` consumes `measurementReady()`, with cache validity reported by `hasSample`.
@@ -117,7 +128,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Shared bringup framework headers in `examples/common/*` (`BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
-- `docs/IDF_PORT.md` and `docs/SHT3x_driver_extraction.md` for standardized portability and driver-extraction notes.
+- `docs/IDF_PORT.md` and driver-extraction notes, now archived at
+  `docs/archive/notes/SHT3x_driver_extraction.md`, for standardized
+  portability and command-map context.
 - CLI/timing guard scripts for repository quality gates.
 
 ### Changed

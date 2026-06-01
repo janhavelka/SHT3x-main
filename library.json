@@ -67,8 +67,13 @@
       "docs/SHT3X_I2C_HIL_RUNBOOK.md",
       "docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md",
       "docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md",
+      "docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md",
       "docs/IDF_PORT.md",
       "docs/IDF_PORT_IMPLEMENTATION.md",
+      "docs/rationale/SHT3X_ALERT_ENCODING_FIX_REPORT.md",
+      "docs/rationale/SHT3X_ALERT_STATUS_FIX_REPORT.md",
+      "docs/rationale/SHT3X_API_CONTRACT_CLEANUP_REPORT.md",
+      "docs/rationale/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md",
       "tools/run_sht3x_hil.py",
       "tools/run_i2c_hil.py"
     ],
@@ -91,22 +96,11 @@
       "*.tar.gz",
       "*.tgz",
       "*.zip",
-      "docs/*.pdf",
-      "docs/*.xlsx",
+      "docs/**/*.pdf",
+      "docs/**/*.xlsx",
+      "docs/archive/**",
       "docs/doxygen/**",
-      "docs/extracted-md/**",
-      "docs/pdf-extracted-md/**",
-      "docs/CODEX_PROMPT_SHT3X_DRIVER.md",
-      "docs/SHT3x_driver_extraction.md",
-      "docs/SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md",
-      "docs/SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md",
-      "docs/SHT3X_RELEASE_READINESS_GAPS_PLAN.md",
-      "docs/SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md",
-      "docs/SHT3X_ALERT_ENCODING_FIX_REPORT.md",
-      "docs/SHT3X_ALERT_STATUS_FIX_REPORT.md",
-      "docs/SHT3X_API_CONTRACT_CLEANUP_REPORT.md",
-      "docs/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md",
-      "docs/SHT3X_HIL_EVIDENCE_PACKAGE_CLEANUP_REPORT.md"
+      "docs/reference/**"
     ]
   }
 }

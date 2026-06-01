@@ -22,18 +22,20 @@ Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
 in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
 or local ESP-IDF build log.
 
-Hardware validation remains incomplete. A previous automated smoke-HIL log
-exists for a limited ESP32-S3-class, address `0x44` run. The host runner
-recorded commit `8661a38cc70e629cd337ac45c42a1885aefb0cfc`; the flashed
-firmware reported library version `1.5.0` with git commit `unknown`, and this
-branch has changed since that run. ALERT pin behavior, humidity accuracy, fault
-injection, ESP32-S2 hardware, clock stretching, and soak evidence remain
-pending. Every unexecuted hardware row stays `Not run`.
+Hardware validation remains incomplete. A current release-readiness default
+serial HIL run passed on ESP32-S3/COM17 at address `0x44` for code commit
+`7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`, and the flashed firmware reported
+matching clean git metadata. The maintained evidence summary is
+`docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md`. This is still
+only the default automated serial sequence. ALERT pin behavior, humidity
+accuracy, fault injection, ESP32-S2 hardware, clock stretching, address `0x45`,
+alert writes, destructive reset groups, and soak evidence remain pending. Every
+unexecuted hardware row stays `Not run`.
 Current branch changes remain under `[Unreleased]`; `library.json` is still
 `1.5.0`, and the current branch head is not a release tag.
 
-Next step: execute the HIL runbook or the host-side serial HIL runner on real
-ESP32-S2/S3 plus SHT3x hardware and attach the resulting evidence.
+Next step: use the HIL runbook or host-side serial HIL runner for the remaining
+hardware-only rows, then attach the corresponding fixture evidence.
 
 ## Installation
 
@@ -304,9 +306,9 @@ encode to the documented raw words: `80% / 60 C -> 0xCD33`,
 `79% / 58 C -> 0xC92D`, `22% / -9 C -> 0x3869`, and
 `20% / -10 C -> 0x3466`. Other physical values are quantized into the reduced
 RH7/T9 alert-limit format, so decoded values are approximate.
-See `docs/SHT3X_ALERT_STATUS_FIX_REPORT.md` for the helper design and local
-validation coverage; real ALERT-pin and humidity-threshold behavior still needs
-hardware validation.
+See `docs/rationale/SHT3X_ALERT_STATUS_FIX_REPORT.md` for the helper design and
+local validation coverage; real ALERT-pin and humidity-threshold behavior still
+needs hardware validation.
 
 ## Transport Contract (Required)
 
@@ -614,6 +616,7 @@ those rows have real logs and fixture evidence.
 - `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - HIL scenario matrix
 - `docs/SHT3X_HIL_RUNBOOK.md` - manual HIL procedure
 - `docs/SHT3X_I2C_HIL_RUNBOOK.md` - serial runner procedure
+- `docs/rationale/` - maintained API and protocol rationale notes
 - Repository-only reference material includes vendor PDFs, extracted reference
   text, and historical audit reports.
 

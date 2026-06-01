@@ -1,6 +1,6 @@
 # SHT3x ESP-IDF Port Status
 
-Last updated: 2026-05-31
+Last updated: 2026-06-01
 
 Scope: implemented core portability changes plus an ESP-IDF component and a
 native diagnostic example. Arduino/PlatformIO support remains intact.
