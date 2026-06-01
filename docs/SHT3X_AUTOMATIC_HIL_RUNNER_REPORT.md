@@ -124,9 +124,11 @@ Expected nonterminal states are allowed where appropriate:
 - measurement parsing
 - driver health parsing
 - `status_restore` parsing
+- boolean/numeric `status_restore` fields
 - unknown command failure
 - failure-token detection
 - missing expected address
+- missing configured address
 - missing `status_restore` fields
 - active `status_restore` mode-restore validation
 - final driver failures
@@ -171,7 +173,7 @@ python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --
 
 Result:
 
-- Generated log directory: `hil_logs/i2c_20260601T085210Z`
+- Generated log directory: `hil_logs/i2c_20260601T085607Z`
 - Final verdict: `INCOMPLETE`
 - Generated files: `serial_transcript.txt`, `summary.md`, `summary.json`,
   `operator_checklist.md`, `environment.txt`
