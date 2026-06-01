@@ -72,7 +72,16 @@ It excludes generated and internal artifacts:
 
 ## Package Inspection Result
 
-Pending local `python -m platformio pkg pack` inspection for this commit.
+Local package inspection command:
+
+```bash
+python -m platformio pkg pack
+```
+
+Result: pass. PlatformIO wrote `SHT3x-1.5.0.tar.gz`. A tarball inspection found
+45 entries, included `tools/run_sht3x_hil.py` and `tools/run_i2c_hil.py`, and
+found no `hil_logs/`, generated build output, PDFs, or extracted reference
+trees.
 
 The package must not contain:
 

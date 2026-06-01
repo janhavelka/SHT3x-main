@@ -158,6 +158,8 @@ Software validation run in this chunk:
 - `python -m platformio test -e native`: pass, 76/76 tests.
 - `python -m platformio run -e esp32s3dev`: pass.
 - `python -m platformio run -e esp32s2dev`: pass.
+- `python -m platformio pkg pack`: pass; tarball inspection found the runner
+  scripts included and no generated HIL logs or build/reference artifacts.
 
 Remaining automation gap: CI does not yet run
 `python tools/test_run_i2c_hil_parser.py` or
