@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 ENV = None
 try:
@@ -71,6 +72,45 @@ def _write_library_json(path: Path, data: Dict[str, object]) -> None:
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(data, handle, indent=2)
         handle.write("\n")
+
+
+def _git_text(project_root: Path, args: List[str]) -> Optional[str]:
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=str(project_root),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return None
+    return completed.stdout.strip()
+
+
+def _git_build_metadata(project_root: Path) -> Tuple[str, str]:
+    commit = _git_text(project_root, ["rev-parse", "--short=12", "HEAD"]) or "unknown"
+    status_text = _git_text(project_root, ["status", "--porcelain", "--untracked-files=no"])
+    status = "unknown" if status_text is None else ("dirty" if status_text else "clean")
+    return commit, status
+
+
+def _cpp_define_string_literal(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'\\"{escaped}\\"'
+
+
+def _apply_platformio_build_metadata(project_root: Path) -> None:
+    if ENV is None:
+        return
+    commit, status = _git_build_metadata(project_root)
+    ENV.Append(
+        BUILD_FLAGS=[
+            f"-DSHT3X_GIT_COMMIT={_cpp_define_string_literal(commit)}",
+            f"-DSHT3X_GIT_STATUS={_cpp_define_string_literal(status)}",
+        ]
+    )
 
 
 def _parse_semver(version: str) -> Tuple[int, int, int]:
@@ -239,6 +279,7 @@ def main(args: List[str]) -> int:
 
     if not args:
         _sync_outputs(project_root, check_only=False, quiet=True)
+        _apply_platformio_build_metadata(project_root)
         return 0
 
     command = args[0]
