@@ -14,23 +14,23 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-Branch `hardening/sht3x-industry-readiness` is software-hardened and
-pre-HIL-ready. Local software checks have passed for native tests (70/70),
-guard scripts, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
+Current `main` is an unreleased integration state. Local software checks have
+passed for native tests (70/70), guard scripts, and Arduino PlatformIO builds
+for ESP32-S3 and ESP32-S2.
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
 in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
 or local ESP-IDF build log.
 
-Hardware validation has not run. ALERT pin behavior, humidity accuracy,
-fault-injection, and soak evidence remain pending and every unexecuted hardware
-row stays `Not run`. Current branch changes remain under `[Unreleased]`;
-`library.json` is still `1.5.0`, and the current branch head is not a release
-tag.
+Hardware validation remains incomplete. A previous automated smoke-HIL log
+exists for a limited ESP32-S3-class, address `0x44` run, but ALERT pin behavior,
+humidity accuracy, fault injection, ESP32-S2 hardware, clock stretching, and
+soak evidence remain pending. Every unexecuted hardware row stays `Not run`.
+Current branch changes remain under `[Unreleased]`; `library.json` is still
+`1.5.0`, and the current branch head is not a release tag.
 
-Next step: execute the HIL runbook and log template, or the optional host-side
-serial HIL runner, on real ESP32-S2/S3 plus SHT3x hardware and attach the
-resulting evidence.
+Next step: execute the HIL runbook or the host-side serial HIL runner on real
+ESP32-S2/S3 plus SHT3x hardware and attach the resulting evidence.
 
 ## Installation
 
@@ -536,6 +536,21 @@ quality, or sensor accuracy. `docs/HARDWARE_VALIDATION.md` is the evidence
 status file. `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md`,
 `docs/SHT3X_HIL_RUNBOOK.md`, and `docs/SHT3X_I2C_HIL_RUNBOOK.md` describe the
 hardware scenarios and runner procedure.
+
+The automatic serial runner is:
+
+```bash
+python tools/run_sht3x_hil.py --dry-run
+python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3
+```
+
+Default runner groups cover safe smoke, single-shot low/medium/high,
+status/status_restore, serial/EIC, heater status, alert read/encode/decode,
+selected periodic rates, and ART. Optional groups are gated by
+`--include-destructive`, `--include-bus-wide-reset`, `--include-soak`,
+`--include-clock-stretch`, `--include-alert-write`,
+`--include-all-periodic-rates`, `--include-output-tests`, and
+`--include-fault-tests`.
 
 Do not claim hardware validation, ALERT pin validation, humidity accuracy,
 fault recovery on real buses, soak stability, or production readiness until

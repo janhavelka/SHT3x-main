@@ -1,14 +1,15 @@
 # SHT3x Documentation Index
 
 Date: 2026-05-31
-Branch: `hardening/sht3x-industry-readiness`
+Branch: `main`
 
-This file is the documentation map for the branch. It is the current place to
-check which documents are active and which ones are historical snapshots.
+This file is the documentation map for the repository. It is the current place
+to check which documents are active and which ones are historical snapshots.
 
-No physical HIL run has been performed in this workspace. All hardware rows stay
-`Not run` until a real ESP32-S2/S3 and SHT3x target produce logs and fixture
-evidence.
+A prior automated smoke-HIL log exists under `hil_logs/i2c_20260531T155925Z/`.
+It proves only the selected serial smoke sequence for that recorded target and
+commit. All unexecuted hardware rows stay `Not run` until a real ESP32-S2/S3
+and SHT3x target produce logs and fixture evidence for those rows.
 
 ## Current Status
 
@@ -30,6 +31,8 @@ evidence.
 - `SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial runner procedure.
 - `SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - target profile for serial runner runs.
 - `SHT3X_I2C_HIL_SELFTEST_REPORT.md` - serial runner software self-test report.
+- `SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md` - release-readiness fix notes.
+- `SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md` - read-only readiness audit.
 - `SHT3X_ALERT_STATUS_FIX_REPORT.md` - rationale for ALERT/status mode-restore support.
 - `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contract and partial-state notes.
 - `IDF_PORT.md` - ESP-IDF porting guidance.
@@ -64,8 +67,8 @@ Their useful current-state content is now covered by this index,
 
 ## Claim Boundary
 
-Safe wording today: software-hardened, locally software-tested,
-pre-HIL-ready, and CI-configured.
+Safe wording today: software-hardened, locally software-tested, limited
+smoke-HIL evidence exists, and CI is configured.
 
 Do not claim hardware validation, ALERT pin validation, humidity accuracy
 validation, pure ESP-IDF validation, release publication, field-proven behavior,

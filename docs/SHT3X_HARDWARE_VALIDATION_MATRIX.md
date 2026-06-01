@@ -7,8 +7,8 @@ This file is a scenario index, not a status tracker. Current evidence status is
 tracked in `docs/HARDWARE_VALIDATION.md`.
 
 Manual operator procedures live in `docs/SHT3X_HIL_RUNBOOK.md`. The host-side
-serial runner is `tools/run_i2c_hil.py`, and its default command contract is
-documented in `docs/SHT3X_I2C_HIL_RUNBOOK.md`.
+serial runner is `tools/run_sht3x_hil.py` / `tools/run_i2c_hil.py`, and its
+default command contract is documented in `docs/SHT3X_I2C_HIL_RUNBOOK.md`.
 
 Every real run must record board model, ESP32 target, sensor variant, I2C
 address, pull-ups, bus speed, cable length, supply voltage, firmware commit,
@@ -19,6 +19,34 @@ appropriate.
 Default example assumptions: SDA GPIO8, SCL GPIO9, 400 kHz I2C, SHT3x address
 `0x44`. The stock examples are diagnostic bring-up CLIs, not production
 application architectures.
+
+## Automatic Runner Mapping
+
+The default runner is safe and non-destructive. It can generate evidence for:
+
+- smoke/version/help/scan/probe/settings/health,
+- status and status-restore parsing,
+- no-stretch single-shot low/medium/high,
+- raw and compensated cache reads,
+- no-stretch serial/EIC,
+- heater status read with heater remaining off,
+- alert-limit read plus alert encode/decode vectors,
+- selected periodic 0.5/1/2 mps paths,
+- ART start/fetch/stop when supported by the target firmware,
+- final driver health.
+
+Additional runner flags map to scenario groups:
+
+| Flag | Scenario coverage | Evidence boundary |
+| --- | --- | --- |
+| `--include-destructive` | selftest, recover, clear status, soft reset, restore, interface reset | Alters device/status state; not part of default smoke. |
+| `--include-bus-wide-reset` | general-call reset | Requires isolated bus; can reset other supporting devices. |
+| `--include-soak --soak-count N` | bounded stress and mixed-operation stress | Only proves the configured duration/count, not long-soak stability by default. |
+| `--include-clock-stretch` | stretch-enabled `read` and `serial stretch` | Unsupported/timeout behavior is recorded, not hidden. |
+| `--include-alert-write` | software-visible alert write/readback and cleanup | Does not prove physical ALERT pin transitions. |
+| `--include-all-periodic-rates` | additional 4 and 10 mps periodic fetches | Still requires final health review and self-heating notes for production claims. |
+| `--include-output-tests` | ALERT output operator/GPIO procedure | PASS requires GPIO or logic-analyzer evidence. |
+| `--include-fault-tests` | fault/unplug/CRC-injection procedure | PASS requires safe jig/interposer/emulator or documented manual fault evidence. |
 
 ## Scenarios
 

@@ -102,6 +102,16 @@ def main() -> int:
     for token in ("--dry-run", "python -m pip install pyserial", "serial.Serial"):
         if token not in runner_text:
             fail(f"runner missing required token: {token}")
+    for token in (
+        "--include-clock-stretch",
+        "--include-alert-write",
+        "--include-all-periodic-rates",
+        "--include-bus-wide-reset",
+        "--expect-address",
+        "environment.txt",
+    ):
+        if token not in runner_text:
+            fail(f"runner missing extended HIL token: {token}")
 
     runner = import_runner()
     actual = list(runner.default_executable_commands())
@@ -122,10 +132,13 @@ def main() -> int:
     runbook_text = read(RUNBOOK)
     for token in (
         "ACK alone is not chip identity",
-        "OPERATOR_CHECK_REQUIRED",
+        "OPERATOR_REVIEW_REQUIRED",
         "No physical HIL validation was performed",
+        "SKIP_REQUIRES_FIXTURE",
+        "SKIP_UNSUPPORTED",
         "summary.json",
         "serial_transcript.txt",
+        "environment.txt",
     ):
         if token not in runbook_text:
             fail(f"runbook missing required text: {token}")

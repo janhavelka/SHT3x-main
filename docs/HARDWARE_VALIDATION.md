@@ -26,20 +26,41 @@ or sensor correctness.
 
 | Area | Target | Setup required | Expected result | Current result | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Address probe | `0x44` and `0x45` | ADDR strapped low/high, I2C scan/probe | Correct address ACKs, other address does not | Not run | Serial log |
-| Single-shot | No stretch | Stable supply, known ambient | Request, tick, read sample with valid CRC and plausible T/RH | Not run | Serial log |
+| Address probe | `0x44` and `0x45` | ADDR strapped low/high, I2C scan/probe | Correct address ACKs, other address does not | Partial: prior smoke-HIL saw `0x44`; `0x45` not run | `hil_logs/i2c_20260531T155925Z/summary.md` |
+| Single-shot | No stretch | Stable supply, known ambient | Request, tick, read sample with valid CRC and plausible T/RH | Partial: prior smoke-HIL ran high repeatability only | `hil_logs/i2c_20260531T155925Z/summary.md` |
 | Single-shot | Clock stretching | Transport timeout >= worst-case tMEAS plus margin | Stretch command completes without timeout | Not run | Serial log |
-| Periodic fetch | 0.5/1/2/4/10 mps | Known bus speed and pull-ups | Fetch Data returns CRC-valid samples; Break stops mode | Not run | Serial log |
+| Periodic fetch | 0.5/1/2/4/10 mps | Known bus speed and pull-ups | Fetch Data returns CRC-valid samples; Break stops mode | Partial: prior smoke-HIL ran one `1 mps high` start/fetch/stop | `hil_logs/i2c_20260531T155925Z/summary.md` |
 | ART mode | ESP32-S2/S3 | ART start, fetch, Break | ART cadence works and mode stops cleanly | Not run | Serial log |
 | ALERT/status | Periodic mode, ALERT pin wired | Alert thresholds, GPIO or logic capture, status-restore helper | ALERT pin assertion matches status bits | Not run | Logic analyzer and serial log |
 | Status clear | Periodic stopped | Known status flags | `clearStatus()` clears bits 15, 11, 10, and 4 only | Not run | Register log |
-| Alert limits | All four limits | Stop periodic before access | Raw and physical read/write round trips; write CRC errors detected | Not run | Register log |
-| Heater | Controlled ambient | Heater on/off/status | Heater bit changes; self-heating effect is visible and documented | Not run | Temperature/RH log |
+| Alert limits | All four limits | Stop periodic before access | Raw and physical read/write round trips; write CRC errors detected | Partial: prior smoke-HIL read all four limits; writes not run | `hil_logs/i2c_20260531T155925Z/summary.md` |
+| Heater | Controlled ambient | Heater on/off/status | Heater bit changes; self-heating effect is visible and documented | Partial: prior smoke-HIL read heater OFF; enable/cooldown not run | `hil_logs/i2c_20260531T155925Z/summary.md` |
 | Soft reset | Sensor idle | Reset command | Sensor returns to usable idle state; status reset behavior recorded | Not run | Serial log |
 | Interface reset | Bus-reset callback | SCL toggle implementation | Callback succeeds and later probe/read works | Not run | Logic analyzer/log |
 | General-call reset | Isolated bus only | Application adapter with explicit opt-in | Every supporting device reset is intentional and documented | Not run; blocked for shipped IDF diagnostic example without adapter evidence | Application evidence |
 | Fault injection | Safe jig or emulator | Timeout, NACK, CRC mismatch | Specific `Status` codes, health transition, manual recovery | Not run | Fault test log |
 | Humidity production fixture | DUT plus reference sensor(s) | Controlled jig, prestaging, coupling, settling, MSA/Cpk | Limits account for reference accuracy, DUT accuracy, setup variation, and RH offset | Not run | Fixture report |
+
+## Automatic Runner Status
+
+The reusable host runner is `tools/run_sht3x_hil.py`, backed by
+`tools/run_i2c_hil.py`. It creates `serial_transcript.txt`, `summary.md`,
+`summary.json`, `operator_checklist.md`, and `environment.txt` under
+`hil_logs/i2c_<UTC_TIMESTAMP>/`.
+
+Default safe groups now cover version/help, scan/probe/settings/health,
+status/status_raw, low/medium/high no-stretch single-shot measurements,
+raw/comp cache checks, no-stretch serial/EIC, heater status, alert
+read/encode/decode, `status_restore`, selected periodic modes, ART, and final
+health. Optional groups are selected with `--include-destructive`,
+`--include-bus-wide-reset`, `--include-soak`, `--include-clock-stretch`,
+`--include-alert-write`, `--include-all-periodic-rates`,
+`--include-output-tests`, and `--include-fault-tests`.
+
+Runner `PASS` means only the selected automated serial groups passed. ALERT pin,
+humidity accuracy, fault injection, and long-soak claims still require the
+matching GPIO/logic-analyzer, reference fixture, fault jig, or timed soak
+evidence.
 
 ## Ambient Humidity Test Notes
 

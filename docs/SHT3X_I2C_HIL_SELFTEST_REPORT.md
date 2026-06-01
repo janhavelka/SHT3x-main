@@ -1,7 +1,7 @@
 # SHT3x I2C HIL Self-Test Report
 
 Date: 2026-05-31
-Branch: `hardening/sht3x-industry-readiness`
+Branch: `main`
 Start commit: `46855ce445b3124fda693037eb805455cc1813e5`
 New branch created: No
 
@@ -11,15 +11,19 @@ No physical HIL validation was performed.
 
 ## Files Changed
 
-- `.gitignore`
-- `tools/run_i2c_hil.py`
-- `tools/check_hil_contract.py`
-- `docs/SHT3X_I2C_HIL_RUNBOOK.md`
-- `docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md`
-- `docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md`
-- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md`
 - `README.md`
-- `CHANGELOG.md`
+- `docs/HARDWARE_VALIDATION.md`
+- `docs/README.md`
+- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md`
+- `docs/SHT3X_HIL_RUNBOOK.md`
+- `docs/SHT3X_I2C_HIL_RUNBOOK.md`
+- `docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md`
+- `docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md`
+- `docs/SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md`
+- `tools/check_hil_contract.py`
+- `tools/run_i2c_hil.py`
+- `tools/run_sht3x_hil.py`
+- `tools/test_run_i2c_hil_parser.py`
 
 The default command sequence, safety exclusions, and operator command live in
 `docs/SHT3X_I2C_HIL_RUNBOOK.md`. Evidence blockers and hardware status live in
@@ -29,8 +33,9 @@ The default command sequence, safety exclusions, and operator command live in
 
 | Check | Result |
 | --- | --- |
-| `python -m py_compile tools/run_i2c_hil.py tools/check_hil_contract.py` | Pass |
-| `python tools/run_i2c_hil.py --dry-run` | Pass; final runner verdict `INCOMPLETE`; creates an ignored `hil_logs/i2c_<timestamp>` directory |
+| `python -m py_compile tools/run_i2c_hil.py tools/run_sht3x_hil.py tools/check_hil_contract.py` | Pass |
+| `python tools/run_sht3x_hil.py --dry-run` | Pass; final runner verdict `INCOMPLETE`; creates an ignored `hil_logs/i2c_<timestamp>` directory |
+| `python tools/test_run_i2c_hil_parser.py` | Pass |
 | `python tools/check_hil_contract.py` | Pass |
 | `python tools/check_core_timing_guard.py` | Pass |
 | `python tools/check_cli_contract.py` | Pass |

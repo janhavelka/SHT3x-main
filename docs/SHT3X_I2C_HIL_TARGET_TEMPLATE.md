@@ -50,7 +50,7 @@ Monitor, optional manual inspection:
 HIL runner:
 
 ```bash
-python tools/run_i2c_hil.py --port COMx --baud 115200 --out hil_logs
+python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name <name> --out hil_logs
 ```
 
 ## Evidence Checklist
@@ -58,6 +58,7 @@ python tools/run_i2c_hil.py --port COMx --baud 115200 --out hil_logs
 - [ ] `serial_transcript.txt` attached.
 - [ ] `summary.md` attached.
 - [ ] `summary.json` attached.
+- [ ] `environment.txt` attached.
 - [ ] Operator checklist reviewed.
 - [ ] Board photo attached.
 - [ ] Sensor/module photo attached.
@@ -77,7 +78,7 @@ python tools/run_i2c_hil.py --port COMx --baud 115200 --out hil_logs
 ## Operator Review
 
 - Final runner verdict:
-- Manual checks marked `OPERATOR_CHECK_REQUIRED`:
+- Manual checks marked `OPERATOR_REVIEW_REQUIRED`:
 - Unsafe/fault tests run:
 - Unsafe/fault tests not run:
 - Remaining blockers:

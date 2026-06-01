@@ -21,6 +21,47 @@ docs/hil/YYYYMMDD_<framework>_<target>_<board>_<commit>_<scenario>_fixture.md
 
 Use the template in `docs/SHT3X_HIL_LOG_TEMPLATE.md` for each board/target run.
 
+## Automatic Serial Runner
+
+Use the automatic runner for repeatable serial evidence after the diagnostic
+firmware is flashed:
+
+```text
+python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --target-name desk
+python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk
+```
+
+The runner writes `serial_transcript.txt`, `summary.md`, `summary.json`,
+`operator_checklist.md`, and `environment.txt` under
+`hil_logs/i2c_<UTC_TIMESTAMP>/`. It parses version, I2C addresses, T/RH, raw
+samples, status bits, serial/EIC, health counters, mode, repeatability,
+periodic rate, and clock-stretch state where the CLI prints them.
+
+The default automatic sequence is safe and non-destructive. It covers smoke,
+single-shot low/medium/high, selected periodic rates, ART, status,
+status_restore, serial/EIC, heater status, and alert read/encode/decode checks.
+It does not enable heater, clear status, reset, write alert limits, run soak, or
+require GPIO/fault fixtures.
+
+Opt-in flags:
+
+```text
+--include-destructive
+--include-bus-wide-reset
+--include-soak --soak-count 100
+--include-clock-stretch
+--include-alert-write
+--include-all-periodic-rates
+--include-output-tests
+--include-fault-tests
+```
+
+Do not mark ALERT pin validation as pass unless GPIO or logic-analyzer evidence
+is attached. Do not mark humidity accuracy as pass without a reference fixture.
+Do not mark fault-injection as pass without a safe jig/interposer/emulator or
+documented manual fault evidence. Do not mark long-soak stability as pass unless
+the configured soak duration was actually run.
+
 ## Required Hardware
 
 Minimum smoke setup:
