@@ -14,7 +14,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-Current `main` is an unreleased integration state. Local software checks have
+Current branch state is unreleased integration work. Local software checks have
 passed for native tests (76/76), guard scripts, and Arduino PlatformIO builds
 for ESP32-S3 and ESP32-S2.
 
@@ -23,9 +23,12 @@ in this shell. Do not claim pure ESP-IDF validation without a real passing CI lo
 or local ESP-IDF build log.
 
 Hardware validation remains incomplete. A previous automated smoke-HIL log
-exists for a limited ESP32-S3-class, address `0x44` run, but ALERT pin behavior,
-humidity accuracy, fault injection, ESP32-S2 hardware, clock stretching, and
-soak evidence remain pending. Every unexecuted hardware row stays `Not run`.
+exists for a limited ESP32-S3-class, address `0x44` run. The host runner
+recorded commit `8661a38cc70e629cd337ac45c42a1885aefb0cfc`; the flashed
+firmware reported library version `1.5.0` with git commit `unknown`, and this
+branch has changed since that run. ALERT pin behavior, humidity accuracy, fault
+injection, ESP32-S2 hardware, clock stretching, and soak evidence remain
+pending. Every unexecuted hardware row stays `Not run`.
 Current branch changes remain under `[Unreleased]`; `library.json` is still
 `1.5.0`, and the current branch head is not a release tag.
 
@@ -581,9 +584,12 @@ hardware scenarios and runner procedure.
 The automatic serial runner is:
 
 ```bash
-python tools/run_sht3x_hil.py --dry-run
-python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3
+python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
+python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
 ```
+
+These runner commands require a full repository checkout. The PlatformIO package
+payload is library-focused and may exclude repository maintenance tools.
 
 Default runner groups cover safe smoke, single-shot low/medium/high,
 status/status_restore, serial/EIC, heater status, alert read/encode/decode,
@@ -593,6 +599,9 @@ selected periodic rates, and ART. Optional groups are gated by
 `--include-all-periodic-rates`, `--include-output-tests`, and
 `--include-fault-tests`.
 
+That list describes current runner capability. A hardware `PASS` claim is
+limited to the selected commands and artifacts in a specific run summary.
+
 Do not claim hardware validation, ALERT pin validation, humidity accuracy,
 fault recovery on real buses, soak stability, or production readiness until
 those rows have real logs and fixture evidence.
@@ -601,11 +610,12 @@ those rows have real logs and fixture evidence.
 
 - `CHANGELOG.md` - full release history
 - `docs/README.md` - documentation index and authoritative-document map
-- `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
-- `docs/SHT3x_HT_AN_AlertMode.pdf` - Sensirion alert-mode application note
-- `docs/Sensirion_Humidity_Sensors_Testing_at_Ambient_Conditions.pdf` - ambient humidity production-test guidance
-- `docs/Sensirion_electronic_identification_code_SHT3x.pdf` - serial-number / EIC reference
-- `docs/SHT3x_driver_extraction.md` - driver split and extraction notes
+- `docs/HARDWARE_VALIDATION.md` - hardware evidence status
+- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - HIL scenario matrix
+- `docs/SHT3X_HIL_RUNBOOK.md` - manual HIL procedure
+- `docs/SHT3X_I2C_HIL_RUNBOOK.md` - serial runner procedure
+- Repository-only reference material includes vendor PDFs, extracted reference
+  text, and historical audit reports.
 
 ## License
 

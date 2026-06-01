@@ -1,15 +1,18 @@
 # SHT3x Documentation Index
 
-Date: 2026-05-31
-Branch: `main`
+Date: 2026-06-01
+Branch: `hardening/sht3x-release-readiness-gaps`
 
 This file is the documentation map for the repository. It is the current place
 to check which documents are active and which ones are historical snapshots.
 
 A prior automated smoke-HIL log exists under `hil_logs/i2c_20260531T155925Z/`.
-It proves only the selected serial smoke sequence for that recorded target and
-commit. All unexecuted hardware rows stay `Not run` until a real ESP32-S2/S3
-and SHT3x target produce logs and fixture evidence for those rows.
+It records `PASS` for a limited ESP32-S3-class serial smoke run on address
+`0x44`. The host runner/worktree commit was
+`8661a38cc70e629cd337ac45c42a1885aefb0cfc`; the flashed firmware reported git
+commit `unknown`. That evidence does not cover later branch changes; rerun the
+runner on the final release candidate before using it as current-head hardware
+evidence. All unexecuted hardware rows stay `Not run`.
 
 ## Current Status
 
@@ -21,6 +24,10 @@ and SHT3x target produce logs and fixture evidence for those rows.
 - Pure ESP-IDF S2/S3 builds are configured in CI. Use a passing CI log or local
   ESP-IDF build log before claiming pure ESP-IDF validation.
 - Hardware status is tracked only in `HARDWARE_VALIDATION.md`.
+- Package export keeps the library source, examples, README, changelog, license,
+  host-side HIL runner entrypoints, and maintained user docs. It excludes
+  generated HIL logs, build outputs, vendor PDFs, extracted reference text, and
+  internal prompt/audit artifacts.
 
 ## Active Documents
 
@@ -31,16 +38,25 @@ and SHT3x target produce logs and fixture evidence for those rows.
 - `SHT3X_I2C_HIL_RUNBOOK.md` - host-side serial runner procedure.
 - `SHT3X_I2C_HIL_TARGET_TEMPLATE.md` - target profile for serial runner runs.
 - `SHT3X_I2C_HIL_SELFTEST_REPORT.md` - serial runner software self-test report.
-- `SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md` - release-readiness fix notes.
-- `SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md` - read-only readiness audit.
-- `SHT3X_ALERT_STATUS_FIX_REPORT.md` - rationale for ALERT/status mode-restore support.
-- `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contract and partial-state notes.
 - `IDF_PORT.md` - ESP-IDF porting guidance.
 - `IDF_PORT_IMPLEMENTATION.md` - implemented ESP-IDF component/example notes.
+
+## Repository-Only Reports
+
+These branch reports are useful in the source repository but are not required in
+the PlatformIO package payload:
+
+- `SHT3X_AUTOMATIC_HIL_RUNNER_REPORT.md` - automatic runner validation report.
+- `SHT3X_HIL_EVIDENCE_PACKAGE_CLEANUP_REPORT.md` - package/evidence cleanup report.
+- `SHT3X_ALERT_STATUS_FIX_REPORT.md` - rationale for ALERT/status mode-restore support.
+- `SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md` - core contract and partial-state notes.
 
 ## Historical Context
 
 - `SHT3X_PROMPTS_00_05_AUDITOR_SUMMARY.md` - historical summary of prompts 00-05.
+- `SHT3X_INDUSTRIAL_READINESS_EXPLORATION.md` - readiness exploration snapshot.
+- `SHT3X_RELEASE_READINESS_GAPS_PLAN.md` - release-readiness branch plan.
+- `SHT3X_RELEASE_READINESS_GAPS_FIX_REPORT.md` - earlier readiness fix notes.
 
 ## Reference Material
 

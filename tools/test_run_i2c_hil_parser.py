@@ -26,6 +26,21 @@ def load_runner():
 hil = load_runner()
 
 
+class FakeSerial:
+    def __init__(self, *chunks: str) -> None:
+        self._chunks = [chunk.encode("utf-8") for chunk in chunks]
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    def flush(self) -> None:
+        pass
+
+    def read(self, _size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+
 def fake_args() -> argparse.Namespace:
     return argparse.Namespace(expect_address="0x44")
 
@@ -53,6 +68,77 @@ def test_unknown_command_fails() -> None:
     assert "failure token" in notes
 
 
+def test_unknown_command_failure_takes_precedence_over_expected_token() -> None:
+    spec = hil.CommandSpec("bogus", "test", expected_any=("OK",))
+    result, notes, _ = classify(spec, "OK\nUnknown command. Try 'help'.\n")
+    assert result == hil.RESULT_FAIL
+    assert "failure token" in notes
+
+
+def test_failure_tokens_fail() -> None:
+    spec = hil.CommandSpec("probe", "failure-token", expected_any=("Status:",))
+    for token in (
+        "FAIL",
+        "FAILED",
+        "ERR",
+        "ERROR",
+        "CRC_ERROR",
+        "CRC_MISMATCH",
+        "I2C_TIMEOUT",
+        "I2C_NACK",
+        "DEVICE_NOT_FOUND",
+        "COMMAND_FAILED",
+        "WRITE_CRC_ERROR",
+        "BUSY",
+        "OFFLINE",
+        "DEGRADED",
+        "fail=1",
+    ):
+        result, notes, _ = classify(spec, f"Status: OK\n{token}\n")
+        assert result == hil.RESULT_FAIL, token
+        assert "failure token" in notes, token
+
+
+def test_i2c_nack_suffix_fails() -> None:
+    spec = hil.CommandSpec("probe", "failure-token", expected_any=("Status:",))
+    result, notes, _ = classify(spec, "Status: OK\nI2C_NACK_ADDR\n")
+    assert result == hil.RESULT_FAIL
+    assert "failure token" in notes
+
+
+def test_expected_in_progress_and_measurement_scheduled_do_not_fail() -> None:
+    spec = hil.CommandSpec(
+        "read",
+        "scheduled read",
+        expected_any=("Measurement scheduled", "request: IN_PROGRESS"),
+    )
+    result, notes, _ = classify(spec, "Measurement scheduled\nrequest: IN_PROGRESS code=8\n")
+    assert result == hil.RESULT_PASS, notes
+
+
+def test_missing_expected_address_fails() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "scan")
+    result, notes, parsed = classify(spec, "I2C scan:\n  0x45\nScan complete\n")
+    assert parsed["i2c_addresses_seen"] == ["0x45"]
+    assert result == hil.RESULT_FAIL
+    assert "expected address 0x44 not seen" in notes
+
+
+def test_configured_address_mismatch_fails() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "settings")
+    result, notes, parsed = classify(spec, "state=READY initialized=1 online=1 addr=0x45 timeout=25\nmode=single\n")
+    assert parsed["configured_i2c_address"] == "0x45"
+    assert result == hil.RESULT_FAIL
+    assert "configured I2C address 0x45 != expected 0x44" in notes
+
+
+def test_configured_address_missing_fails() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "settings")
+    result, notes, _ = classify(spec, "state=READY initialized=1 online=1 timeout=25\nmode=single\n")
+    assert result == hil.RESULT_FAIL
+    assert "configured I2C address not parsed" in notes
+
+
 def test_status_output_parses() -> None:
     parsed = hil.parse_command_output(
         "status",
@@ -61,6 +147,18 @@ def test_status_output_parses() -> None:
     assert parsed["status_word"] == "0x8010"
     assert parsed["status_bits"]["alert"] == 1
     assert parsed["status_bits"]["reset"] == 1
+
+
+def test_status_raw_idf_output_parses() -> None:
+    parsed = hil.parse_command_output("status_raw", "status=0x8010\n")
+    assert parsed["status_word"] == "0x8010"
+
+
+def test_missing_status_word_fails() -> None:
+    spec = hil.CommandSpec("status_raw", "status", expected_any=("status",), validators=("status_word",))
+    result, notes, _ = classify(spec, "status unavailable\n")
+    assert result == hil.RESULT_FAIL
+    assert "status word not parsed" in notes
 
 
 def test_measurement_parses_and_passes() -> None:
@@ -74,6 +172,32 @@ def test_measurement_parses_and_passes() -> None:
     assert result == hil.RESULT_PASS, notes
     assert parsed["temperature_c"] == 26.88
     assert parsed["humidity_pct"] == 50.10
+
+
+def test_idf_measurement_format_parses_and_passes() -> None:
+    spec = hil.CommandSpec(
+        "single high",
+        "measurement",
+        expected_any=("temperature=",),
+        validators=("measurement_plausible",),
+    )
+    result, notes, parsed = classify(spec, "temperature=23.50 C humidity=44.25 %RH\n")
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["temperature_c"] == 23.50
+    assert parsed["humidity_pct"] == 44.25
+
+
+def test_measurement_plausibility_failure() -> None:
+    spec = hil.CommandSpec(
+        "single high",
+        "measurement",
+        expected_any=("temperature=",),
+        validators=("measurement_plausible",),
+    )
+    result, notes, _ = classify(spec, "temperature=130.00 C humidity=120.00 %RH\n")
+    assert result == hil.RESULT_FAIL
+    assert "temperature 130.0 C outside broad plausibility range" in notes
+    assert "humidity 120.0 %RH outside broad plausibility range" in notes
 
 
 def test_driver_health_parses_and_passes() -> None:
@@ -94,6 +218,80 @@ def test_driver_health_parses_and_passes() -> None:
     assert parsed["total_failures"] == 0
 
 
+def test_idf_driver_health_consecutive_parses_and_passes() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("health ok=",),
+        validators=("zero_failures",),
+    )
+    result, notes, parsed = classify(spec, "health ok=24 fail=0 consecutive=0 lastOk=100 lastErr=0\n")
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["total_success"] == 24
+    assert parsed["total_failures"] == 0
+    assert parsed["consecutive_failures"] == 0
+
+
+def test_idf_driver_health_full_format_parses_and_passes() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("state=",),
+        validators=("driver_ready", "zero_failures"),
+    )
+    result, notes, parsed = classify(
+        spec,
+        "getSettings: OK code=0 detail=0 msg=\n"
+        "state=READY initialized=1 online=1 addr=0x44 timeout=100\n"
+        "mode=single repeat=high rate=1 stretch=0 periodic=0 pending=0 ready=0 sample=0\n"
+        "health ok=24 fail=0 consecutive=0 lastOk=100 lastErr=0\n",
+    )
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["state"] == "READY"
+    assert parsed["online"] is True
+    assert parsed["configured_i2c_address"] == "0x44"
+    assert parsed["total_success"] == 24
+    assert parsed["total_failures"] == 0
+    assert parsed["consecutive_failures"] == 0
+
+
+def test_malformed_driver_state_fails() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("state=",),
+        validators=("driver_ready",),
+    )
+    result, notes, parsed = classify(spec, "state=BOGUS online=1\n")
+    assert parsed["invalid_state"] == "BOGUS"
+    assert result == hil.RESULT_FAIL
+    assert "driver state is unrecognized" in notes
+
+
+def test_driver_health_missing_online_fails_for_drv() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("Driver Health",),
+        validators=("driver_ready",),
+    )
+    result, notes, _ = classify(spec, "=== Driver Health ===\n  State: READY\n")
+    assert result == hil.RESULT_FAIL
+    assert "driver online flag not parsed" in notes
+
+
+def test_driver_health_offline_flag_fails() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("Driver Health",),
+        validators=("driver_ready",),
+    )
+    result, notes, _ = classify(spec, "=== Driver Health ===\n  State: READY\n  Online: false\n")
+    assert result == hil.RESULT_FAIL
+    assert "driver is not online" in notes
+
+
 def test_status_restore_snapshot_parses() -> None:
     spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
     text = (
@@ -109,6 +307,213 @@ def test_status_restore_snapshot_parses() -> None:
     assert result == hil.RESULT_PASS, notes
     assert parsed["status_restore"]["restored"] == 1
     assert parsed["status_restore_statuses"]["statusReadStatus"]["kind"] == "OK"
+
+
+def test_status_restore_boolean_snapshot_parses() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    text = (
+        "status_restore:\n"
+        "result: OK code=0 detail=0 msg=\n"
+        "initialMode=periodic finalMode=periodic modeInterrupted=true statusValid=1 restored=true\n"
+        "stopStatus: OK code=0 detail=0 msg=\n"
+        "statusReadStatus: OK code=0 detail=0 msg=\n"
+        "restoreStatus: OK code=0 detail=0 msg=\n"
+    )
+    result, notes, parsed = classify(spec, text)
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["status_restore"]["modeInterrupted"] == 1
+    assert parsed["status_restore"]["statusValid"] == 1
+    assert parsed["status_restore"]["restored"] == 1
+
+
+def test_missing_status_restore_snapshot_fails() -> None:
+    spec = hil.CommandSpec(
+        "status_restore",
+        "status restore",
+        expected_any=("status_restore:",),
+        validators=("status_restore",),
+    )
+    result, notes, _ = classify(spec, "status_restore:\n")
+    assert result == hil.RESULT_FAIL
+    assert "status_restore statusValid is not 1" in notes
+    assert "status_restore restored is not 1" in notes
+    assert "status_restore missing stopStatus" in notes
+
+
+def test_status_restore_missing_fields_fails() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    text = (
+        "status_restore:\n"
+        "result: OK code=0 detail=0 msg=\n"
+        "initialMode=periodic finalMode=periodic modeInterrupted=1 statusValid=1 restored=1\n"
+        "stopStatus: OK code=0 detail=0 msg=\n"
+        "statusReadStatus: OK code=0 detail=0 msg=\n"
+    )
+    result, notes, _ = classify(spec, text)
+    assert result == hil.RESULT_FAIL
+    assert "status_restore missing restoreStatus" in notes
+
+
+def test_status_restore_invalid_snapshot_fails() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    text = (
+        "status_restore:\n"
+        "result: OK code=0 detail=0 msg=\n"
+        "initialMode=periodic finalMode=periodic modeInterrupted=1 statusValid=0 restored=0\n"
+        "stopStatus: OK code=0 detail=0 msg=\n"
+        "statusReadStatus: OK code=0 detail=0 msg=\n"
+        "restoreStatus: OK code=0 detail=0 msg=\n"
+    )
+    result, notes, _ = classify(spec, text)
+    assert result == hil.RESULT_FAIL
+    assert "status_restore statusValid is not 1" in notes
+    assert "status_restore restored is not 1" in notes
+
+
+def test_status_restore_err_substatus_fails() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    text = (
+        "status_restore:\n"
+        "result: OK code=0 detail=0 msg=\n"
+        "initialMode=periodic finalMode=periodic modeInterrupted=1 statusValid=1 restored=1\n"
+        "stopStatus: OK code=0 detail=0 msg=\n"
+        "statusReadStatus: ERR code=4 detail=0 msg=\n"
+        "restoreStatus: OK code=0 detail=0 msg=\n"
+    )
+    result, notes, _ = classify(spec, text)
+    assert result == hil.RESULT_FAIL
+    assert "failure token" in notes
+
+
+def test_status_restore_active_validator_fails_when_not_interrupted() -> None:
+    spec = hil.CommandSpec(
+        "status_restore",
+        "status restore active",
+        expected=("status_restore:", "statusReadStatus", "statusValid=1"),
+        expected_any=("restored=1",),
+        validators=("status_restore", "status_restore_active"),
+    )
+    text = (
+        "status_restore:\n"
+        "result: OK code=0 detail=0 msg=\n"
+        "initialMode=single finalMode=single modeInterrupted=0 statusValid=1 restored=1\n"
+        "stopStatus: OK code=0 detail=0 msg=\n"
+        "statusReadStatus: OK code=0 detail=0 msg=\n"
+        "restoreStatus: OK code=0 detail=0 msg=\n"
+    )
+    result, notes, _ = classify(spec, text)
+    assert result == hil.RESULT_FAIL
+    assert "expected periodic or art" in notes
+    assert "modeInterrupted is not 1" in notes
+
+
+def test_status_restore_active_validator_requires_mode_restore() -> None:
+    spec = hil.CommandSpec(
+        "status_restore",
+        "status restore active",
+        expected=("status_restore:", "statusReadStatus", "statusValid=1"),
+        expected_any=("restored=1",),
+        validators=("status_restore", "status_restore_active"),
+    )
+    text = (
+        "status_restore:\n"
+        "result: OK code=0 detail=0 msg=\n"
+        "initialMode=periodic finalMode=single modeInterrupted=1 statusValid=1 restored=1\n"
+        "stopStatus: OK code=0 detail=0 msg=\n"
+        "statusReadStatus: OK code=0 detail=0 msg=\n"
+        "restoreStatus: OK code=0 detail=0 msg=\n"
+    )
+    result, notes, _ = classify(spec, text)
+    assert result == hil.RESULT_FAIL
+    assert "status_restore finalMode is single, expected periodic" in notes
+
+
+def test_final_driver_failures_fail() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("Driver Health",),
+        validators=("driver_ready", "zero_failures"),
+    )
+    result, notes, parsed = classify(
+        spec,
+        "=== Driver Health ===\n  State: READY\n  Online: true\n"
+        "  Consecutive failures: 1\n  Total success: 24\n  Total failures: 2\n",
+    )
+    assert parsed["consecutive_failures"] == 1
+    assert result == hil.RESULT_FAIL
+    assert "failure token" in notes
+
+
+def test_final_driver_failure_counters_are_required() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("Driver Health",),
+        validators=("driver_ready", "zero_failures"),
+    )
+    result, notes, _ = classify(spec, "=== Driver Health ===\n  State: READY\n  Online: true\n")
+    assert result == hil.RESULT_FAIL
+    assert "consecutive failures not parsed" in notes
+    assert "total failures not parsed" in notes
+
+
+def test_zero_failures_validator_catches_compact_nonzero_consecutive() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health",
+        expected_any=("health ok=",),
+        validators=("zero_failures",),
+    )
+    result, notes, parsed = classify(spec, "health ok=24 fail=0 consecutive=1 lastOk=100 lastErr=0\n")
+    assert parsed["consecutive_failures"] == 1
+    assert result == hil.RESULT_FAIL
+    assert "consecutive failures is nonzero" in notes
+
+
+def test_dry_run_verdict_is_incomplete() -> None:
+    results = [hil.run_dry(spec) for spec in hil.DEFAULT_COMMAND_SEQUENCE[:2]]
+    assert all(row["result"] == hil.RESULT_SKIP for row in results)
+    assert hil.verdict(results, dry_run=True) == hil.VERDICT_INCOMPLETE
+
+
+def test_dry_run_operator_and_fixture_branches() -> None:
+    operator_row = hil.run_dry(hil.operator_specs()[0])
+    fixture_row = hil.run_dry(hil.operator_specs()[1])
+    assert operator_row["result"] == hil.RESULT_OPERATOR
+    assert "operator evidence required; dry-run did not execute" in operator_row["notes"]
+    assert fixture_row["result"] == hil.RESULT_SKIP
+    assert hil.SKIP_REQUIRES_FIXTURE in fixture_row["notes"]
+
+
+def test_recovery_spec_is_generated_for_failed_step() -> None:
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "periodic start 1 high")
+    recovery = hil.recovery_spec_for(spec)
+    assert recovery is not None
+    assert recovery.command == "periodic stop"
+    assert recovery.group == "default-recovery"
+    assert "periodic stop: OK" in recovery.expected_any
+
+
+def test_serial_unsupported_response_skips_without_timeout() -> None:
+    spec = hil.CommandSpec(
+        "art start",
+        "unsupported art",
+        expected_any=("art start: OK",),
+        unsupported_ok=True,
+        timeout_s=0.1,
+    )
+    row = hil.run_serial(FakeSerial("art start: unsupported\n"), spec, idle_s=0.0, args=fake_args())
+    assert row["result"] == hil.RESULT_SKIP
+    assert row["notes"] == hil.SKIP_UNSUPPORTED
+    assert row["completion_reason"] == "unsupported-token+idle"
+
+
+def test_summary_markdown_lists_itself_as_artifact() -> None:
+    assert any(
+        isinstance(value, tuple) and "summary.md" in value and "summary.json" in value
+        for value in hil.write_summary_md.__code__.co_consts
+    )
 
 
 def test_operator_required_classification() -> None:

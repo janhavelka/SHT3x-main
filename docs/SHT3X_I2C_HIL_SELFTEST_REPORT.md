@@ -7,7 +7,9 @@ New branch created: No
 
 Auditor-facing verdict: `software-prepared only`
 
-No physical HIL validation was performed.
+No physical HIL validation was performed in this self-test chunk.
+This report is historical runner self-test context, not current-head hardware
+evidence. Dry-run artifacts are non-evidence for sensor electrical behavior.
 
 ## Files Changed
 
@@ -42,7 +44,7 @@ The default command sequence, safety exclusions, and operator command live in
 | `python tools/check_idf_example_contract.py` | Pass |
 | `python scripts/generate_version.py check` | Pass |
 | `python -m platformio --version` | PlatformIO Core 6.1.19 |
-| `python -m platformio test -e native` | Pass, 70/70 |
+| `python -m platformio test -e native` | Pass in this historical self-test run |
 | `python -m platformio run -e esp32s3dev` | Pass |
 | `python -m platformio run -e esp32s2dev` | Pass |
 | `python -m platformio pkg pack` | Pass, package tarball removed |
@@ -56,11 +58,15 @@ The runner dry-run exercises command planning and artifact generation only. It
 creates an ignored `hil_logs/i2c_<timestamp>` directory and returns final
 verdict `INCOMPLETE` because no serial hardware is used.
 
+The repository may retain intentionally tracked historical `hil_logs/`
+directories for audit context. Future generated logs remain scratch unless a
+specific evidence record is curated and committed.
+
 ## Hardware Run Result
 
-No physical HIL validation was performed. The operator must run the hardware
-runner on a wired ESP32-S2/S3 plus SHT3x target before making any hardware
-result claim.
+No physical HIL validation was performed in this self-test chunk. The operator
+must run the hardware runner on a wired ESP32-S2/S3 plus SHT3x target before
+making any hardware result claim for that chunk.
 
 ## PR And CI Status
 

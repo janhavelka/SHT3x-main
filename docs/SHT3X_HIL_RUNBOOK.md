@@ -1,7 +1,7 @@
 # SHT3x HIL Runbook
 
-Date: 2026-05-31
-Branch: `hardening/sht3x-industry-readiness`
+Date: 2026-06-01
+Branch: `hardening/sht3x-release-readiness-gaps`
 Scope: pre-HIL operator procedure only. No result in this document is a HIL pass.
 
 ## Rule For Recording Results
@@ -20,6 +20,9 @@ docs/hil/YYYYMMDD_<framework>_<target>_<board>_<commit>_<scenario>_fixture.md
 ```
 
 Use the template in `docs/SHT3X_HIL_LOG_TEMPLATE.md` for each board/target run.
+Runner output under `hil_logs/` is local scratch unless it is intentionally
+curated and committed with the exact commit, target, and evidence boundary.
+Operator notes without artifacts are context, not pass evidence.
 
 ## Automatic Serial Runner
 
@@ -27,9 +30,13 @@ Use the automatic runner for repeatable serial evidence after the diagnostic
 firmware is flashed:
 
 ```text
-python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --target-name desk
-python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk
+python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
+python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
 ```
+
+These commands require a full repository checkout. The PlatformIO package
+payload may exclude `tools/`; use the repository source when generating HIL
+evidence.
 
 The runner writes `serial_transcript.txt`, `summary.md`, `summary.json`,
 `operator_checklist.md`, and `environment.txt` under
@@ -43,6 +50,9 @@ status_restore, serial/EIC, heater status, and alert read/encode/decode checks.
 It does not enable heater, clear status, reset, write alert limits, run soak, or
 require GPIO/fault fixtures.
 
+That list describes current runner capability. A `PASS` claim is limited to the
+selected commands and artifacts in a specific run summary.
+
 Opt-in flags:
 
 ```text
@@ -55,6 +65,10 @@ Opt-in flags:
 --include-output-tests
 --include-fault-tests
 ```
+
+Metadata flags `--expect-address`, `--board`, `--target-name`, and
+`--operator` are written into the run summaries and environment file. Use them
+on dry-runs and hardware runs so evidence can be tied to the target.
 
 Do not mark ALERT pin validation as pass unless GPIO or logic-analyzer evidence
 is attached. Do not mark humidity accuracy as pass without a reference fixture.

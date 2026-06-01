@@ -9,7 +9,10 @@
 *.elf
 *.bin
 *.map
+*.tar
 *.tar.gz
+*.tgz
+*.zip
 
 # ESP-IDF local build artifacts
 build/

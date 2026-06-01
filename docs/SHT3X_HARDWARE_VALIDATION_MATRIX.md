@@ -1,10 +1,20 @@
 # SHT3x Hardware Validation Scenario Matrix
 
-Date: 2026-05-31
-Branch: `hardening/sht3x-industry-readiness`
+Date: 2026-06-01
+Branch: `hardening/sht3x-release-readiness-gaps`
 
 This file is a scenario index, not a status tracker. Current evidence status is
 tracked in `docs/HARDWARE_VALIDATION.md`.
+
+The only tracked automated smoke-HIL `PASS` at this point is
+`hil_logs/i2c_20260531T155925Z/summary.md`: address `0x44`, COM17, branch
+`hardening/sht3x-industry-readiness`, host runner/worktree commit
+`8661a38cc70e629cd337ac45c42a1885aefb0cfc`, limited to the serial commands in
+that log. The flashed firmware reported its git commit as `unknown`, so do not
+use this artifact as exact firmware-source evidence without a matching build or
+upload record. Current-head release evidence still needs a rerun after branch
+changes. Operator reports are context only until the matching log or fixture
+artifact is committed.
 
 Manual operator procedures live in `docs/SHT3X_HIL_RUNBOOK.md`. The host-side
 serial runner is `tools/run_sht3x_hil.py` / `tools/run_i2c_hil.py`, and its
@@ -60,7 +70,7 @@ Additional runner flags map to scenario groups:
 | Single-shot clock stretching | Transport timeout >= worst-case tMEAS; `mode single`, `stretch 1`, `meastime`, `read`, `serial stretch`, `stretch 0` | Pass: completes or records explicit unsupported/timeout behavior. Fail: ambiguous timeout or stretch left enabled. | `docs/hil/..._clock_stretch.log` |
 | Periodic 0.5 mps | Stable setup; `periodic start 0.5 high`, wait, repeated `periodic fetch`, `drv`, `status_restore`, `periodic stop` | Pass: fresh CRC-valid samples and clean Break/restore. Fail: stale sample confusion, restore failure, non-READY final state. | `docs/hil/..._periodic_0_5.log` |
 | Periodic 1 mps | Stable setup; `periodic start 1 high`, repeated `periodic fetch`, `drv`, `status_restore`, `periodic stop` | Pass: expected cadence/counters and clean restore. Fail: unexplained missed samples or non-READY final state. | `docs/hil/..._periodic_1.log` |
-| Periodic 2 mps | Stable setup; `periodic start 2 high`, repeated `periodic fetch`, `drv`, `periodic stop` | Pass: stable timing and CRC-valid samples. Fail: unexplained failures or self-heating not recorded. | `docs/hil/..._periodic_2.log` |
+| Periodic 2 mps | Stable setup; `periodic start 2 medium`, repeated `periodic fetch`, `drv`, `periodic stop` | Pass: stable timing and CRC-valid samples. Fail: unexplained failures or self-heating not recorded. | `docs/hil/..._periodic_2.log` |
 | Periodic 4 mps | Stable setup; `periodic start 4 high`, repeated `periodic fetch`, `drv`, `periodic stop` | Pass: timing/not-ready behavior understood. Fail: unexpected failure or hidden recovery. | `docs/hil/..._periodic_4.log` |
 | Periodic 10 mps | Stable setup; `periodic start 10 high`, repeated `periodic fetch`, `drv`, `periodic stop` | Pass: high-rate behavior stable with bus load/self-heating noted. Fail: unexplained failures. | `docs/hil/..._periodic_10.log` |
 | ART mode | Stable setup; `art start`, repeated `art fetch`, `drv`, `status_restore`, `art stop` | Pass: ART samples arrive, restore evidence is complete, final state `READY`. Fail: no sample or restore failure. | `docs/hil/..._art.log` |

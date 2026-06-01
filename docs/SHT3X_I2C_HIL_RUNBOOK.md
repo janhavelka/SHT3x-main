@@ -1,7 +1,7 @@
 # SHT3x Serial I2C HIL Runbook
 
-Date: 2026-05-31
-Branch: `main`
+Date: 2026-06-01
+Branch: `hardening/sht3x-release-readiness-gaps`
 
 This procedure drives the Arduino or ESP-IDF diagnostic CLI over a serial port
 from the host. The Python runner does not talk directly to I2C and does not
@@ -40,6 +40,10 @@ python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --
 `tools/run_sht3x_hil.py` is a compatibility entrypoint for
 `tools/run_i2c_hil.py`.
 
+These commands require a full repository checkout. The PlatformIO package
+payload may exclude `tools/` because it is meant for library consumption, not
+host-side evidence generation.
+
 The runner creates `hil_logs/i2c_<UTC_TIMESTAMP>/` and writes:
 
 - `serial_transcript.txt`
@@ -55,10 +59,14 @@ Operator-assisted groups may also create:
 - `logic_analyzer_reference.txt`
 - `photos_or_evidence_manifest.md`
 
-`hil_logs/` is local scratch output and is ignored by git. For an audit record,
+`hil_logs/` is local scratch output by default and is ignored for new files.
+This repository still contains historical tracked smoke-HIL logs for audit
+context. Do not add new generated log directories unless they are intentionally
+curated with a clear commit, target, and scope boundary. For an audit record,
 copy selected transcripts, summaries, target template, operator notes, and
 fixture evidence into the curated `docs/hil/` evidence set described by
-`docs/SHT3X_HIL_RUNBOOK.md`.
+`docs/SHT3X_HIL_RUNBOOK.md`, or document why a tracked `hil_logs/` path is the
+chosen artifact.
 
 ## Default Executable Command Sequence
 
@@ -97,11 +105,11 @@ alert encode -9 22
 alert decode 0x3869
 alert encode -10 20
 alert decode 0x3466
-status_restore
 periodic start 0.5 high
 periodic fetch
 periodic stop
 periodic start 1 high
+status_restore
 periodic fetch
 periodic stop
 periodic start 2 medium
@@ -118,9 +126,9 @@ Expected evidence includes version text, help output, scan output containing
 the expected address, `READY` or online driver state, parseable status/status
 raw, plausible single-shot measurements for low/medium/high repeatability,
 raw/comp cached samples, serial/EIC, heater OFF, alert limit reads, alert
-encode/decode vectors, status-restore fields, selected periodic start/fetch/stop
-paths, ART start/fetch/stop or explicit unsupported status, and final READY
-health with zero failures.
+encode/decode vectors, periodic-mode status-restore fields, selected periodic
+start/fetch/stop paths, ART start/fetch/stop or explicit unsupported status,
+and final READY health with zero failures.
 
 ## Flags
 
