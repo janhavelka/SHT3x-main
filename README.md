@@ -15,7 +15,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 ## Current State
 
 Current `main` is an unreleased integration state. Local software checks have
-passed for native tests (75/75), guard scripts, and Arduino PlatformIO builds
+passed for native tests (76/76), guard scripts, and Arduino PlatformIO builds
 for ESP32-S3 and ESP32-S2.
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
@@ -188,8 +188,8 @@ void loop() {
 | Method | Description |
 |--------|-------------|
 | `begin(config)` | Initialize the driver, validate transport callbacks, and probe the sensor. |
-| `tick(nowMs)` | Advance bounded timing gates and recovery state. |
-| `end()` | End the current session and return to `UNINIT`. |
+| `tick(nowMs)` | Poll pending measurement work; may perform one bounded I2C transaction when a sample is due. |
+| `end()` | Clear runtime/session state and return to `UNINIT`; no sensor command is sent. |
 | `isInitialized()` | Return `true` after a successful `begin()` until `end()`. |
 | `getConfig()` | Return the cached configuration currently held by the driver. |
 | `probe()` | Raw presence check with no health tracking. |
@@ -226,11 +226,17 @@ fails with `INVALID_CONFIG`.
 | `readSerialNumber()` | Read the electronic identification code. |
 | `readAlertLimit*()` / `writeAlertLimit*()` / `disableAlerts()` | Physical and raw alert-threshold access. |
 
-The low-level command helpers are intentionally narrow: they reuse the driver's tracked
-transport path and tIDLE guard, but the dedicated mode/status/alert helpers remain the
-preferred entry points when the command has higher-level state implications. Raw reads are
-bounded to the largest documented SHT3x response (6 bytes), and invalid read buffers are
-rejected before sending the command.
+The low-level command helpers are expert escape hatches. They reuse the
+driver's tracked transport path and tIDLE guard, and they reject pending
+single-shot work, but they intentionally bypass high-level periodic/ART mode
+safety. The caller owns datasheet command legality, response length, raw
+response CRC interpretation, status side effects, local cache coherence, and
+desynchronization risk. Raw helpers do not update mode/heater/alert caches.
+Stop periodic/ART before raw commands unless the datasheet explicitly permits
+the command in the active mode. Dedicated mode/status/alert helpers remain the
+preferred entry points when the command has higher-level state implications.
+Raw reads are bounded to the largest documented SHT3x response (6 bytes), and
+invalid read buffers are rejected before sending the command.
 
 `getRawSample()` and `getCompensatedSample()` remain available after
 `getMeasurement()` consumes the current `measurementReady()` event. Use
@@ -243,7 +249,8 @@ the cached configuration is updated only after that restart succeeds.
 ### Status Semantics
 
 - `Status::is(Err)` checks whether the status matches a specific error code.
-- `Status::operator bool()` returns `true` for success, usable in `if (st)` idiom.
+- `Status::operator bool()` returns `true` only for `Err::OK`, usable in the
+  `if (st)` idiom. `Err::IN_PROGRESS` converts to `false`.
 - `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
 - Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
@@ -256,21 +263,30 @@ The Sensirion alert application note also shows ALERT can be active after
 power-up/reset until the measured value and programmed limits settle; validate
 this on your hardware before relying on ALERT as a production interrupt source.
 
-`readStatus()` is non-destructive and does not clear status flags. Local
-Sensirion docs only explicitly allow Fetch Data while periodic/ART acquisition
-is active, so `readStatus()` returns `BUSY` in active periodic/ART mode instead
-of issuing an undocumented command sequence.
+`readStatus()` is non-destructive and does not clear status flags. It returns
+`BUSY` while a single-shot measurement is pending. Local Sensirion docs only
+explicitly allow Fetch Data while periodic/ART acquisition is active, so
+`readStatus()` also returns `BUSY` in active periodic/ART mode instead of
+issuing an undocumented command sequence.
 
 Use `readStatusWithModeRestore()` when ALERT diagnosis is needed while
 periodic/ART mode is active. It sends Break, reads the status register, then
 attempts to restore the previous periodic or ART mode. This aborts the current
 conversion cadence and restarts timing from the restore point. Inspect
 `StatusReadSnapshot::stopStatus`, `statusReadStatus`, and `restoreStatus` if the
-helper returns an error.
+helper returns an error. `statusValid` is true only when the status-read step
+succeeded, `modeInterrupted` reports whether Break was sent, `finalMode` reports
+the driver mode after all attempted steps, and `restored` is true only when no
+restore was needed or the previous periodic/ART mode was restarted. If both the
+status-read step and restore step fail, the top-level return reports the restore
+failure; inspect `statusReadStatus` for the earlier status-read failure.
 
 `readSettings()` remains non-disruptive. If it cannot read status, it sets
 `statusValid=false` and records the exact reason in
-`SettingsSnapshot::statusReadStatus`.
+`SettingsSnapshot::statusReadStatus`. That OK snapshot behavior covers active
+periodic/ART and pending single-shot status unavailability. OFFLINE is the
+exception: like other normal public I2C APIs, `readSettings()` returns `BUSY`
+and does not issue a bus transaction while recovery is required.
 
 `clearStatus()` is destructive for status flags 15, 11, 10, and 4. It is never
 called implicitly by `readStatus()`, `readStatusWithModeRestore()`, or
@@ -373,9 +389,24 @@ command or read phase.
 | `writeCommand()` / `writeCommandWithData()` | 1 command write | command spacing + write timeout | Advanced direct access; normal helpers are preferred. |
 | `readCommand()` | Command write + receive-only read | command spacing + write/read timeout | Read length is capped to documented SHT3x frame sizes. |
 | `probe()` | Status command + read via raw transport | command spacing + write/read timeout | Diagnostic only; does not update health. |
-| `softReset()` / `generalCallReset()` | Reset command/write | command spacing + write timeout + 2 ms reset wait | General-call reset is bus-wide and opt-in. |
+| `softReset()` | Soft-reset command | command spacing + write timeout + 2 ms reset wait | Blocked while periodic/ART is active. Success clears pending measurement/sample state and leaves local mode as single-shot. |
+| `generalCallReset()` | General-call write to address `0x00` | command spacing + write timeout + 2 ms reset wait | Bus-wide, disabled by default, and an application/bus-manager policy. Success clears local measurement state and leaves local mode as single-shot. |
 | `interfaceReset()` | Application callback only | bounded by callback contract | Callback must implement the SCL sequence and return a `Status`. |
 | `recover()` / reset-and-restore helpers | Multi-step recovery/reset ladder | bounded by configured ladder steps and backoff | Manual recovery only; no automatic retry loop in `tick()`. |
+
+`tick()` returns `void`. When it performs I2C and the transaction fails, the
+failure is visible through `lastError()`, health counters, `driverState()`, and
+retry scheduling rather than as a returned `Status`. Protocol failures after a
+successful bus transaction, such as CRC mismatch, do not update transport
+health; they leave no ready sample and are retried through normal scheduling.
+Use explicit APIs when the caller must handle a synchronous error at the call
+site.
+
+`end()` is local-only. It clears runtime/session state, but does not clear the
+cached configuration, cached restore plan, health counters, or last error. It
+does not send Break or reset and does not guarantee that the physical sensor has
+stopped periodic/ART acquisition. Call `stopPeriodic()` before `end()` when
+hardware acquisition state matters.
 
 ## Recovery Ladder
 
@@ -397,8 +428,12 @@ application decision, not a sensor-driver default.
 
 Two explicit reset APIs are available:
 
-- `resetToDefaults()` resets the sensor and clears cached settings to library defaults (no restore).
-- `resetAndRestore()` resets the sensor and restores cached settings from RAM (no NVM on SHT3x).
+- `resetToDefaults()` runs recovery, sets the driver to a safe single-shot
+  baseline, and clears cached settings to library defaults. The recovery ladder
+  may stop after a successful probe without issuing a reset.
+- `resetAndRestore()` runs recovery and restores cached settings from RAM when
+  recovery succeeds. The recovery ladder may stop after a successful probe
+  without issuing a reset.
 SHT3x settings are volatile; restore uses RAM cache only.
 
 Cached settings (RAM only):

@@ -993,6 +993,59 @@ void test_low_level_command_helpers_block_pending_measurement() {
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
 }
 
+void test_low_level_command_helpers_bypass_periodic_guard_as_expert_api() {
+  CommandCaptureTransport ctx;
+  SHT3xDevice device;
+  device._config.i2cWrite = captureWrite;
+  device._config.i2cWriteRead = captureWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.nowMs = captureNowMs;
+  device._config.nowUs = captureNowUs;
+  device._config.cooperativeYield = captureYield;
+  device._config.timeUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.commandDelayMs = 1;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::PERIODIC;
+  device._periodicActive = true;
+  device._periodMs = 1000;
+
+  Status st = device.writeCommand(cmd::CMD_CLEAR_STATUS);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(2u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_CLEAR_STATUS >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_CLEAR_STATUS & 0xFF), ctx.lastWrite[1]);
+  TEST_ASSERT_TRUE(device._periodicActive);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+
+  ctx.lastWriteLen = 0;
+  st = device.writeCommandWithData(cmd::CMD_ALERT_WRITE_HIGH_SET, 0x1234);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(5u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_ALERT_WRITE_HIGH_SET >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_ALERT_WRITE_HIGH_SET & 0xFF), ctx.lastWrite[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x12, ctx.lastWrite[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x34, ctx.lastWrite[3]);
+  TEST_ASSERT_EQUAL_HEX8(SHT3xDevice::_crc8(&ctx.lastWrite[2], 2), ctx.lastWrite[4]);
+  TEST_ASSERT_TRUE(device._periodicActive);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+
+  ctx.lastWriteLen = 0;
+  ctx.lastReadTxLen = 0;
+  ctx.lastReadLen = 0;
+  uint8_t buf[3] = {};
+  st = device.readCommand(cmd::CMD_READ_STATUS, buf, sizeof(buf));
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(2u, ctx.lastWriteLen);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_READ_STATUS >> 8), ctx.lastWrite[0]);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(cmd::CMD_READ_STATUS & 0xFF), ctx.lastWrite[1]);
+  TEST_ASSERT_EQUAL_UINT8(0u, ctx.lastReadTxLen);
+  TEST_ASSERT_EQUAL_UINT8(3u, ctx.lastReadLen);
+  TEST_ASSERT_TRUE(device._periodicActive);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device._mode);
+}
+
 void test_low_level_read_rejects_invalid_buffers_before_i2c() {
   CountTransport ctx;
   SHT3xDevice device;
@@ -2451,6 +2504,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_low_level_command_helpers_write_and_read);
   RUN_TEST(test_low_level_command_helpers_map_expected_nack);
   RUN_TEST(test_low_level_command_helpers_block_pending_measurement);
+  RUN_TEST(test_low_level_command_helpers_bypass_periodic_guard_as_expert_api);
   RUN_TEST(test_low_level_read_rejects_invalid_buffers_before_i2c);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_expected_nack_mapping);

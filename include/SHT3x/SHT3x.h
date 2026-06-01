@@ -77,9 +77,9 @@ struct SettingsSnapshot {
 struct StatusReadSnapshot {
   StatusRegister status = {};                                 ///< Parsed status register when statusValid is true
   bool statusValid = false;                                   ///< True if the status read succeeded
-  Status stopStatus = Status::Ok();                           ///< Break/stop result; OK when no stop was needed
+  Status stopStatus = Status::Ok();                           ///< Break/stop result; OK when no stop was needed or stop succeeded
   Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of status read step
-  Status restoreStatus = Status::Ok();                        ///< Restore result; OK when no restore was needed
+  Status restoreStatus = Status::Ok();                        ///< Restore result; OK when no restore was needed or restore succeeded
   Mode initialMode = Mode::SINGLE_SHOT;                       ///< Mode observed before the operation
   Mode finalMode = Mode::SINGLE_SHOT;                         ///< Mode after all attempted steps
   bool modeInterrupted = false;                               ///< True when periodic/ART was stopped for this read
@@ -143,11 +143,22 @@ public:
   /// @note This function is bounded, but it may perform one synchronous I2C
   ///       transaction when a previously requested sample is due. In OFFLINE it
   ///       clears pending measurement state and does not touch the bus.
+  /// @note The return type is void. I2C failures are observable through
+  ///       lastError(), consecutiveFailures(), totalFailures(), driverState(),
+  ///       and retry scheduling. Protocol failures after a successful bus
+  ///       transaction, such as CRC mismatch, do not update transport health;
+  ///       they leave no ready sample and are retried through normal scheduling.
+  ///       Use explicit read APIs when the caller must handle a synchronous
+  ///       Status at the call site.
   /// @param nowMs Current timestamp from the same wrapping millisecond timebase
   ///              used by Config::nowMs
   void tick(uint32_t nowMs);
 
-  /// Shutdown the driver and release resources
+  /// End the local driver session.
+  /// @note This clears runtime/session state and returns the instance to
+  ///       UNINIT. It does not send Break, reset the sensor, or guarantee that
+  ///       physical periodic/ART acquisition has stopped. Call stopPeriodic()
+  ///       before end() when hardware acquisition state matters.
   void end();
 
   /// Check if begin() completed successfully and end() has not been called
@@ -306,6 +317,10 @@ public:
   /// records the exact status-read result when it does not.
   /// @note In active periodic/ART mode the status read is not issued; the
   ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
+  ///       The same OK snapshot behavior applies while a single-shot
+  ///       measurement is pending.
+  ///       In OFFLINE state, readSettings() returns BUSY like other normal
+  ///       public I2C APIs.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
@@ -314,6 +329,11 @@ public:
 
   /// Issue one raw 16-bit command using the tracked transport path.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
+  /// @note Expert escape hatch. This bypasses high-level mode safety for
+  ///       periodic/ART, so the caller owns datasheet command legality,
+  ///       hardware desynchronization risk, local cache coherence, and any
+  ///       status side effects. Stop periodic/ART before raw commands unless
+  ///       the datasheet explicitly permits the command in the active mode.
   /// @return Status::Ok() on success, error otherwise
   Status writeCommand(uint16_t command);
 
@@ -321,6 +341,11 @@ public:
   /// The CRC byte is computed internally.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @param data Packed 16-bit payload word
+  /// @note Expert escape hatch. This bypasses high-level mode safety for
+  ///       periodic/ART, so the caller owns datasheet command legality,
+  ///       hardware desynchronization risk, local cache coherence,
+  ///       write-payload meaning, and status side effects. Stop periodic/ART before raw commands unless the
+  ///       datasheet explicitly permits the command in the active mode.
   /// @return Status::Ok() on success, error otherwise
   Status writeCommandWithData(uint16_t command, uint16_t data);
 
@@ -331,6 +356,12 @@ public:
   /// @param len Number of bytes to read; SHT3x responses are limited to 6 bytes
   /// @param allowNoData Map a read-header NACK to MEASUREMENT_NOT_READY when supported
   /// @note Invalid buffers and oversized reads are rejected before any I2C command is sent.
+  /// @note Expert escape hatch. This bypasses high-level mode safety for
+  ///       periodic/ART, so the caller owns datasheet command legality,
+  ///       response length, response CRC interpretation, and desynchronization
+  ///       risk. Raw reads do not update local mode/heater/alert caches. Stop
+  ///       periodic/ART before raw commands unless the datasheet explicitly
+  ///       permits the command in the active mode.
   /// @return Status::Ok() on success, error otherwise
   Status readCommand(uint16_t command, uint8_t* out, size_t len,
                      bool allowNoData = false);
@@ -382,20 +413,27 @@ public:
   // =========================================================================
 
   /// Read raw status register without clearing flags.
-  /// @note Returns BUSY while periodic/ART acquisition is active; use
-  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
+  /// @note Returns BUSY while a single-shot measurement is pending or
+  ///       periodic/ART acquisition is active. Use readStatusWithModeRestore()
+  ///       when ALERT diagnosis is needed in periodic/ART modes.
   Status readStatus(uint16_t& raw);
 
   /// Read and parse status register without clearing flags.
-  /// @note Returns BUSY while periodic/ART acquisition is active; use
-  ///       readStatusWithModeRestore() when ALERT diagnosis is needed in those modes.
+  /// @note Returns BUSY while a single-shot measurement is pending or
+  ///       periodic/ART acquisition is active. Use readStatusWithModeRestore()
+  ///       when ALERT diagnosis is needed in periodic/ART modes.
   Status readStatus(StatusRegister& out);
 
   /// Read status, breaking and restoring periodic/ART mode when needed.
   /// @note This is disruptive in periodic/ART mode: it sends Break, aborts the
   ///       current acquisition cadence, reads status, and attempts to restore
   ///       the prior periodic or ART mode. Inspect the snapshot for partial
-  ///       stop/read/restore results when this returns an error.
+  ///       stop/read/restore results when this returns an error. statusValid is
+  ///       true only when the status read step succeeded; restored is true only
+  ///       when no restore was needed or the previous periodic/ART mode was
+  ///       restarted successfully. If both status read and restore fail, the
+  ///       top-level return reports restoreStatus; inspect statusReadStatus for
+  ///       the earlier status-read failure.
   Status readStatusWithModeRestore(StatusReadSnapshot& out);
 
   /// Clear status flags. This is destructive for status bits 15, 11, 10, and 4.
@@ -415,7 +453,10 @@ public:
 
   /// Soft reset the device.
   /// @note Sends one reset command and waits the bounded reset delay. Returns
-  ///       BUSY while periodic/ART is active.
+  ///       BUSY while periodic/ART is active. A pending single-shot conversion
+  ///       is not preserved; on reset success pending measurement/sample state
+  ///       is cleared, mode is set to SINGLE_SHOT, and the restore cache is not
+  ///       automatically rewritten.
   Status softReset();
 
   /// Interface reset sequence (SCL pulse recovery).
@@ -426,6 +467,9 @@ public:
   /// General call reset (bus-wide).
   /// @note Resets every supporting device on the bus and is therefore an
   ///       application/bus-manager decision guarded by Config::allowGeneralCallReset.
+  ///       It is disabled by default and is used by recover() only when that
+  ///       explicit opt-in is set. On success, local measurement state is
+  ///       cleared and mode is set to SINGLE_SHOT.
   Status generalCallReset();
 
   // =========================================================================

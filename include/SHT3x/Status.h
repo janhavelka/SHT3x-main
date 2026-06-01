@@ -45,10 +45,10 @@ struct Status {
   /// @return true if the status matches the requested error code
   constexpr bool is(Err expected) const { return code == expected; }
 
-  /// @return true if operation in progress (not a failure)
+  /// @return true if operation is scheduled but not complete
   constexpr bool inProgress() const { return code == Err::IN_PROGRESS; }
 
-  /// @return true if operation succeeded
+  /// @return true only if operation succeeded; IN_PROGRESS converts to false
   explicit constexpr operator bool() const { return ok(); }
 
   /// Create a success status

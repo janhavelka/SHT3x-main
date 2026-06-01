@@ -95,6 +95,7 @@ Still application-owned:
   - add an `i2c_master_dev_handle_t` for `0x44` or `0x45`;
   - optionally add a handle for general-call address `0x00` only when general-call reset is enabled;
   - pass an adapter context through `Config.i2cUser`;
+  - stop periodic/ART explicitly if hardware quiescence matters;
   - destroy handles after `driver.end()` and after all driver calls stop.
 - Do not call public driver APIs from an ISR. If ALERT is wired to a GPIO, notify a task and call the driver there.
 
@@ -209,6 +210,9 @@ ESP-IDF examples:
 - Demonstrate single-shot non-stretch measurement first.
 - Keep `tick()` running outside blocking stdin input. The current example uses a
   separate input task and a main owner loop that calls `tick()`.
+  `tick()` returns `void`; observe transport failures through driver health,
+  `lastError()`, and retry behavior. CRC/protocol failures after a successful
+  bus transaction do not update transport health.
 - Demonstrate optional hard reset and bus reset only when board pins are configured by the example.
 - Print results with ESP-IDF logging from the example, not from the library.
 - Keep the example single-owner. Shared bus or multi-task applications must add
