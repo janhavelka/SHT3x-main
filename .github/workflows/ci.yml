@@ -118,4 +118,7 @@ jobs:
         run: python scripts/generate_version.py check
 
       - name: Build native ESP-IDF basic example (${{ matrix.idf_target }})
-        run: idf.py -C examples/idf/basic set-target ${{ matrix.idf_target }} build
+        shell: bash
+        run: |
+          . "${IDF_PATH:-/opt/esp/idf}/export.sh"
+          idf.py -C examples/idf/basic set-target ${{ matrix.idf_target }} build
