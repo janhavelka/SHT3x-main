@@ -151,7 +151,7 @@ def main() -> int:
         fail("IDF example must not compile examples/common/Sht3xCli.cpp")
     for component in ("esp_driver_i2c", "esp_driver_gpio", "esp_timer", "freertos", "vfs"):
         require_text(idf_cmake, component)
-    require_text(idf_cmake, '"../../../include"')
+    require_text(idf_cmake, '"../../../../include"')
     require_text(idf_transport, "i2c_master_transmit")
     require_text(idf_transport, "i2c_master_receive")
     require_text(idf_project, 'set(EXTRA_COMPONENT_DIRS "../../../")')
