@@ -15,7 +15,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 ## Current State
 
 Current `main` is an unreleased integration state. Local software checks have
-passed for native tests (70/70), guard scripts, and Arduino PlatformIO builds
+passed for native tests (75/75), guard scripts, and Arduino PlatformIO builds
 for ESP32-S3 and ESP32-S2.
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
@@ -279,6 +279,12 @@ called implicitly by `readStatus()`, `readStatusWithModeRestore()`, or
 Alert-limit read/write commands are not documented as valid during active
 periodic/ART acquisition. Configure alert limits before starting periodic/ART,
 or stop and explicitly restart acquisition around alert-limit changes.
+`encodeAlertLimit()` accepts arguments as `(temperatureC, humidityPct)`. The
+four Sensirion app-note reset-default labels, listed as RH/T in the note,
+encode to the documented raw words: `80% / 60 C -> 0xCD33`,
+`79% / 58 C -> 0xC92D`, `22% / -9 C -> 0x3869`, and
+`20% / -10 C -> 0x3466`. Other physical values are quantized into the reduced
+RH7/T9 alert-limit format, so decoded values are approximate.
 See `docs/SHT3X_ALERT_STATUS_FIX_REPORT.md` for the helper design and local
 validation coverage; real ALERT-pin and humidity-threshold behavior still needs
 hardware validation.

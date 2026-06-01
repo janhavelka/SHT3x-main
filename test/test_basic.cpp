@@ -25,6 +25,20 @@ uint32_t gMicrosStep = 0;
 using namespace SHT3x;
 using SHT3xDevice = SHT3x::SHT3x;
 
+struct AlertAppNoteVector {
+  AlertLimitKind kind;
+  float temperatureC;
+  float humidityPct;
+  uint16_t word;
+};
+
+static constexpr AlertAppNoteVector kAlertAppNoteVectors[] = {
+    {AlertLimitKind::HIGH_SET, 60.0f, 80.0f, 0xCD33},
+    {AlertLimitKind::HIGH_CLEAR, 58.0f, 79.0f, 0xC92D},
+    {AlertLimitKind::LOW_CLEAR, -9.0f, 22.0f, 0x3869},
+    {AlertLimitKind::LOW_SET, -10.0f, 20.0f, 0x3466},
+};
+
 static_assert(!std::is_copy_constructible<SHT3xDevice>::value,
               "SHT3x must not be copy constructible");
 static_assert(!std::is_copy_assignable<SHT3xDevice>::value,
@@ -135,6 +149,42 @@ void test_alert_limit_roundtrip() {
   SHT3xDevice::decodeAlertLimit(packed, tOut, rhOut);
   TEST_ASSERT_FLOAT_WITHIN(0.6f, tIn, tOut);
   TEST_ASSERT_FLOAT_WITHIN(1.5f, rhIn, rhOut);
+}
+
+void test_alert_limit_app_note_encode_vectors() {
+  for (const auto& vector : kAlertAppNoteVectors) {
+    TEST_ASSERT_EQUAL_HEX16(vector.word,
+                            SHT3xDevice::encodeAlertLimit(vector.temperatureC,
+                                                          vector.humidityPct));
+  }
+}
+
+void test_alert_limit_app_note_decode_vectors() {
+  for (const auto& vector : kAlertAppNoteVectors) {
+    float temperatureC = 0.0f;
+    float humidityPct = 0.0f;
+    SHT3xDevice::decodeAlertLimit(vector.word, temperatureC, humidityPct);
+    TEST_ASSERT_FLOAT_WITHIN(0.7f, vector.temperatureC, temperatureC);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, vector.humidityPct, humidityPct);
+  }
+}
+
+void test_alert_limit_clamps_out_of_range_inputs() {
+  TEST_ASSERT_EQUAL_HEX16(0x0000, SHT3xDevice::encodeAlertLimit(-100.0f, -1.0f));
+  TEST_ASSERT_EQUAL_HEX16(0xFFFF, SHT3xDevice::encodeAlertLimit(200.0f, 120.0f));
+  TEST_ASSERT_EQUAL_HEX16(0x0000, SHT3xDevice::encodeAlertLimit(-45.0f, 0.0f));
+  TEST_ASSERT_EQUAL_HEX16(0xFFFF, SHT3xDevice::encodeAlertLimit(130.0f, 100.0f));
+}
+
+void test_alert_limit_quantized_roundtrip_edges() {
+  const uint16_t words[] = {0x0000, 0xFFFF, 0xCD33, 0xC92D, 0x3869, 0x3466};
+  for (const uint16_t word : words) {
+    float temperatureC = 0.0f;
+    float humidityPct = 0.0f;
+    SHT3xDevice::decodeAlertLimit(word, temperatureC, humidityPct);
+    TEST_ASSERT_EQUAL_HEX16(word, SHT3xDevice::encodeAlertLimit(temperatureC,
+                                                                humidityPct));
+  }
 }
 
 void test_time_elapsed_wrap() {
@@ -483,6 +533,10 @@ struct FrameScriptTransport {
   uint32_t writes = 0;
   uint32_t reads = 0;
   uint16_t lastCommand = 0;
+  bool sawAlertWritePayload = false;
+  uint16_t lastAlertWriteCommand = 0;
+  uint16_t lastAlertWriteValue = 0;
+  uint8_t lastAlertWriteCrc = 0;
 };
 
 static Status frameWrite(uint8_t addr, const uint8_t* data, size_t len,
@@ -497,6 +551,15 @@ static Status frameWrite(uint8_t addr, const uint8_t* data, size_t len,
     ctx->lastCommand = command;
     if (ctx->commandCount < 40) {
       ctx->commands[ctx->commandCount++] = command;
+    }
+    if (len >= 5 && (command == cmd::CMD_ALERT_WRITE_HIGH_SET ||
+                     command == cmd::CMD_ALERT_WRITE_HIGH_CLEAR ||
+                     command == cmd::CMD_ALERT_WRITE_LOW_CLEAR ||
+                     command == cmd::CMD_ALERT_WRITE_LOW_SET)) {
+      ctx->sawAlertWritePayload = true;
+      ctx->lastAlertWriteCommand = command;
+      ctx->lastAlertWriteValue = static_cast<uint16_t>((data[2] << 8) | data[3]);
+      ctx->lastAlertWriteCrc = data[4];
     }
   }
   if (ctx->failCommand != 0 && command == ctx->failCommand) {
@@ -576,8 +639,36 @@ static void clearFrameLog(FrameScriptTransport& ctx) {
   ctx.reads = 0;
   ctx.lastCommand = 0;
   ctx.failCommandSeen = 0;
+  ctx.sawAlertWritePayload = false;
+  ctx.lastAlertWriteCommand = 0;
+  ctx.lastAlertWriteValue = 0;
+  ctx.lastAlertWriteCrc = 0;
   for (size_t i = 0; i < 40; ++i) {
     ctx.commands[i] = 0;
+  }
+}
+
+void test_write_alert_limit_uses_app_note_encoder_vectors() {
+  for (const auto& vector : kAlertAppNoteVectors) {
+    FrameScriptTransport ctx;
+    SHT3xDevice device;
+    const Status beginSt = device.begin(makeFrameConfig(ctx));
+    TEST_ASSERT_TRUE_MESSAGE(beginSt.ok(), beginSt.msg);
+
+    clearFrameLog(ctx);
+    const Status st = device.writeAlertLimit(vector.kind, vector.temperatureC,
+                                             vector.humidityPct);
+    TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+    TEST_ASSERT_TRUE(ctx.sawAlertWritePayload);
+    TEST_ASSERT_EQUAL_HEX16(SHT3xDevice::_commandForAlertWrite(vector.kind),
+                            ctx.lastAlertWriteCommand);
+    TEST_ASSERT_EQUAL_HEX16(vector.word, ctx.lastAlertWriteValue);
+
+    const uint8_t data[2] = {
+        static_cast<uint8_t>(ctx.lastAlertWriteValue >> 8),
+        static_cast<uint8_t>(ctx.lastAlertWriteValue & 0xFF),
+    };
+    TEST_ASSERT_EQUAL_HEX8(SHT3xDevice::_crc8(data, 2), ctx.lastAlertWriteCrc);
   }
 }
 
@@ -1131,6 +1222,19 @@ void test_write_alert_limit_rejects_nan() {
 
   float nanValue = std::numeric_limits<float>::quiet_NaN();
   Status st = device.writeAlertLimit(AlertLimitKind::HIGH_SET, nanValue, 50.0f);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+  TEST_ASSERT_FALSE(device._cachedSettings.alertValid[0]);
+
+  st = device.writeAlertLimit(AlertLimitKind::HIGH_SET, 25.0f, nanValue);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+  TEST_ASSERT_FALSE(device._cachedSettings.alertValid[0]);
+
+  const float infValue = std::numeric_limits<float>::infinity();
+  st = device.writeAlertLimit(AlertLimitKind::HIGH_SET, infValue, 50.0f);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+  TEST_ASSERT_FALSE(device._cachedSettings.alertValid[0]);
+
+  st = device.writeAlertLimit(AlertLimitKind::HIGH_SET, 25.0f, infValue);
   TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
   TEST_ASSERT_FALSE(device._cachedSettings.alertValid[0]);
 }
@@ -2336,6 +2440,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_crc8_example);
   RUN_TEST(test_conversions_basic);
   RUN_TEST(test_alert_limit_roundtrip);
+  RUN_TEST(test_alert_limit_app_note_encode_vectors);
+  RUN_TEST(test_alert_limit_app_note_decode_vectors);
+  RUN_TEST(test_alert_limit_clamps_out_of_range_inputs);
+  RUN_TEST(test_alert_limit_quantized_roundtrip_edges);
   RUN_TEST(test_time_elapsed_wrap);
   RUN_TEST(test_command_delay_guard);
   RUN_TEST(test_begin_rejects_oversized_timing_config);
@@ -2380,6 +2488,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_periodic_reconfiguration_start_failure_exposes_stopped_state_and_preserves_cache);
   RUN_TEST(test_alert_limit_write_command_failure_does_not_update_cache);
   RUN_TEST(test_alert_limit_write_status_verification_failure_does_not_update_cache);
+  RUN_TEST(test_write_alert_limit_uses_app_note_encoder_vectors);
   RUN_TEST(test_disable_alerts_second_write_failure_exposes_partial_cache);
   RUN_TEST(test_public_recover_bus_reset_failure_preserves_precise_status);
   RUN_TEST(test_reset_and_restore_partial_alert_restore_failure_preserves_desired_cache);

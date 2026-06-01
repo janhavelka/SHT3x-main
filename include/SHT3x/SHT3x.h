@@ -479,6 +479,10 @@ public:
   /// @return Packed RH7/T9 alert-limit word
   /// @note Inputs are clamped to the SHT3x representable range. Non-finite
   ///       values are treated as invalid by writeAlertLimit().
+  /// @note The Sensirion alert application-note reset-default labels
+  ///       (80/60, 79/58, 22/-9, 20/-10 in RH%/degC order) encode to the
+  ///       documented default raw words. Other values use reduced RH7/T9
+  ///       quantization.
   static uint16_t encodeAlertLimit(float temperatureC, float humidityPct);
 
   /// Decode alert limit word into physical values.

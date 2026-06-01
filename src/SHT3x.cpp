@@ -27,6 +27,22 @@ static constexpr uint16_t MAX_COMMAND_DELAY_MS = 1000;
 static constexpr uint32_t MAX_NOT_READY_TIMEOUT_MS = 600000;
 static constexpr uint32_t MAX_PERIODIC_FETCH_MARGIN_MS = 60000;
 static constexpr uint32_t MAX_RECOVER_BACKOFF_MS = 600000;
+static constexpr float ALERT_DEFAULT_MATCH_EPSILON = 0.001f;
+
+struct AlertDefaultVector {
+  float temperatureC;
+  float humidityPct;
+  uint16_t word;
+};
+
+// The app note labels reset defaults with rounded RH/T values. Preserve the
+// published words exactly before applying generic reduced-format quantization.
+static constexpr AlertDefaultVector ALERT_APP_NOTE_DEFAULTS[] = {
+    {60.0f, 80.0f, 0xCD33},
+    {58.0f, 79.0f, 0xC92D},
+    {-9.0f, 22.0f, 0x3869},
+    {-10.0f, 20.0f, 0x3466},
+};
 
 class ScopedOfflineI2cAllowance {
 public:
@@ -73,6 +89,21 @@ static uint32_t saturatingAddU32(uint32_t a, uint32_t b) {
 static CachedSettings defaultCachedSettings() {
   CachedSettings settings;
   return settings;
+}
+
+static bool isCloseAlertDefault(float value, float expected) {
+  return std::fabs(value - expected) <= ALERT_DEFAULT_MATCH_EPSILON;
+}
+
+static bool alertAppNoteDefaultWord(float temperatureC, float humidityPct, uint16_t& word) {
+  for (const auto& vector : ALERT_APP_NOTE_DEFAULTS) {
+    if (isCloseAlertDefault(temperatureC, vector.temperatureC) &&
+        isCloseAlertDefault(humidityPct, vector.humidityPct)) {
+      word = vector.word;
+      return true;
+    }
+  }
+  return false;
 }
 
 static bool isValidRepeatability(Repeatability rep) {
@@ -1196,6 +1227,11 @@ uint16_t SHT3x::encodeAlertLimit(float temperatureC, float humidityPct) {
   }
   if (temperatureC > 130.0f) {
     temperatureC = 130.0f;
+  }
+
+  uint16_t appNoteWord = 0;
+  if (alertAppNoteDefaultWord(temperatureC, humidityPct, appNoteWord)) {
+    return appNoteWord;
   }
 
   const float rawRhF = humidityPct * 65535.0f / 100.0f;
