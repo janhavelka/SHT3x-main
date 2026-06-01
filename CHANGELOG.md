@@ -65,6 +65,8 @@ No changes yet.
   capability boundaries more accurately.
 - PlatformIO firmware builds now embed generated version/git metadata so serial
   HIL evidence records the code revision and clean/dirty state.
+- ESP-IDF example CMake now exposes the repository public include directory
+  without hard-coding the checkout-derived component name.
 - Repository URLs in README, changelog links, `library.json`, and
   `idf_component.yml` now match the current `SHT3x-main` remote.
 
