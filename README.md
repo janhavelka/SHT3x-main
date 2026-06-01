@@ -14,15 +14,15 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-Current branch state is unreleased integration work. Local software checks have
-passed for native tests (76/76), guard scripts, and Arduino PlatformIO builds
-for ESP32-S3 and ESP32-S2.
+This tree is prepared as release `v1.6.0`. Local software checks for the
+release commit have passed for native tests (76/76), guard scripts, Doxygen,
+package packing, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
 in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
 or local ESP-IDF build log.
 
-Hardware validation remains incomplete. A current release-readiness default
+Hardware validation remains incomplete. A release-readiness default
 serial HIL run passed on ESP32-S3/COM17 at address `0x44` for code commit
 `7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`, and the flashed firmware reported
 matching clean git metadata. The maintained evidence summary is
@@ -31,8 +31,9 @@ only the default automated serial sequence. ALERT pin behavior, humidity
 accuracy, fault injection, ESP32-S2 hardware, clock stretching, address `0x45`,
 alert writes, destructive reset groups, and soak evidence remain pending. Every
 unexecuted hardware row stays `Not run`.
-Current branch changes remain under `[Unreleased]`; `library.json` is still
-`1.5.0`, and the current branch head is not a release tag.
+
+Version metadata is `1.6.0` in `library.json`, `idf_component.yml`, Doxyfile,
+and generated `include/SHT3x/Version.h`.
 
 Next step: use the HIL runbook or host-side serial HIL runner for the remaining
 hardware-only rows, then attach the corresponding fixture evidence.

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes yet.
+
+## [1.6.0] - 2026-06-01
+
 ### Added
 - Public `StatusReadSnapshot` and `readStatusWithModeRestore()` for explicit
   ALERT/status diagnosis that breaks and restores periodic/ART acquisition.
@@ -222,7 +226,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.0...v1.4.1

@@ -2,15 +2,18 @@
 
 Last updated: 2026-06-01
 
-Branch: `hardening/sht3x-release-readiness-gaps`
+Release branch: `main`
+
+Version: `1.6.0`
 
 This file is the documentation map for the repository. It separates maintained
 status/procedure docs from historical reports and raw reference material.
 
 ## Current Status
 
-- Current branch changes are still under `CHANGELOG.md` `[Unreleased]`.
-- `library.json` is still version `1.5.0`; this branch head is not a release tag.
+- `CHANGELOG.md` contains the `1.6.0` release notes.
+- `library.json`, `idf_component.yml`, Doxyfile, and generated
+  `include/SHT3x/Version.h` all carry version `1.6.0`.
 - Latest curated default serial HIL evidence is
   `docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md`.
   It summarizes a local generated run at `hil_logs/i2c_20260601T183017Z`:

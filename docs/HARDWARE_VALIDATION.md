@@ -14,10 +14,10 @@ bus, firmware, and evidence artifact were actually used.
 
 | Area | Current status | Evidence needed before stronger claim |
 | --- | --- | --- |
-| Native tests | Passed locally on the release-readiness branch. | Test log from the target commit. |
-| Arduino PlatformIO ESP32-S3/S2 builds | Passed locally on the release-readiness branch. | Build logs from the target commit. |
+| Native tests | Passed locally during `v1.6.0` release preparation. | Test log from the target commit. |
+| Arduino PlatformIO ESP32-S3/S2 builds | Passed locally during `v1.6.0` release preparation. | Build logs from the target commit. |
 | Pure ESP-IDF ESP32-S3/S2 builds | CI configured; local `idf.py` unavailable in this shell. | Passing GitHub CI log or local ESP-IDF 5.4+ build log. |
-| Package validation | `platformio pkg pack` passed locally in release-readiness validation; generated tarball was removed. | Package command log and package content inspection from the final target commit. |
+| Package validation | `platformio pkg pack` passed locally during `v1.6.0` release preparation; generated tarball was removed. | Package command log and package content inspection from the final target commit. |
 
 These rows prove build/test coverage only. They do not prove electrical behavior
 or sensor correctness.
