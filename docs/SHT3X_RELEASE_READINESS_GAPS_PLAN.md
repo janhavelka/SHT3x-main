@@ -42,11 +42,13 @@ validation. Full HIL is out of scope for this sequence.
   tools, tests, and generated `Version.h` must be made explicit.
 - `hil-runner-agent`: dry-run is implemented and documented as non-evidence.
   The runner emits transcript, summaries, checklist, and environment files, but
-  parser acceptance should require parsed final health fields, optional evidence
-  files should be reflected in JSON, and dry-run/flag/schema tests should be
-  broadened.
-- `final-review-agent`: unavailable; the agent was spawned but did not return
-  before timeout and was closed without findings.
+  there is no separate `device-tester` runner and no `--base-address` option in
+  the inspected path. Hardware runs require `--port`; dry-runs force an
+  `INCOMPLETE` verdict and must not be treated as physical evidence.
+- `final-review-agent`: the plan covers the P0 and P1 gaps from the audit:
+  version metadata, migration notes, ESP-IDF CI, alert encoding, HIL claim
+  boundaries, package/export hygiene, raw command contracts, reset/end/tick
+  side effects, and missing manual hardware evidence.
 
 ## Chunk Order
 
