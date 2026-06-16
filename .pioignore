@@ -1,0 +1,10 @@
+# PlatformIO package/build scratch output
+.pio/
+build/
+examples/idf/basic/build/
+hil_logs/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+docs/doxygen/

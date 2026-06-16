@@ -1,13 +1,17 @@
-# Codex Prompt: Production-Grade SHT3x I2C Driver Library (ESP32 Arduino / PlatformIO)
+# Historical Codex Prompt: SHT3x I2C Driver Library (ESP32 Arduino / PlatformIO)
 
-You are an expert embedded engineer. Implement a **production-grade, reusable SHT3x I2C driver library** for **ESP32-S2 / ESP32-S3** using **Arduino framework** under **PlatformIO**.
+This archived prompt records earlier implementation instructions. It is not a
+current validation claim. Hardware validation, ALERT pin behavior, humidity
+accuracy, and release readiness must be proven separately in the HIL evidence.
+
+You are an expert embedded engineer. Implement a hardened, reusable SHT3x I2C driver library for **ESP32-S2 / ESP32-S3** using **Arduino framework** under **PlatformIO**.
 
 ---
 
 ## Baseline Contracts (DO NOT RESTATE)
 
 - **`AGENTS.md`** defines: repository layout, non-blocking architecture, injected I2C transport rules, deterministic tick behavior, managed synchronous driver pattern, transport wrapper architecture, health tracking, and DriverState model.
-- **`docs/SHT3x_driver_extraction.md`** is the authoritative command map and behavior reference.
+- **`docs/archive/notes/SHT3x_driver_extraction.md`** is the archived command map and behavior reference for this historical prompt.
 - **Do not duplicate those requirements.** Implement them and only document what is *not already covered*.
 
 ---

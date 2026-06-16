@@ -1,15 +1,42 @@
 # SHT3x Driver Library
 
-Production-grade SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO).
+Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO and ESP-IDF component use).
 
 ## Features
 
 - **Injected I2C transport** - no Wire dependency in library code
-- **CRC validation** - all 16-bit data words verified
+- **Framework-neutral core** - Arduino and ESP-IDF integration live behind callbacks/adapters
+- **CRC validation** - all 16-bit data words CRC-checked
 - **Alert mode support** - read/write limits, encode/decode helpers
 - **Periodic + ART modes** - 0.5/1/2/4/10 mps and ART
 - **Health monitoring** - automatic state tracking (READY/DEGRADED/OFFLINE)
 - **Deterministic behavior** - no unbounded loops, no heap allocations
+
+## Current State
+
+This tree is prepared as release `v1.6.0`. Local software checks for the
+release commit have passed for native tests (76/76), guard scripts, Doxygen,
+package packing, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
+
+Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
+in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
+or local ESP-IDF build log.
+
+Hardware validation remains incomplete. A release-readiness default
+serial HIL run passed on ESP32-S3/COM17 at address `0x44` for code commit
+`7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`, and the flashed firmware reported
+matching clean git metadata. The maintained evidence summary is
+`docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md`. This is still
+only the default automated serial sequence. ALERT pin behavior, humidity
+accuracy, fault injection, ESP32-S2 hardware, clock stretching, address `0x45`,
+alert writes, destructive reset groups, and soak evidence remain pending. Every
+unexecuted hardware row stays `Not run`.
+
+Version metadata is `1.6.0` in `library.json`, `idf_component.yml`, Doxyfile,
+and generated `include/SHT3x/Version.h`.
+
+Next step: use the HIL runbook or host-side serial HIL runner for the remaining
+hardware-only rows, then attach the corresponding fixture evidence.
 
 ## Installation
 
@@ -19,12 +46,28 @@ Add to `platformio.ini`:
 
 ```ini
 lib_deps = 
-  https://github.com/janhavelka/SHT3x.git
+  https://github.com/janhavelka/SHT3x-main.git
 ```
 
 ### Manual
 
 Copy `include/SHT3x/` and `src/` to your project.
+
+### ESP-IDF Component
+
+The repository root can be used as an ESP-IDF component through
+`EXTRA_COMPONENT_DIRS` or your component manager workflow. The core driver owns
+no I2C bus, pins, reset GPIO, logging, or scheduler policy; applications provide
+transport and timing callbacks through `SHT3x::Config`.
+
+The core component does not include Arduino or ESP-IDF framework headers.
+Applications must inject `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield` so command spacing, reset delays, and timeout
+deadlines follow the application scheduler.
+
+See `examples/idf/basic` for a native ESP-IDF 5.4+ `i2c_master` diagnostic
+adapter and an equivalent interactive CLI command surface. This example is for
+bring-up and protocol diagnostics, not a production task architecture.
 
 ## Quick Start
 
@@ -94,6 +137,10 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
 
 SHT3x::SHT3x device;
 
+uint32_t appNowMs(void*) { return millis(); }
+uint32_t appNowUs(void*) { return micros(); }
+void appYield(void*) { yield(); }
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(8, 9);  // SDA, SCL
@@ -104,6 +151,9 @@ void setup() {
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = appNowMs;
+  cfg.nowUs = appNowUs;
+  cfg.cooperativeYield = appYield;
   cfg.i2cAddress = 0x44;
   cfg.transportCapabilities = SHT3x::TransportCapability::NONE;
 
@@ -144,8 +194,8 @@ void loop() {
 | Method | Description |
 |--------|-------------|
 | `begin(config)` | Initialize the driver, validate transport callbacks, and probe the sensor. |
-| `tick(nowMs)` | Advance bounded timing gates and recovery state. |
-| `end()` | End the current session and return to `UNINIT`. |
+| `tick(nowMs)` | Poll pending measurement work; may perform one bounded I2C transaction when a sample is due. |
+| `end()` | Clear runtime/session state and return to `UNINIT`; no sensor command is sent. |
 | `isInitialized()` | Return `true` after a successful `begin()` until `end()`. |
 | `getConfig()` | Return the cached configuration currently held by the driver. |
 | `probe()` | Raw presence check with no health tracking. |
@@ -158,11 +208,16 @@ void loop() {
 |--------|-------------|
 | `requestMeasurement()` | Start a single-shot measurement or schedule the next periodic fetch. |
 | `measurementReady()` | Report whether a sample is ready to be read. |
-| `measurementPending()` / `measurementStatus()` / `lastMeasurementStatus()` | Inspect pending, expected no-data, success, or failed measurement state without forcing a read. |
 | `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` | Read float, raw, or fixed-point sample data. |
+| `hasSample()` | True after at least one raw/converted sample has been cached. |
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
 | `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings. |
+
+`begin()` requires `Config::nowMs`, `Config::nowUs`, and
+`Config::cooperativeYield`. Without those callbacks the driver cannot enforce
+the SHT3x tIDLE command spacing or reset delays deterministically, so startup
+fails with `INVALID_CONFIG`.
 
 ### Configuration and Diagnostics
 
@@ -170,25 +225,91 @@ void loop() {
 |--------|-------------|
 | `setMode()` / `getMode()` | Switch between single-shot, periodic, and ART modes. |
 | `setRepeatability()`, `setPeriodicRate()`, `setClockStretching()` | Update core measurement policy. |
-| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read. |
+| `driverState()` | Cross-library alias for the current `DriverState`. |
+| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read; snapshots include `hasSample`. |
 | `writeCommand()` / `writeCommandWithData()` / `readCommand()` | Advanced command-level helpers for upper layers that need direct access to the SHT3x command set. |
-| `readStatus()` / `clearStatus()` / `readHeaterStatus()` | Status-register and heater helpers. |
+| `readStatus()` / `readStatusWithModeRestore()` / `clearStatus()` / `readHeaterStatus()` | Status-register, ALERT-cause, and heater helpers. |
 | `readSerialNumber()` | Read the electronic identification code. |
 | `readAlertLimit*()` / `writeAlertLimit*()` / `disableAlerts()` | Physical and raw alert-threshold access. |
 
-The low-level command helpers are intentionally narrow: they reuse the driver's tracked
-transport path and tIDLE guard, but the dedicated mode/status/alert helpers remain the
+The low-level command helpers are expert escape hatches. They reuse the
+driver's tracked transport path and tIDLE guard, and they reject pending
+single-shot work, but they intentionally bypass high-level periodic/ART mode
+safety. The caller owns datasheet command legality, response length, raw
+response CRC interpretation, status side effects, local cache coherence, and
+desynchronization risk. Raw helpers do not update mode/heater/alert caches.
+Stop periodic/ART before raw commands unless the datasheet explicitly permits
+the command in the active mode. Dedicated mode/status/alert helpers remain the
 preferred entry points when the command has higher-level state implications.
+Raw reads are bounded to the largest documented SHT3x response (6 bytes), and
+invalid read buffers are rejected before sending the command.
+
+`getRawSample()` and `getCompensatedSample()` remain available after
+`getMeasurement()` consumes the current `measurementReady()` event. Use
+`hasSample()` or `SettingsSnapshot::hasSample` to check whether those cached
+sample helpers can return data.
+
+When repeatability or periodic rate changes require restarting an active periodic/ART mode,
+the cached configuration is updated only after that restart succeeds.
 
 ### Status Semantics
 
 - `Status::is(Err)` checks whether the status matches a specific error code.
-- `Status::operator bool()` returns `true` for success, usable in `if (st)` idiom.
+- `Status::operator bool()` returns `true` only for `Err::OK`, usable in the
+  `if (st)` idiom. `Err::IN_PROGRESS` converts to `false`.
 - `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
 - Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
-- `begin()` and `probe()` map only a proven address NACK (`Err::I2C_NACK_ADDR`) to `Err::DEVICE_NOT_FOUND`. Timeouts, bus errors, data NACKs, read-header NACKs, and generic I2C errors are preserved so optional absence stays distinguishable from bus faults.
-- `measurementStatus()` returns `OK` for a cached ready sample, `IN_PROGRESS` while a request is pending, `MEASUREMENT_NOT_READY` for expected periodic no-data, and the concrete failure status for CRC/protocol/transport faults observed by `tick()`.
+
+### ALERT and Status Register
+
+SHT3x ALERT mode is associated with periodic acquisition. ALERT cause is exposed
+through the status register bits (`alertPending`, `rhAlert`, and `tAlert`).
+The Sensirion alert application note also shows ALERT can be active after
+power-up/reset until the measured value and programmed limits settle; validate
+this on your hardware before relying on ALERT as a production interrupt source.
+
+`readStatus()` is non-destructive and does not clear status flags. It returns
+`BUSY` while a single-shot measurement is pending. Local Sensirion docs only
+explicitly allow Fetch Data while periodic/ART acquisition is active, so
+`readStatus()` also returns `BUSY` in active periodic/ART mode instead of
+issuing an undocumented command sequence.
+
+Use `readStatusWithModeRestore()` when ALERT diagnosis is needed while
+periodic/ART mode is active. It sends Break, reads the status register, then
+attempts to restore the previous periodic or ART mode. This aborts the current
+conversion cadence and restarts timing from the restore point. Inspect
+`StatusReadSnapshot::stopStatus`, `statusReadStatus`, and `restoreStatus` if the
+helper returns an error. `statusValid` is true only when the status-read step
+succeeded, `modeInterrupted` reports whether Break was sent, `finalMode` reports
+the driver mode after all attempted steps, and `restored` is true only when no
+restore was needed or the previous periodic/ART mode was restarted. If both the
+status-read step and restore step fail, the top-level return reports the restore
+failure; inspect `statusReadStatus` for the earlier status-read failure.
+
+`readSettings()` remains non-disruptive. If it cannot read status, it sets
+`statusValid=false` and records the exact reason in
+`SettingsSnapshot::statusReadStatus`. That OK snapshot behavior covers active
+periodic/ART and pending single-shot status unavailability. OFFLINE is the
+exception: like other normal public I2C APIs, `readSettings()` returns `BUSY`
+and does not issue a bus transaction while recovery is required.
+
+`clearStatus()` is destructive for status flags 15, 11, 10, and 4. It is never
+called implicitly by `readStatus()`, `readStatusWithModeRestore()`, or
+`readSettings()`.
+
+Alert-limit read/write commands are not documented as valid during active
+periodic/ART acquisition. Configure alert limits before starting periodic/ART,
+or stop and explicitly restart acquisition around alert-limit changes.
+`encodeAlertLimit()` accepts arguments as `(temperatureC, humidityPct)`. The
+four Sensirion app-note reset-default labels, listed as RH/T in the note,
+encode to the documented raw words: `80% / 60 C -> 0xCD33`,
+`79% / 58 C -> 0xC92D`, `22% / -9 C -> 0x3869`, and
+`20% / -10 C -> 0x3466`. Other physical values are quantized into the reduced
+RH7/T9 alert-limit format, so decoded values are approximate.
+See `docs/rationale/SHT3X_ALERT_STATUS_FIX_REPORT.md` for the helper design and
+local validation coverage; real ALERT-pin and humidity-threshold behavior still
+needs hardware validation.
 
 ## Transport Contract (Required)
 
@@ -237,13 +358,61 @@ Use `Config::periodicFetchMarginMs` to avoid early Fetch Data reads
 
 ## Blocking Behavior (Max Time)
 
-All public APIs are synchronous at the transaction level and bounded by config timeouts:
+All public APIs are synchronous and bounded by config timeouts:
 
 - I2C write/read phases: `i2cTimeoutMs`
-- Command spacing gate: returns `Err::IN_PROGRESS` while tIDLE is still pending, or `Err::TIMEOUT` if the command-delay guard cannot complete.
-- Reset/Break waits: return `Err::IN_PROGRESS` until the visible reset/break deadline has elapsed.
+- Command spacing gate: `commandDelayMs + i2cTimeoutMs` (guarded)
+- Reset/Break waits: `RESET_DELAY_MS` (2 ms), `BREAK_DELAY_MS` (1 ms), both guarded
 
-The driver has no hidden spin/yield wait loops in these timing guards.
+The driver has no unbounded loops.
+
+### Public API Transaction and Latency Summary
+
+Timing below excludes application-level bus arbitration outside the callback.
+Each listed command observes the configured tIDLE spacing before the next SHT3x
+command or read phase.
+
+| API | Sensor transactions | Bounded wait behavior | Notes |
+|-----|---------------------|-----------------------|-------|
+| `begin()` | Best-effort Break + soft reset, status read, optional periodic/ART start | Break 1 ms, reset 2 ms, each I2C phase <= `i2cTimeoutMs` | Missing callbacks/config are rejected before I2C. |
+| `requestMeasurement()` single-shot | 1 command write | command spacing + write timeout; sample readiness is later driven by `tick()` | Returns `IN_PROGRESS`; it does not block for conversion. |
+| `requestMeasurement()` periodic/ART | 0 transactions | none | Schedules next Fetch Data for `tick()`. |
+| `tick()` single-shot pending | 1 receive-only read when ready | command spacing + read timeout | CRC-checks temperature and humidity words. |
+| `tick()` periodic/ART pending | Fetch Data command + receive-only read when ready | command spacing + write/read timeout | Read-header NACK is "not ready" only if the transport can prove it. |
+| `getMeasurement()` / cached sample getters | 0 transactions | none | Reads cached data only. |
+| `setMode(SINGLE_SHOT)` / `stopPeriodic()` | Break command if periodic/ART active | command spacing + write timeout + 1 ms break wait | No sensor command when already idle. |
+| `startPeriodic()` / `startArt()` | Optional Break, then start command | command spacing + write timeout, plus break wait if needed | Updates cached desired settings only after success. |
+| `setRepeatability()` / `setPeriodicRate()` | 0 when idle; restart sequence when active | bounded by `startPeriodic()` / `startArt()` when active | Active restart failures leave the last fully applied cache intact. |
+| `setClockStretching()` | 0 transactions | none | Applies to single-shot and serial-number command selection only. |
+| `readStatus()` / `readHeaterStatus()` | Status command + receive-only read | command spacing + write/read timeout | Returns `BUSY` during active periodic/ART. |
+| `readStatusWithModeRestore()` | Break, status read, periodic/ART restart | bounded multi-step sequence | Interrupts cadence; inspect step statuses on failure. |
+| `clearStatus()` | Clear-status command | command spacing + write timeout | Destructive for status flags 15, 11, 10, and 4. |
+| `setHeater()` | Heater command | command spacing + write timeout | Blocked while periodic/ART is active. Heater can affect measurements by self-heating. |
+| `readSerialNumber()` | Serial command + receive-only 6-byte read | command spacing + write/read timeout | CRC-checks both serial words. |
+| `readAlertLimit*()` | Alert-limit read command + receive-only 3-byte read | command spacing + write/read timeout | Blocked while periodic/ART is active. |
+| `writeAlertLimit*()` | Alert-limit write command + status read | command spacing + write/read timeout | Writes append CRC and then check command/checksum status bits. |
+| `disableAlerts()` | 2 alert-limit writes, each followed by status read | bounded by two `writeAlertLimitRaw()` calls | Partial success is possible; returned status identifies the failing step. |
+| `writeCommand()` / `writeCommandWithData()` | 1 command write | command spacing + write timeout | Advanced direct access; normal helpers are preferred. |
+| `readCommand()` | Command write + receive-only read | command spacing + write/read timeout | Read length is capped to documented SHT3x frame sizes. |
+| `probe()` | Status command + read via raw transport | command spacing + write/read timeout | Diagnostic only; does not update health. |
+| `softReset()` | Soft-reset command | command spacing + write timeout + 2 ms reset wait | Blocked while periodic/ART is active. Success clears pending measurement/sample state and leaves local mode as single-shot. |
+| `generalCallReset()` | General-call write to address `0x00` | command spacing + write timeout + 2 ms reset wait | Bus-wide, disabled by default, and an application/bus-manager policy. Success clears local measurement state and leaves local mode as single-shot. |
+| `interfaceReset()` | Application callback only | bounded by callback contract | Callback must implement the SCL sequence and return a `Status`. |
+| `recover()` / reset-and-restore helpers | Multi-step recovery/reset ladder | bounded by configured ladder steps and backoff | Manual recovery only; no automatic retry loop in `tick()`. |
+
+`tick()` returns `void`. When it performs I2C and the transaction fails, the
+failure is visible through `lastError()`, health counters, `driverState()`, and
+retry scheduling rather than as a returned `Status`. Protocol failures after a
+successful bus transaction, such as CRC mismatch, do not update transport
+health; they leave no ready sample and are retried through normal scheduling.
+Use explicit APIs when the caller must handle a synchronous error at the call
+site.
+
+`end()` is local-only. It clears runtime/session state, but does not clear the
+cached configuration, cached restore plan, health counters, or last error. It
+does not send Break or reset and does not guarantee that the physical sensor has
+stopped periodic/ART acquisition. Call `stopPeriodic()` before `end()` when
+hardware acquisition state matters.
 
 ## Recovery Ladder
 
@@ -256,12 +425,21 @@ The driver has no hidden spin/yield wait loops in these timing guards.
 
 Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`--the orchestrator triggers it.
 
+`OFFLINE` is latched. Normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch the bus until `recover()` succeeds. `probe()` remains raw/diagnostic and does not update health counters.
+
 After a successful `recover()`, the driver is left in **SINGLE_SHOT** idle mode with measurement state cleared. If you need periodic/ART/heater, re-apply those settings in your orchestrator.
+General-call reset is bus-wide, resets every supporting device on the bus, and
+is disabled unless `allowGeneralCallReset` is set. Treat it as a bus-manager or
+application decision, not a sensor-driver default.
 
 Two explicit reset APIs are available:
 
-- `resetToDefaults()` resets the sensor and clears cached settings to library defaults (no restore).
-- `resetAndRestore()` resets the sensor and restores cached settings from RAM (no NVM on SHT3x).
+- `resetToDefaults()` runs recovery, sets the driver to a safe single-shot
+  baseline, and clears cached settings to library defaults. The recovery ladder
+  may stop after a successful probe without issuing a reset.
+- `resetAndRestore()` runs recovery and restores cached settings from RAM when
+  recovery succeeds. The recovery ladder may stop after a successful probe
+  without issuing a reset.
 SHT3x settings are volatile; restore uses RAM cache only.
 
 Cached settings (RAM only):
@@ -288,15 +466,20 @@ sensor.resetAndRestore();   // restores cached settings
 
 ## Thread-Safety / ISR-Safety
 
-The driver is **not** thread-safe and must be externally serialized. Do not call any public API from an ISR.
+The driver is **not** thread-safe and must be externally serialized. Do not call any public API from an ISR; use interrupts only to signal work to normal task/loop context.
 
 ## ESP32 Notes
 
 - Default is **no clock stretching**. If you enable stretching, set `i2cTimeoutMs` >=
   worst-case tMEAS (15.5 ms at low-Vdd, high repeatability) + margin.
+- Clock stretching affects only single-shot measurement commands and
+  serial-number reads. Periodic/ART modes use their own command families and
+  Fetch Data readout.
 - On ESP32 Wire, a 0-byte `requestFrom` is **ambiguous** (could be not-ready or bus fault).
   Treat it as an error unless your transport can prove read-header NACK.
 - Use `Wire.setTimeOut()` and keep bus pull-ups and clock speed within datasheet limits.
+- Transport callbacks must not recursively call public APIs on the same driver
+  instance. Serialize shared buses and multi-task access outside the driver.
 
 ## Running Tests
 
@@ -310,6 +493,15 @@ Firmware build (ESP32-S3 example):
 
 ```
 pio run -e esp32s3dev
+pio run -e esp32s2dev
+```
+
+Native ESP-IDF example build (requires an ESP-IDF 5.4+ shell):
+
+```
+python tools/check_idf_example_contract.py
+idf.py -C examples/idf/basic set-target esp32s3 build
+idf.py -C examples/idf/basic set-target esp32s2 build
 ```
 
 ## Health Monitoring
@@ -340,25 +532,94 @@ if (device.readSettings(snap).ok()) {
   Serial.printf("Mode: %d, Heater: %d\n",
                 static_cast<int>(snap.mode),
                 snap.statusValid ? static_cast<int>(snap.status.heaterOn) : -1);
+  if (!snap.statusValid) {
+    Serial.printf("Status unavailable: %d\n",
+                  static_cast<int>(snap.statusReadStatus.code));
+  }
+}
+```
+
+For ALERT diagnosis while periodic/ART acquisition is active:
+
+```cpp
+SHT3x::StatusReadSnapshot status;
+SHT3x::Status st = device.readStatusWithModeRestore(status);
+if (status.statusValid) {
+  Serial.printf("ALERT=%d RH=%d T=%d raw=0x%04X\n",
+                status.status.alertPending ? 1 : 0,
+                status.status.rhAlert ? 1 : 0,
+                status.status.tAlert ? 1 : 0,
+                status.status.raw);
+}
+if (!st.ok()) {
+  Serial.printf("status=%d restore=%d\n",
+                static_cast<int>(status.statusReadStatus.code),
+                static_cast<int>(status.restoreStatus.code));
 }
 ```
 
 ## Examples
 
-- `01_basic_bringup_cli/` - Interactive CLI for testing
+- `01_basic_bringup_cli/` - Arduino diagnostic bring-up CLI for protocol and board testing
+- `idf/basic/` - native ESP-IDF diagnostic bring-up CLI using the `i2c_master` driver
 
-The bringup CLI covers the full driver surface, including mode control, serial-number
-readout, alert-limit helpers, recovery/reset flows, cached settings snapshots, direct
-command helpers (`command write`, `command write_data`, `command read`), and
-stress/self-test commands.
+The Arduino bringup CLI covers the full driver surface, including mode control,
+serial-number readout, alert-limit helpers, recovery/reset flows, cached
+settings snapshots, direct command helpers (`command write`,
+`command write_data`, `command read`), and stress/self-test commands. The
+ESP-IDF example uses a separate native fixed-buffer command loop with the same
+driver scenarios, native `i2c_master` ownership, ESP-IDF logging, FreeRTOS
+timing, and no Arduino compatibility facades in the IDF build path.
+
+Both examples are diagnostic/bring-up CLIs. They are useful for proving wiring,
+I2C transport behavior, SHT3x protocol handling, and command parity. A
+production application should provide its own task ownership, bus serialization,
+configuration storage, telemetry, and recovery policy.
+
+## Hardware Validation
+
+Software tests and CI do not prove electrical behavior, board layout, fixture
+quality, or sensor accuracy. `docs/HARDWARE_VALIDATION.md` is the evidence
+status file. `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md`,
+`docs/SHT3X_HIL_RUNBOOK.md`, and `docs/SHT3X_I2C_HIL_RUNBOOK.md` describe the
+hardware scenarios and runner procedure.
+
+The automatic serial runner is:
+
+```bash
+python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
+python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
+```
+
+These runner commands require a full repository checkout. The PlatformIO package
+payload is library-focused and may exclude repository maintenance tools.
+
+Default runner groups cover safe smoke, single-shot low/medium/high,
+status/status_restore, serial/EIC, heater status, alert read/encode/decode,
+selected periodic rates, and ART. Optional groups are gated by
+`--include-destructive`, `--include-bus-wide-reset`, `--include-soak`,
+`--include-clock-stretch`, `--include-alert-write`,
+`--include-all-periodic-rates`, `--include-output-tests`, and
+`--include-fault-tests`.
+
+That list describes current runner capability. A hardware `PASS` claim is
+limited to the selected commands and artifacts in a specific run summary.
+
+Do not claim hardware validation, ALERT pin validation, humidity accuracy,
+fault recovery on real buses, soak stability, or production readiness until
+those rows have real logs and fixture evidence.
 
 ## Documentation
 
 - `CHANGELOG.md` - full release history
-- `docs/IDF_PORT.md` - ESP-IDF portability guidance
-- `docs/SHT3x_datasheet.pdf` - Sensirion device datasheet
-- `docs/Sensirion_electronic_identification_code_SHT3x.pdf` - serial-number / EIC reference
-- `docs/SHT3x_driver_extraction.md` - driver split and extraction notes
+- `docs/README.md` - documentation index and authoritative-document map
+- `docs/HARDWARE_VALIDATION.md` - hardware evidence status
+- `docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md` - HIL scenario matrix
+- `docs/SHT3X_HIL_RUNBOOK.md` - manual HIL procedure
+- `docs/SHT3X_I2C_HIL_RUNBOOK.md` - serial runner procedure
+- `docs/rationale/` - maintained API and protocol rationale notes
+- Repository-only reference material includes vendor PDFs, extracted reference
+  text, and historical audit reports.
 
 ## License
 

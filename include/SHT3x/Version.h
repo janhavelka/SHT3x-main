@@ -11,30 +11,44 @@
 
 #include <stdint.h>
 
+/// @def SHT3X_VERSION_STRING
+/// @brief Semantic version string from library.json.
 #ifndef SHT3X_VERSION_STRING
-#define SHT3X_VERSION_STRING "1.4.2"
+#define SHT3X_VERSION_STRING "1.6.0"
 #endif
 
+/// @def SHT3X_BUILD_DATE
+/// @brief Build date macro used for generated firmware/application metadata.
 #ifndef SHT3X_BUILD_DATE
 #define SHT3X_BUILD_DATE __DATE__
 #endif
 
+/// @def SHT3X_BUILD_TIME
+/// @brief Build time macro used for generated firmware/application metadata.
 #ifndef SHT3X_BUILD_TIME
 #define SHT3X_BUILD_TIME __TIME__
 #endif
 
+/// @def SHT3X_BUILD_TIMESTAMP
+/// @brief Build timestamp assembled from date and time macros.
 #ifndef SHT3X_BUILD_TIMESTAMP
 #define SHT3X_BUILD_TIMESTAMP SHT3X_BUILD_DATE " " SHT3X_BUILD_TIME
 #endif
 
+/// @def SHT3X_GIT_COMMIT
+/// @brief Git commit embedded by build tooling, or "unknown" outside a configured build.
 #ifndef SHT3X_GIT_COMMIT
 #define SHT3X_GIT_COMMIT "unknown"
 #endif
 
+/// @def SHT3X_GIT_STATUS
+/// @brief Git worktree status embedded by build tooling, or "unknown" outside a configured build.
 #ifndef SHT3X_GIT_STATUS
 #define SHT3X_GIT_STATUS "unknown"
 #endif
 
+/// @def SHT3X_VERSION_FULL
+/// @brief Full version string including semantic version, commit, timestamp, and status.
 #ifndef SHT3X_VERSION_FULL
 #define SHT3X_VERSION_FULL SHT3X_VERSION_STRING " (" SHT3X_GIT_COMMIT ", " SHT3X_BUILD_TIMESTAMP ", " SHT3X_GIT_STATUS ")"
 #endif
@@ -45,19 +59,19 @@ namespace SHT3x {
 static constexpr uint16_t VERSION_MAJOR = 1;
 
 /// @brief Minor version (backward-compatible features).
-static constexpr uint16_t VERSION_MINOR = 4;
+static constexpr uint16_t VERSION_MINOR = 6;
 
 /// @brief Patch version (backward-compatible fixes).
-static constexpr uint16_t VERSION_PATCH = 2;
+static constexpr uint16_t VERSION_PATCH = 0;
 
 /// @brief Full semantic version string.
 static constexpr const char* VERSION = SHT3X_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 10402;
+static constexpr uint32_t VERSION_CODE = 10600;
 
 /// @brief Backward-compatible alias used by older repositories.
-static constexpr int VERSION_INT = 10402;
+static constexpr int VERSION_INT = 10600;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = SHT3X_BUILD_DATE;

@@ -7,12 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes yet.
+
+## [1.6.0] - 2026-06-01
+
+### Added
+- Public `StatusReadSnapshot` and `readStatusWithModeRestore()` for explicit
+  ALERT/status diagnosis that breaks and restores periodic/ART acquisition.
+- `SettingsSnapshot::statusReadStatus` so failed or intentionally skipped
+  status reads are visible instead of hidden behind `statusValid=false`.
+- ESP-IDF component metadata for building the framework-neutral core with `idf_component_register`.
+- ESP-IDF basic diagnostic example with an application-owned `i2c_master` bus/device and SHT3x transport callbacks.
+- Arduino `examples/common/Sht3xCli.*` bringup command processor for diagnostics.
+- `tools/check_idf_example_contract.py` to keep the ESP-IDF example on the same CLI contract.
+- Pure ESP-IDF CI matrix for the native example on `esp32s3` and `esp32s2`.
+- Hardware validation matrix and API latency/transaction documentation.
+- Pre-HIL runbook and HIL log template to keep hardware validation evidence
+  explicit and auditable.
+- Host-side serial I2C HIL runner, contract guard, target template, and
+  self-test report for auditor-ready hardware evidence capture.
+- Curated ESP32-S3/COM17 serial HIL evidence summary for the 2026-06-01
+  default command run under `docs/hil/`.
+- Framework-neutral private timing/yield shim; real timing is supplied by application callbacks.
+- `docs/IDF_PORT_IMPLEMENTATION.md` with the implemented port structure, validation notes, and remaining hardware checks.
+
+### Changed
+- `SHT3x` copy and move construction/assignment are now explicitly deleted to
+  prevent duplicate mutable driver instances targeting the same physical sensor.
+- Active periodic/ART status reads now use a documented explicit helper;
+  direct `readStatus()` remains non-disruptive and returns `BUSY` while
+  periodic/ART acquisition is active.
+- Public headers now document thread/ISR safety, callback recursion limits,
+  status-bit clearability, heater caveats, clock-stretch scope, and partial
+  multi-step operation behavior.
+- Core/IDF guard scripts now reject Arduino and ESP-IDF framework headers in core/public headers and `src/`.
+- `begin()` now rejects missing timing/yield callbacks as `INVALID_CONFIG` before touching I2C.
+- README and ESP-IDF port documentation now describe the implemented component/example flow, native IDF boundary, and shared CLI parity.
+- Documentation is now split into active guides/status, curated HIL evidence
+  under `docs/hil/`, rationale reports under `docs/rationale/`, historical
+  snapshots under `docs/archive/`, and vendor/source material under
+  `docs/reference/`.
+- README and hardware-validation docs now point at the current ESP32-S3/COM17
+  default serial HIL evidence while keeping hardware-only blockers explicit.
+- Package export hygiene now keeps active docs and curated evidence while
+  excluding archived reports, generated Doxygen output, and bulky vendor
+  reference material.
+- `library.json` now declares both Arduino and ESP-IDF framework support, while `idf_component.yml` pins the supported ESP-IDF floor to 5.4.
+- The ESP-IDF example no longer depends on a checkout-directory-derived `SHT3x-main` component name.
+- Arduino and ESP-IDF diagnostic CLIs now expose HIL-friendly aliases and
+  `status_restore` output for stop/status/restore sub-status visibility.
+
+### Fixed
+- Arduino bringup CLI now injects `nowMs`, `nowUs`, and `cooperativeYield` into the driver config, preventing startup `Command delay timeout` from leaving the CLI in `UNINIT`.
+- Arduino I2C scan now uses the same table-format `0x08..0x77` timeout-aware diagnostic scanner as the other maintained I2C examples.
+- Public Doxygen comments now describe bounded synchronous behavior, reset/recover
+  semantics, serial-number restrictions, alert-limit packing, and transport
+  capability boundaries more accurately.
+- PlatformIO firmware builds now embed generated version/git metadata so serial
+  HIL evidence records the code revision and clean/dirty state.
+- ESP-IDF example CMake now exposes the repository public include directory
+  without hard-coding the checkout-derived component name.
+- Repository URLs in README, changelog links, `library.json`, and
+  `idf_component.yml` now match the current `SHT3x-main` remote.
+
+### Removed
+- Stale branch-planning and snapshot reports from the active documentation
+  index; historical copies now live under `docs/archive/`.
+
+## [1.5.0] - 2026-05-14
+
 ### Added
 - Measurement status accessors (`measurementPending`, `measurementStatus`, `lastMeasurementStatus`) and snapshot status so adapters can distinguish pending, expected no-data, CRC/protocol faults, timeouts, and success.
 - Public low-level SHT3x command helpers (`writeCommand`, `writeCommandWithData`, `readCommand`) so upper layers can exercise the protocol directly without bypassing the driver's tracked transport path.
-- `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`.
+- `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`, and `hasSample`.
+- `hasSample()` and `driverState()` for cross-library diagnostics.
 - `Status::is(Err)` method for type-safe error code comparison.
 - `Status::operator bool()` explicit conversion for concise success checks.
+- Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while explicit recovery/reset paths remain available.
+
+### Changed
+- Doxyfile project metadata now matches `library.json` and references the
+  maintained docs tree instead of removed template files.
+- Reference documentation now uses human-readable vendor PDF names; after later
+  cleanup, maintained extracts live under `docs/reference/extracted/`.
+- Explicit recovery/reset bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
+- `readCommand()` now validates read buffers and rejects responses larger than the largest documented SHT3x frame before sending the command.
+- `getRawSample()` and `getCompensatedSample()` now remain available after `getMeasurement()` consumes `measurementReady()`, with cache validity reported by `hasSample`.
+- CLI help was refactored onto shared `CliStyle.h` `cli::printHelp*` helpers, and the CLI contract now checks that helper.
+- Active periodic/ART repeatability and rate setters now update cached configuration only after the required restart succeeds.
+- Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
 
 ### Changed
 - Command-delay and reset/break timing guards now return visible `IN_PROGRESS`/`TIMEOUT` statuses instead of spinning/yielding internally.
@@ -60,7 +143,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Shared bringup framework headers in `examples/common/*` (`BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
-- `docs/IDF_PORT.md` and `docs/SHT3x_driver_extraction.md` for standardized portability and driver-extraction notes.
+- `docs/IDF_PORT.md` and driver-extraction notes, now archived at
+  `docs/archive/notes/SHT3x_driver_extraction.md`, for standardized
+  portability and command-map context.
 - CLI/timing guard scripts for repository quality gates.
 
 ### Changed
@@ -152,13 +237,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x/compare/v1.4.2...HEAD
-[1.4.2]: https://github.com/janhavelka/SHT3x/compare/v1.4.1...v1.4.2
-[1.4.1]: https://github.com/janhavelka/SHT3x/compare/v1.4.0...v1.4.1
-[1.4.0]: https://github.com/janhavelka/SHT3x/compare/v1.3.2...v1.4.0
-[1.3.2]: https://github.com/janhavelka/SHT3x/compare/v1.3.1...v1.3.2
-[1.3.1]: https://github.com/janhavelka/SHT3x/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.3.0
-[1.2.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.2.0
-[1.1.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.1.0
-[1.0.0]: https://github.com/janhavelka/SHT3x/releases/tag/v1.0.0
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.2...v1.5.0
+[1.4.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.1...v1.4.2
+[1.4.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.2...v1.4.0
+[1.3.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.3.0
+[1.2.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.2.0
+[1.1.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.1.0
+[1.0.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.0.0
