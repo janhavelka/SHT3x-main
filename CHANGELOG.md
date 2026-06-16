@@ -8,10 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Measurement status accessors (`measurementPending`, `measurementStatus`, `lastMeasurementStatus`) and snapshot status so adapters can distinguish pending, expected no-data, CRC/protocol faults, timeouts, and success.
 - Public low-level SHT3x command helpers (`writeCommand`, `writeCommandWithData`, `readCommand`) so upper layers can exercise the protocol directly without bypassing the driver's tracked transport path.
 - `SettingsSnapshot` now includes driver-level fields: `initialized`, `state`, `i2cAddress`, `i2cTimeoutMs`, `offlineThreshold`, `hasNowMsHook`.
 - `Status::is(Err)` method for type-safe error code comparison.
 - `Status::operator bool()` explicit conversion for concise success checks.
+
+### Changed
+- Command-delay and reset/break timing guards now return visible `IN_PROGRESS`/`TIMEOUT` statuses instead of spinning/yielding internally.
+- Package exports now exclude docs, tests, CI, tooling, and local build/editor directories by default.
+
+### Fixed
+- `begin()` and `probe()` now map only proven address NACK to `DEVICE_NOT_FOUND`, preserving timeout, bus, data-NACK, read-NACK, and generic I2C faults.
+- `tick()` now records measurement readout failures and stops silently re-reading a failed single-shot CRC/protocol frame.
 
 ## [1.4.2] - 2026-04-05
 

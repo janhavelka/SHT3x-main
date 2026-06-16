@@ -10,6 +10,7 @@
 #include "common/HealthView.h"
 #include "common/I2cTransport.h"
 #include "common/I2cScanner.h"
+#include "common/CommandHandler.h"
 
 #include "SHT3x/SHT3x.h"
 
@@ -1799,17 +1800,9 @@ void loop() {
 
   handleMeasurementReady();
 
-  static String inputBuffer;
-  while (Serial.available()) {
-    const char c = static_cast<char>(Serial.read());
-    if (c == '\n' || c == '\r') {
-      if (inputBuffer.length() > 0) {
-        processCommand(inputBuffer);
-        inputBuffer = "";
-        Serial.print("> ");
-      }
-    } else {
-      inputBuffer += c;
-    }
+  char inputLine[128] = {};
+  while (cmd::readLine(inputLine, sizeof(inputLine))) {
+    processCommand(String(inputLine));
+    Serial.print("> ");
   }
 }

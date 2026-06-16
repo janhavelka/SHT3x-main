@@ -46,5 +46,15 @@
   "build": {
     "includeDir": "include",
     "srcDir": "src"
+  },
+  "export": {
+    "exclude": [
+      ".github",
+      ".pio",
+      ".vscode",
+      "docs",
+      "test",
+      "tools"
+    ]
   }
 }

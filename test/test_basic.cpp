@@ -146,7 +146,33 @@ void test_command_delay_guard() {
   device._lastCommandUs = micros();
   device._lastCommandValid = true;
   Status st = device._ensureCommandDelay();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(device._commandDelayPending);
+
+  gMillis = 2;
+  st = device._ensureCommandDelay();
   TEST_ASSERT_EQUAL(Err::TIMEOUT, st.code);
+}
+
+void test_command_delay_guard_wrap_success() {
+  SHT3xDevice device;
+  device._initialized = true;
+  device._config.commandDelayMs = 1;
+  device._config.i2cTimeoutMs = 10;
+  device._lastCommandUs = 0xFFFFFF00UL;
+  device._lastCommandValid = true;
+
+  gMicros = 700;
+  gMicrosStep = 0;
+  gMillis = 100;
+  gMillisStep = 0;
+  Status st = device._ensureCommandDelay();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+
+  gMicros = static_cast<uint32_t>(0xFFFFFF00UL + 1000UL);
+  st = device._ensureCommandDelay();
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(device._commandDelayPending);
 }
 
 struct FakeTransport {
@@ -416,6 +442,89 @@ static uint32_t captureNowMs(void* user) {
   return static_cast<CommandCaptureTransport*>(user)->nowMs;
 }
 
+struct MeasurementFrameTransport {
+  uint32_t nowMs = 1000;
+  Status writeStatus = Status::Ok();
+  Status writeReadStatus = Status::Ok();
+  bool corruptTemperatureCrc = false;
+  bool corruptHumidityCrc = false;
+  uint32_t writes = 0;
+  uint32_t reads = 0;
+  uint16_t lastCommand = 0;
+};
+
+static Status measurementFrameWrite(uint8_t addr, const uint8_t* data, size_t len,
+                                    uint32_t timeoutMs, void* user) {
+  (void)addr;
+  (void)data;
+  (void)len;
+  (void)timeoutMs;
+  auto* ctx = static_cast<MeasurementFrameTransport*>(user);
+  ctx->writes++;
+  if (data != nullptr && len >= 2) {
+    ctx->lastCommand = static_cast<uint16_t>((data[0] << 8) | data[1]);
+  }
+  return ctx->writeStatus;
+}
+
+static Status measurementFrameRead(uint8_t addr, const uint8_t* txData, size_t txLen,
+                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                                   void* user) {
+  (void)addr;
+  (void)txData;
+  (void)txLen;
+  (void)timeoutMs;
+  auto* ctx = static_cast<MeasurementFrameTransport*>(user);
+  ctx->reads++;
+  if (!ctx->writeReadStatus.ok()) {
+    return ctx->writeReadStatus;
+  }
+  if (rxData != nullptr && rxLen >= 3) {
+    rxData[0] = 0x66;
+    rxData[1] = 0x66;
+    rxData[2] = SHT3xDevice::_crc8(&rxData[0], 2);
+    if (rxLen >= 6) {
+      rxData[3] = 0x80;
+      rxData[4] = 0x00;
+      rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
+      if (ctx->corruptTemperatureCrc) {
+        rxData[2] ^= 0x01;
+      }
+      if (ctx->corruptHumidityCrc) {
+        rxData[5] ^= 0x01;
+      }
+    }
+  }
+  return Status::Ok();
+}
+
+static uint32_t measurementFrameNowMs(void* user) {
+  return static_cast<MeasurementFrameTransport*>(user)->nowMs;
+}
+
+static void configureMeasurementDevice(SHT3xDevice& device,
+                                       MeasurementFrameTransport& ctx,
+                                       Mode mode) {
+  device._config = Config{};
+  device._config.i2cWrite = measurementFrameWrite;
+  device._config.i2cWriteRead = measurementFrameRead;
+  device._config.i2cUser = &ctx;
+  device._config.nowMs = measurementFrameNowMs;
+  device._config.timeUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.commandDelayMs = 1;
+  device._config.offlineThreshold = 3;
+  device._config.mode = mode;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = mode;
+  device._measurementRequested = false;
+  device._measurementReady = false;
+  device._measurementPhase = SHT3xDevice::MeasurementPhase::IDLE;
+  device._lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY,
+                                                "Measurement not ready");
+}
+
 void test_get_settings_snapshot_fields() {
   FakeTransport bus;
   SHT3xDevice device;
@@ -425,7 +534,7 @@ void test_get_settings_snapshot_fields() {
   gMillis = 0;
   gMicros = 0;
   gMillisStep = 1;
-  gMicrosStep = 1000;
+  gMicrosStep = 2000;
   Status beginSt = device.begin(cfg);
   TEST_ASSERT_TRUE_MESSAGE(beginSt.ok(), beginSt.msg);
 
@@ -444,6 +553,7 @@ void test_get_settings_snapshot_fields() {
   TEST_ASSERT_FALSE(snap.periodicActive);
   TEST_ASSERT_FALSE(snap.measurementPending);
   TEST_ASSERT_FALSE(snap.measurementReady);
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, snap.lastMeasurementStatus.code);
   TEST_ASSERT_EQUAL_UINT32(0u, snap.measurementReadyMs);
   TEST_ASSERT_EQUAL_UINT32(0u, snap.sampleTimestampMs);
   TEST_ASSERT_EQUAL_UINT32(0u, snap.missedSamples);
@@ -481,6 +591,122 @@ void test_begin_rejects_oversized_timing_config() {
   cfg.recoverBackoffMs = 600001;
   st = device.begin(cfg);
   TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+}
+
+void test_begin_and_probe_preserve_i2c_fault_mapping() {
+  struct ErrorCase {
+    Err transportCode;
+    Err expectedCode;
+  };
+
+  const ErrorCase writeCases[] = {
+      {Err::I2C_NACK_ADDR, Err::DEVICE_NOT_FOUND},
+      {Err::I2C_NACK_DATA, Err::I2C_NACK_DATA},
+      {Err::I2C_TIMEOUT, Err::I2C_TIMEOUT},
+      {Err::I2C_BUS, Err::I2C_BUS},
+      {Err::I2C_ERROR, Err::I2C_ERROR},
+  };
+
+  for (const auto& c : writeCases) {
+    FakeTransport beginBus;
+    beginBus.writeStatus = Status::Error(c.transportCode, "write fault", 77);
+    Config beginCfg = makeConfig(beginBus);
+    gMillis = 0;
+    gMicros = 0;
+    gMillisStep = 1;
+    gMicrosStep = 1000;
+
+    SHT3xDevice beginDevice;
+    Status st = beginDevice.begin(beginCfg);
+    TEST_ASSERT_EQUAL(c.expectedCode, st.code);
+    TEST_ASSERT_EQUAL(77, st.detail);
+
+    FakeTransport probeBus;
+    probeBus.writeStatus = Status::Error(c.transportCode, "write fault", 88);
+    SHT3xDevice probeDevice;
+    probeDevice._config = makeConfig(probeBus);
+    probeDevice._initialized = true;
+    probeDevice._driverState = DriverState::READY;
+    probeDevice._lastCommandValid = false;
+    gMillis = 0;
+    gMicros = 0;
+    gMillisStep = 1;
+    gMicrosStep = 1000;
+
+    st = probeDevice.probe();
+    TEST_ASSERT_EQUAL(c.expectedCode, st.code);
+    TEST_ASSERT_EQUAL(88, st.detail);
+  }
+
+  FakeTransport readBus;
+  readBus.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "read fault", 99);
+  Config cfg = makeConfig(readBus);
+  cfg.transportCapabilities = TransportCapability::READ_HEADER_NACK;
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 2000;
+
+  SHT3xDevice beginDevice;
+  Status st = beginDevice.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::I2C_NACK_READ, st.code);
+  TEST_ASSERT_EQUAL(99, st.detail);
+
+  SHT3xDevice probeDevice;
+  probeDevice._config = cfg;
+  probeDevice._initialized = true;
+  probeDevice._driverState = DriverState::READY;
+  probeDevice._lastCommandValid = false;
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 2;
+  gMicrosStep = 1000;
+
+  st = probeDevice.probe();
+  TEST_ASSERT_EQUAL(Err::I2C_NACK_READ, st.code);
+  TEST_ASSERT_EQUAL(99, st.detail);
+}
+
+void test_single_shot_crc_failure_visible_status() {
+  MeasurementFrameTransport ctx;
+  SHT3xDevice device;
+  Config cfg;
+  cfg.i2cWrite = measurementFrameWrite;
+  cfg.i2cWriteRead = measurementFrameRead;
+  cfg.i2cUser = &ctx;
+  cfg.nowMs = measurementFrameNowMs;
+  cfg.timeUser = &ctx;
+  cfg.i2cTimeoutMs = 10;
+  cfg.commandDelayMs = 1;
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 2000;
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  ctx.corruptTemperatureCrc = true;
+  st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, device.measurementStatus().code);
+
+  device.tick(ctx.nowMs);
+  ctx.nowMs += device.estimateMeasurementTimeMs();
+  device.tick(ctx.nowMs);
+
+  TEST_ASSERT_FALSE(device.measurementReady());
+  TEST_ASSERT_FALSE(device.measurementPending());
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, device.lastMeasurementStatus().code);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, device.measurementStatus().code);
+
+  RawSample raw;
+  st = device.getRawSample(raw);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, st.code);
+
+  const uint32_t readsAfterFailure = ctx.reads;
+  device.tick(ctx.nowMs + 100);
+  TEST_ASSERT_EQUAL_UINT32(readsAfterFailure, ctx.reads);
 }
 
 void test_single_shot_pending_blocks_unrelated_commands() {
@@ -764,6 +990,43 @@ void test_periodic_fetch_expected_nack_no_failure() {
   TEST_ASSERT_EQUAL_UINT8(0, device._consecutiveFailures);
 }
 
+void test_periodic_no_data_status_visible() {
+  FakeTransport ctx;
+  ctx.writeStatus = Status::Ok();
+  ctx.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "NACK read", 0);
+
+  SHT3xDevice device;
+  device._config.i2cWrite = fakeWrite;
+  device._config.i2cWriteRead = fakeWriteRead;
+  device._config.i2cUser = &ctx;
+  device._config.i2cTimeoutMs = 10;
+  device._config.commandDelayMs = 1;
+  device._config.transportCapabilities = TransportCapability::READ_HEADER_NACK;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._mode = Mode::PERIODIC;
+  device._periodicActive = true;
+  device._periodMs = 100;
+  device._periodicStartMs = 0;
+  device._lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY,
+                                                "Measurement not ready");
+
+  gMillis = 0;
+  gMicros = 0;
+  gMillisStep = 1;
+  gMicrosStep = 2000;
+  Status st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+
+  device.tick(device._measurementReadyMs);
+  device.tick(device._measurementReadyMs);
+  TEST_ASSERT_FALSE(device.measurementReady());
+  TEST_ASSERT_TRUE(device.measurementPending());
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, device.lastMeasurementStatus().code);
+  TEST_ASSERT_EQUAL(Err::MEASUREMENT_NOT_READY, device.measurementStatus().code);
+  TEST_ASSERT_EQUAL_UINT8(0, device.consecutiveFailures());
+}
+
 void test_example_adapter_ambiguous_zero_bytes() {
   Wire._setRequestFromResult(0);
   uint8_t buf[3] = {};
@@ -972,7 +1235,7 @@ void test_read_paths_no_combined_and_respect_delay() {
   gMillis = 0;
   gMicros = 0;
   gMillisStep = 0;
-  gMicrosStep = 1000;
+  gMicrosStep = 2000;
 
   uint16_t statusRaw = 0;
   ctx.tooSoon = false;
@@ -1089,7 +1352,7 @@ void test_recover_permanent_offline() {
 
   gMillis = 0;
   gMicros = 0;
-  gMillisStep = 1;
+  gMillisStep = 2;
   gMicrosStep = 1000;
   Status st = device.recover();
   TEST_ASSERT_FALSE(st.ok());
@@ -1191,7 +1454,12 @@ int main(int argc, char** argv) {
   RUN_TEST(test_alert_limit_roundtrip);
   RUN_TEST(test_time_elapsed_wrap);
   RUN_TEST(test_command_delay_guard);
+  RUN_TEST(test_command_delay_guard_wrap_success);
   RUN_TEST(test_begin_rejects_oversized_timing_config);
+  RUN_TEST(test_begin_and_probe_preserve_i2c_fault_mapping);
+  RUN_TEST(test_single_shot_crc_failure_visible_status);
+  RUN_TEST(test_single_shot_poll_job_instruction_budget);
+  RUN_TEST(test_periodic_fetch_poll_job_instruction_budget);
   RUN_TEST(test_single_shot_pending_blocks_unrelated_commands);
   RUN_TEST(test_low_level_command_helpers_write_and_read);
   RUN_TEST(test_low_level_command_helpers_map_expected_nack);
@@ -1201,6 +1469,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_not_ready_timeout_escalation);
   RUN_TEST(test_nack_mapping_without_capability);
   RUN_TEST(test_periodic_fetch_expected_nack_no_failure);
+  RUN_TEST(test_periodic_no_data_status_visible);
   RUN_TEST(test_example_adapter_ambiguous_zero_bytes);
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_drains_partial_read);

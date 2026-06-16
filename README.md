@@ -158,6 +158,7 @@ void loop() {
 |--------|-------------|
 | `requestMeasurement()` | Start a single-shot measurement or schedule the next periodic fetch. |
 | `measurementReady()` | Report whether a sample is ready to be read. |
+| `measurementPending()` / `measurementStatus()` / `lastMeasurementStatus()` | Inspect pending, expected no-data, success, or failed measurement state without forcing a read. |
 | `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` | Read float, raw, or fixed-point sample data. |
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
@@ -186,6 +187,8 @@ preferred entry points when the command has higher-level state implications.
 - `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
 - Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
+- `begin()` and `probe()` map only a proven address NACK (`Err::I2C_NACK_ADDR`) to `Err::DEVICE_NOT_FOUND`. Timeouts, bus errors, data NACKs, read-header NACKs, and generic I2C errors are preserved so optional absence stays distinguishable from bus faults.
+- `measurementStatus()` returns `OK` for a cached ready sample, `IN_PROGRESS` while a request is pending, `MEASUREMENT_NOT_READY` for expected periodic no-data, and the concrete failure status for CRC/protocol/transport faults observed by `tick()`.
 
 ## Transport Contract (Required)
 
@@ -234,13 +237,13 @@ Use `Config::periodicFetchMarginMs` to avoid early Fetch Data reads
 
 ## Blocking Behavior (Max Time)
 
-All public APIs are synchronous and bounded by config timeouts:
+All public APIs are synchronous at the transaction level and bounded by config timeouts:
 
 - I2C write/read phases: `i2cTimeoutMs`
-- Command spacing gate: `commandDelayMs + i2cTimeoutMs` (guarded)
-- Reset/Break waits: `RESET_DELAY_MS` (2 ms), `BREAK_DELAY_MS` (1 ms), both guarded
+- Command spacing gate: returns `Err::IN_PROGRESS` while tIDLE is still pending, or `Err::TIMEOUT` if the command-delay guard cannot complete.
+- Reset/Break waits: return `Err::IN_PROGRESS` until the visible reset/break deadline has elapsed.
 
-The driver has no unbounded loops.
+The driver has no hidden spin/yield wait loops in these timing guards.
 
 ## Recovery Ladder
 
@@ -306,7 +309,7 @@ pio test -e native
 Firmware build (ESP32-S3 example):
 
 ```
-pio run -e ex_bringup_s3
+pio run -e esp32s3dev
 ```
 
 ## Health Monitoring

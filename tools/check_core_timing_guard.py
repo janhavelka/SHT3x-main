@@ -22,7 +22,7 @@ BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 
-ALLOWED_CALL_COUNTS: Dict[str, Dict[str, int]] = {"src/SHT3x.cpp": {"millis": 1, "micros": 1, "yield": 1}}
+ALLOWED_CALL_COUNTS: Dict[str, Dict[str, int]] = {"src/SHT3x.cpp": {"millis": 1, "micros": 1}}
 ALLOWED_INCLUDE_COUNTS: Dict[str, int] = {"src/SHT3x.cpp": 1}
 
 
@@ -117,4 +117,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
