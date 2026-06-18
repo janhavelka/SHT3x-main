@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+- Simplified `docs/` to maintained guides plus source reference material:
+  `docs/hardware.md`, `docs/esp-idf.md`, `docs/reference/`, and curated HIL
+  evidence under `docs/hil/`.
+- Merged the original compact SHT3x `00` through `08` chip-documentation notes
+  into `docs/reference/sht3x-chip-notes.md` so protocol, timing, status,
+  ALERT, reset, and variant facts remain preserved.
+
+### Removed
+- Removed active audit leftovers, prompt captures, implementation reports, and
+  generated vendor-PDF Markdown extracts from `docs/`.
 
 ## [1.6.0] - 2026-06-01
 

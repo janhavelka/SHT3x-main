@@ -37,6 +37,14 @@ struct CompensatedSample {
   uint32_t humidityPct_x100 = 0; ///< Humidity * 100 (e.g., 4234 = 42.34 %RH)
 };
 
+/// Result from one bounded measurement polling step.
+struct PollJobResult {
+  Status status = Status::Error(Err::MEASUREMENT_NOT_READY, "No poll job active"); ///< Current job status
+  uint8_t instructionsUsed = 0; ///< Number of I2C instructions executed
+  bool active = false;          ///< True while a measurement job remains pending
+  bool completed = false;       ///< True when this step completed a sample
+};
+
 /// Parsed status register
 struct StatusRegister {
   uint16_t raw = 0;            ///< Raw 16-bit status register value
@@ -65,6 +73,8 @@ struct SettingsSnapshot {
   bool measurementPending = false;                            ///< A measurement request has been issued but not read yet
   bool measurementReady = false;                              ///< Cached sample is ready to read
   bool hasSample = false;                                     ///< True after at least one sample has been captured
+  Status lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY,
+                                               "Measurement not ready"); ///< Last measurement-path status
   uint32_t measurementReadyMs = 0;                            ///< Deadline/timestamp associated with the pending sample
   uint32_t sampleTimestampMs = 0;                             ///< Timestamp of the last successful sample
   uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
@@ -155,6 +165,10 @@ public:
   /// @param nowMs Current timestamp from the same wrapping millisecond timebase
   ///              used by Config::nowMs
   void tick(uint32_t nowMs);
+
+  /// Advance a pending measurement job with a bounded I2C instruction budget.
+  /// One command write or read-only measurement frame counts as one instruction.
+  Status pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& result);
 
   /// End the local driver session.
   /// @note This clears runtime/session state and returns the instance to
@@ -270,8 +284,17 @@ public:
   /// Check if measurement is ready to read
   bool measurementReady() const { return _measurementReady; }
 
+  /// Check if a measurement request is pending completion.
+  bool measurementPending() const { return _measurementRequested && !_measurementReady; }
+
   /// True after at least one sample has been cached.
   bool hasSample() const { return _hasSample; }
+
+  /// Most recent measurement-path result from request, tick, pollJob, or readout.
+  Status lastMeasurementStatus() const { return _lastMeasurementStatus; }
+
+  /// Current measurement status derived from cached state.
+  Status measurementStatus() const;
 
   /// Timestamp of last completed sample (0 if none)
   uint32_t sampleTimestampMs() const { return _sampleTimestampMs; }
@@ -595,6 +618,15 @@ public:
   uint32_t estimateMeasurementTimeMs() const;
 
 private:
+  enum class MeasurementPhase : uint8_t {
+    IDLE,
+    SINGLE_SHOT_COMMAND,
+    SINGLE_SHOT_CONVERSION,
+    SINGLE_SHOT_READ,
+    PERIODIC_FETCH_COMMAND,
+    PERIODIC_READ
+  };
+
   // =========================================================================
   // Transport Wrappers
   // =========================================================================
@@ -632,6 +664,7 @@ private:
   // =========================================================================
 
   Status _writeCommand(uint16_t cmd, bool tracked);
+  Status _writeCommandNoDelay(uint16_t cmd, bool tracked);
   Status _writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked);
   Status _readAfterCommand(uint8_t* buf, size_t len, bool tracked,
                            bool allowNoData = false);
@@ -662,6 +695,7 @@ private:
   Status _waitMs(uint32_t delayMs);
   Status _readStatusRaw(uint16_t& raw, bool tracked);
   Status _readMeasurementRaw(RawSample& out, bool tracked, bool allowNoData);
+  Status _readMeasurementRawNoDelay(RawSample& out, bool tracked, bool allowNoData);
   Status _fetchPeriodic();
   Status _startSingleShot();
   Status _enterPeriodic(PeriodicRate rate, Repeatability rep, bool art);
@@ -707,6 +741,9 @@ private:
   bool _measurementRequested = false;
   bool _measurementReady = false;
   bool _hasSample = false;
+  MeasurementPhase _measurementPhase = MeasurementPhase::IDLE;
+  Status _lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY,
+                                                "Measurement not ready");
   uint32_t _measurementReadyMs = 0;
   uint32_t _periodicStartMs = 0;
   uint32_t _lastFetchMs = 0;

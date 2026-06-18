@@ -246,7 +246,9 @@ static uint32_t fakeNowMs(void* user) {
 }
 
 static uint32_t fakeNowUs(void* user) {
-  return static_cast<FakeTransport*>(user)->nowMs * 1000U;
+  auto* ctx = static_cast<FakeTransport*>(user);
+  ctx->nowMs++;
+  return ctx->nowMs * 1000U;
 }
 
 static void fakeYield(void* user) {
@@ -509,7 +511,9 @@ static uint32_t captureNowMs(void* user) {
 }
 
 static uint32_t captureNowUs(void* user) {
-  return static_cast<CommandCaptureTransport*>(user)->nowMs * 1000U;
+  auto* ctx = static_cast<CommandCaptureTransport*>(user);
+  ctx->nowMs++;
+  return ctx->nowMs * 1000U;
 }
 
 static void captureYield(void* user) {
@@ -528,6 +532,7 @@ struct FrameScriptTransport {
   Status failReadStatus = Status::Ok();
   uint16_t statusRaw = 0;
   bool corruptStatusCrc = false;
+  bool corruptMeasurementCrc = false;
   uint16_t commands[40] = {};
   size_t commandCount = 0;
   uint32_t writes = 0;
@@ -602,6 +607,9 @@ static Status frameWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     rxData[3] = 0x00;
     rxData[4] = 0x00;
     rxData[5] = SHT3xDevice::_crc8(&rxData[3], 2);
+    if (ctx->corruptMeasurementCrc) {
+      rxData[2] ^= 0x01;
+    }
   }
   return st;
 }
@@ -611,7 +619,9 @@ static uint32_t frameNowMs(void* user) {
 }
 
 static uint32_t frameNowUs(void* user) {
-  return static_cast<FrameScriptTransport*>(user)->nowMs * 1000U;
+  auto* ctx = static_cast<FrameScriptTransport*>(user);
+  ctx->nowMs++;
+  return ctx->nowMs * 1000U;
 }
 
 static void frameYield(void* user) {
@@ -763,7 +773,8 @@ void test_begin_i2c_failure_does_not_update_health() {
   bus.writeReadStatus = Status::Error(Err::I2C_TIMEOUT, "startup read timeout", -44);
 
   const Status st = device.begin(cfg);
-  TEST_ASSERT_EQUAL(Err::DEVICE_NOT_FOUND, st.code);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(-44, st.detail);
   TEST_ASSERT_FALSE(device.isInitialized());
   TEST_ASSERT_EQUAL(DriverState::UNINIT, device.state());
   TEST_ASSERT_EQUAL_UINT32(0u, device.totalSuccess());
@@ -792,11 +803,6 @@ void test_begin_rejects_missing_timing_hooks_before_i2c() {
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
 
   cfg.nowMs = stubNowMs;
-  st = device.begin(cfg);
-  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
-  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
-  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
-
   cfg.nowUs = stubNowUs;
   st = device.begin(cfg);
   TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
@@ -1865,15 +1871,21 @@ void test_public_single_shot_measurement_timing_and_readout() {
   TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
 
   const uint32_t requestMs = bus.nowMs;
-  const uint32_t readyMs = requestMs + device.estimateMeasurementTimeMs();
   st = device.requestMeasurement();
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
   TEST_ASSERT_FALSE(device.measurementReady());
 
-  device.tick(readyMs - 1);
+  bus.nowMs = requestMs;
+  device.tick(bus.nowMs);
   TEST_ASSERT_FALSE(device.measurementReady());
 
-  device.tick(readyMs);
+  const uint32_t readyMs = device._measurementReadyMs;
+  bus.nowMs = readyMs - 1U;
+  device.tick(bus.nowMs);
+  TEST_ASSERT_FALSE(device.measurementReady());
+
+  bus.nowMs = readyMs;
+  device.tick(bus.nowMs);
   TEST_ASSERT_TRUE(device.measurementReady());
 
   Measurement measurement;
@@ -1898,12 +1910,165 @@ void test_public_periodic_fetch_not_ready_does_not_count_as_failure() {
   bus.writeReadStatus = Status::Error(Err::I2C_NACK_READ, "not ready");
   st = device.requestMeasurement();
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-  device.tick(bus.nowMs + 2000U);
+
+  bus.nowMs = device._measurementReadyMs;
+  device.tick(bus.nowMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device.notReadyCount());
+
+  device.tick(bus.nowMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device.notReadyCount());
+
+  bus.nowMs += cfg.commandDelayMs;
+  device.tick(bus.nowMs);
 
   TEST_ASSERT_FALSE(device.measurementReady());
   TEST_ASSERT_EQUAL_UINT32(1u, device.notReadyCount());
   TEST_ASSERT_EQUAL_UINT8(0u, device.consecutiveFailures());
   TEST_ASSERT_EQUAL(DriverState::READY, device.state());
+}
+
+void test_single_shot_poll_job_instruction_budget() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  PollJobResult result;
+  st = device.pollJob(ctx.nowMs, 0, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH, ctx.commands[0]);
+
+  ctx.nowMs = device._measurementReadyMs - 1U;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  ctx.nowMs = device._measurementReadyMs;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(result.completed);
+  TEST_ASSERT_FALSE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+  TEST_ASSERT_TRUE(device.measurementReady());
+}
+
+void test_single_shot_poll_job_crc_mismatch_visible_status() {
+  FrameScriptTransport ctx;
+  ctx.corruptMeasurementCrc = true;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+
+  PollJobResult result;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+
+  ctx.nowMs = device._measurementReadyMs;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, st.code);
+  TEST_ASSERT_FALSE(result.active);
+  TEST_ASSERT_FALSE(result.completed);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+  TEST_ASSERT_FALSE(device.measurementReady());
+  TEST_ASSERT_FALSE(device.measurementPending());
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, device.measurementStatus().code);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, device.lastMeasurementStatus().code);
+
+  const uint32_t readsAfterFailure = ctx.reads;
+  ctx.nowMs += cfg.commandDelayMs;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::CRC_MISMATCH, st.code);
+  TEST_ASSERT_FALSE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(readsAfterFailure, ctx.reads);
+}
+
+void test_periodic_fetch_poll_job_instruction_budget() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+  st = device.requestMeasurement();
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  PollJobResult result;
+  st = device.pollJob(ctx.nowMs, 0, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  ctx.nowMs = device._measurementReadyMs - 1U;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  ctx.nowMs = device._measurementReadyMs;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_FETCH_DATA, ctx.commands[0]);
+
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_TRUE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+
+  ctx.nowMs += cfg.commandDelayMs;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(result.completed);
+  TEST_ASSERT_FALSE(result.active);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+  TEST_ASSERT_TRUE(device.measurementReady());
 }
 
 void test_public_status_read_and_clear_are_explicit_operations() {
@@ -2199,8 +2364,10 @@ void test_raw_and_compensated_samples_remain_after_measurement_read() {
 
   st = device.requestMeasurement();
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-  const uint32_t readyMs = device._measurementReadyMs;
-  device.tick(readyMs);
+  bus.nowMs = device._measurementReadyMs;
+  device.tick(bus.nowMs);
+  bus.nowMs = device._measurementReadyMs;
+  device.tick(bus.nowMs);
   TEST_ASSERT_TRUE(device.measurementReady());
 
   Measurement measurement;
@@ -2536,6 +2703,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_public_begin_rejects_invalid_address_without_i2c);
   RUN_TEST(test_public_single_shot_measurement_timing_and_readout);
   RUN_TEST(test_public_periodic_fetch_not_ready_does_not_count_as_failure);
+  RUN_TEST(test_single_shot_poll_job_instruction_budget);
+  RUN_TEST(test_single_shot_poll_job_crc_mismatch_visible_status);
+  RUN_TEST(test_periodic_fetch_poll_job_instruction_budget);
   RUN_TEST(test_public_status_read_and_clear_are_explicit_operations);
   RUN_TEST(test_periodic_start_command_failure_does_not_update_public_mode_or_cache);
   RUN_TEST(test_periodic_restart_break_failure_keeps_previous_public_state);

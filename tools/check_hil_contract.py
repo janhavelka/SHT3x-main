@@ -11,12 +11,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "run_i2c_hil.py"
-RUNBOOK = ROOT / "docs" / "SHT3X_I2C_HIL_RUNBOOK.md"
-TARGET_TEMPLATE = ROOT / "docs" / "SHT3X_I2C_HIL_TARGET_TEMPLATE.md"
-SELFTEST_REPORT = ROOT / "docs" / "SHT3X_I2C_HIL_SELFTEST_REPORT.md"
+HARDWARE = ROOT / "docs" / "hardware.md"
 README = ROOT / "README.md"
 DOCS_INDEX = ROOT / "docs" / "README.md"
-MATRIX = ROOT / "docs" / "SHT3X_HARDWARE_VALIDATION_MATRIX.md"
 GITIGNORE = ROOT / ".gitignore"
 
 DEFAULT_MARKER_RE = re.compile(
@@ -85,7 +82,7 @@ def documented_commands(runbook_text: str) -> list[str]:
 
 
 def check_claims() -> None:
-    for path in (RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT, README, DOCS_INDEX, MATRIX):
+    for path in (HARDWARE, README, DOCS_INDEX):
         text = read(path).lower()
         for phrase in FORBIDDEN_CLAIMS:
             if phrase in text:
@@ -93,7 +90,7 @@ def check_claims() -> None:
 
 
 def main() -> int:
-    for path in (RUNNER, RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT, README, DOCS_INDEX, MATRIX, GITIGNORE):
+    for path in (RUNNER, HARDWARE, README, DOCS_INDEX, GITIGNORE):
         if not path.exists():
             fail(f"missing required file: {path.relative_to(ROOT)}")
 
@@ -115,7 +112,7 @@ def main() -> int:
 
     runner = import_runner()
     actual = list(runner.default_executable_commands())
-    expected = documented_commands(read(RUNBOOK))
+    expected = documented_commands(read(HARDWARE))
     if actual != expected:
         fail(f"default command sequence mismatch: runner={actual!r} docs={expected!r}")
 
@@ -129,7 +126,7 @@ def main() -> int:
     if "hil_logs/" not in gitignore_lines:
         fail(".gitignore must include hil_logs/")
 
-    runbook_text = read(RUNBOOK)
+    hardware_text = read(HARDWARE)
     for token in (
         "ACK alone is not chip identity",
         "OPERATOR_REVIEW_REQUIRED",
@@ -140,26 +137,30 @@ def main() -> int:
         "serial_transcript.txt",
         "environment.txt",
     ):
-        if token not in runbook_text:
-            fail(f"runbook missing required text: {token}")
+        if token not in hardware_text:
+            fail(f"hardware doc missing required text: {token}")
 
-    report_text = read(SELFTEST_REPORT)
-    if "software-prepared only" not in report_text:
-        fail("self-test report must use software-prepared only verdict")
+    for token in (
+        "Target Record Checklist",
+        "Latest curated default serial HIL evidence",
+        "does not validate physical ALERT pin behavior",
+        "Final runner verdict values",
+    ):
+        if token not in hardware_text:
+            fail(f"hardware doc missing evidence-boundary text: {token}")
 
     readme_text = read(README)
-    if "docs/README.md" not in readme_text:
-        fail("README must point to docs/README.md")
+    for token in ("docs/README.md", "docs/hardware.md"):
+        if token not in readme_text:
+            fail(f"README must point to {token}")
     docs_index_text = read(DOCS_INDEX)
-    for path in (RUNBOOK, TARGET_TEMPLATE, SELFTEST_REPORT):
+    for path in (HARDWARE,):
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
         bare = path.name
         if rel not in docs_index_text and bare not in docs_index_text:
             fail(f"docs/README.md missing documentation link: {rel}")
-
-    matrix_text = read(MATRIX)
-    if "tools/run_i2c_hil.py" not in matrix_text or "docs/SHT3X_I2C_HIL_RUNBOOK.md" not in matrix_text:
-        fail("hardware validation matrix must point to the serial HIL runner contract")
+    if "tools/run_i2c_hil.py" not in hardware_text or "tools/run_sht3x_hil.py" not in hardware_text:
+        fail("hardware doc must point to the serial HIL runner contract")
 
     check_claims()
     print("check_hil_contract: OK")

@@ -33,23 +33,14 @@ STRIP_CODE_COMMENTS    = NO
 
 INPUT                  = README.md CHANGELOG.md include \
                          docs/README.md \
-                         docs/IDF_PORT.md \
-                         docs/IDF_PORT_IMPLEMENTATION.md \
-                         docs/HARDWARE_VALIDATION.md \
-                         docs/SHT3X_HARDWARE_VALIDATION_MATRIX.md \
-                         docs/SHT3X_HIL_RUNBOOK.md \
-                         docs/SHT3X_HIL_LOG_TEMPLATE.md \
-                         docs/SHT3X_I2C_HIL_RUNBOOK.md \
-                         docs/SHT3X_I2C_HIL_TARGET_TEMPLATE.md \
-                         docs/SHT3X_I2C_HIL_SELFTEST_REPORT.md \
+                         docs/hardware.md \
+                         docs/esp-idf.md \
+                         docs/reference/README.md \
+                         docs/reference/sht3x-chip-notes.md \
                          docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md \
-                         docs/rationale/SHT3X_ALERT_ENCODING_FIX_REPORT.md \
-                         docs/rationale/SHT3X_ALERT_STATUS_FIX_REPORT.md \
-                         docs/rationale/SHT3X_API_CONTRACT_CLEANUP_REPORT.md \
-                         docs/rationale/SHT3X_CORE_CONTRACTS_PARTIAL_STATE_REPORT.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/reference/extracted/* */docs/archive/*
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/*
 EXAMPLE_PATH           = examples/01_basic_bringup_cli
 
 USE_MDFILE_AS_MAINPAGE = README.md
