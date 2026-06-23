@@ -337,7 +337,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
       return true;
     }
     const uint32_t delayUs = static_cast<uint32_t>(_config.commandDelayMs) * 1000U;
-    return _timeElapsed(nowMs * 1000U, _lastCommandUs + delayUs);
+    return _durationElapsed(nowMs * 1000U, _lastCommandUs, delayUs);
   };
 
   switch (_measurementPhase) {
@@ -1604,9 +1604,25 @@ Status SHT3x::_performRecoveryLadder() {
     uint16_t statusRaw = 0;
     return _readStatusRaw(statusRaw, true);
   };
+  bool acquisitionStopped = !_periodicActive;
+  auto periodicRecoveryRequired = []() -> Status {
+    return Status::Error(Err::BUSY, "Recovery must stop periodic mode");
+  };
+  auto acceptProbe = [this, &acquisitionStopped, &periodicRecoveryRequired](Status st,
+                                                                            Status& last) -> bool {
+    if (!st.ok()) {
+      last = st;
+      return false;
+    }
+    if (acquisitionStopped || !_periodicActive) {
+      return true;
+    }
+    last = periodicRecoveryRequired();
+    return false;
+  };
 
   Status last = probeTracked();
-  if (last.ok()) {
+  if (acceptProbe(last, last)) {
     return Status::Ok();
   }
 
@@ -1614,10 +1630,9 @@ Status SHT3x::_performRecoveryLadder() {
     Status st = interfaceReset();
     if (st.ok()) {
       st = probeTracked();
-      if (st.ok()) {
+      if (acceptProbe(st, last)) {
         return Status::Ok();
       }
-      last = st;
     } else {
       last = st;
     }
@@ -1633,10 +1648,12 @@ Status SHT3x::_performRecoveryLadder() {
     }
 
     if (stStop.ok()) {
+      acquisitionStopped = true;
       Status st = softReset();
       if (st.ok()) {
+        acquisitionStopped = true;
         st = probeTracked();
-        if (st.ok()) {
+        if (acceptProbe(st, last)) {
           return Status::Ok();
         }
       }
@@ -1651,8 +1668,9 @@ Status SHT3x::_performRecoveryLadder() {
       if (!st.ok()) {
         return st;
       }
+      acquisitionStopped = true;
       st = probeTracked();
-      if (st.ok()) {
+      if (acceptProbe(st, last)) {
         return Status::Ok();
       }
     }
@@ -1662,8 +1680,9 @@ Status SHT3x::_performRecoveryLadder() {
   if (_config.allowGeneralCallReset) {
     Status st = generalCallReset();
     if (st.ok()) {
+      acquisitionStopped = true;
       st = probeTracked();
-      if (st.ok()) {
+      if (acceptProbe(st, last)) {
         return Status::Ok();
       }
     }
@@ -1931,14 +1950,13 @@ Status SHT3x::_ensureCommandDelay() {
   }
 
   const uint32_t delayUs = static_cast<uint32_t>(_config.commandDelayMs) * 1000U;
-  const uint32_t target = _lastCommandUs + delayUs;
   const uint32_t startMs = _nowMs(_config);
   const uint32_t timeoutMs = saturatingAddU32(static_cast<uint32_t>(_config.commandDelayMs),
                                               _config.i2cTimeoutMs);
   uint32_t lastMs = startMs;
   uint32_t stableLoops = 0;
 
-  while (!_timeElapsed(_nowUs(_config), target)) {
+  while (!_durationElapsed(_nowUs(_config), _lastCommandUs, delayUs)) {
     const uint32_t nowMs = _nowMs(_config);
     if (static_cast<uint32_t>(nowMs - startMs) > timeoutMs) {
       return Status::Error(Err::TIMEOUT, "Command delay timeout");
@@ -2199,7 +2217,7 @@ Status SHT3x::_stopPeriodicInternal() {
   _notReadyCount = 0;
   _missedSamples = 0;
 
-  return Status::Ok();
+  return _waitMs(BREAK_DELAY_MS);
 }
 
 uint8_t SHT3x::_crc8(const uint8_t* data, size_t len) {
@@ -2308,6 +2326,10 @@ uint32_t SHT3x::_periodMsForRate(PeriodicRate rate) {
     case PeriodicRate::MPS_10: return 100;
     default: return 1000;
   }
+}
+
+bool SHT3x::_durationElapsed(uint32_t now, uint32_t start, uint32_t duration) {
+  return static_cast<uint32_t>(now - start) >= duration;
 }
 
 bool SHT3x::_timeElapsed(uint32_t now, uint32_t target) {

@@ -155,6 +155,9 @@ drv
 ```
 <!-- END DEFAULT_HIL_COMMANDS -->
 
+The common minimum serial contract is `version`, `scan`, `probe`, `settings`,
+and `drv`; `drv` is the health snapshot command.
+
 Expected evidence includes version text, help output, scan output containing
 the expected address, `READY` or online driver state, parseable status/status
 raw, plausible single-shot measurements for low/medium/high repeatability,

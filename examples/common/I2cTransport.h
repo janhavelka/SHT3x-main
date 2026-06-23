@@ -35,12 +35,18 @@ inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
 /// @return Status indicating success or failure
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
-  (void)timeoutMs;
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "Wire instance is null");
   }
+  if (data == nullptr || len == 0) {
+    return Status::Error(Err::INVALID_PARAM, "I2C write buffer is invalid");
+  }
+  if (timeoutMs == 0) {
+    return Status::Error(Err::INVALID_PARAM, "I2C timeout must be > 0");
+  }
 
+  wire->setTimeOut(timeoutMs);
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   // SHT3x requires STOP between command write and read header.
@@ -77,7 +83,6 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint8_t* rxData, size_t rxLen,
                             uint32_t timeoutMs, void* user) {
-  (void)timeoutMs;
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "Wire instance is null");
@@ -90,8 +95,15 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   if (rxLen == 0) {
     return Status::Ok();
   }
+  if (rxData == nullptr) {
+    return Status::Error(Err::INVALID_PARAM, "I2C read buffer is invalid");
+  }
+  if (timeoutMs == 0) {
+    return Status::Error(Err::INVALID_PARAM, "I2C timeout must be > 0");
+  }
 
   // Read phase
+  wire->setTimeOut(timeoutMs);
   size_t received = wire->requestFrom(addr, rxLen);
   if (received != rxLen) {
     if (received == 0) {

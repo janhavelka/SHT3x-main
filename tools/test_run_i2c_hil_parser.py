@@ -61,6 +61,12 @@ def test_pass_command() -> None:
     assert parsed["library_version"] == "1.5.0"
 
 
+def test_default_sequence_covers_common_minimum_commands() -> None:
+    commands = hil.default_executable_commands()
+    for command in ("version", "scan", "probe", "settings", "drv"):
+        assert command in commands, command
+
+
 def test_unknown_command_fails() -> None:
     spec = hil.CommandSpec("bogus", "test", expected_any=("OK",))
     result, notes, _ = classify(spec, "Unknown command. Try 'help'.\n")
@@ -495,6 +501,15 @@ def test_recovery_spec_is_generated_for_failed_step() -> None:
     assert "periodic stop: OK" in recovery.expected_any
 
 
+def test_stress_mix_requires_mixed_summary_not_plain_stress() -> None:
+    spec = hil.soak_commands(10)[2]
+    assert spec.command.startswith("stress_mix ")
+    assert "stress: ok=" not in spec.expected_any
+    result, notes, _ = classify(spec, "stress: ok=5 fail=0\n")
+    assert result == hil.RESULT_FAIL
+    assert "expected output token missing" in notes
+
+
 def test_serial_unsupported_response_skips_without_timeout() -> None:
     spec = hil.CommandSpec(
         "art start",
@@ -507,6 +522,19 @@ def test_serial_unsupported_response_skips_without_timeout() -> None:
     assert row["result"] == hil.RESULT_SKIP
     assert row["notes"] == hil.SKIP_UNSUPPORTED
     assert row["completion_reason"] == "unsupported-token+idle"
+
+
+def test_optional_command_i2c_timeout_fails_not_unsupported() -> None:
+    spec = hil.CommandSpec(
+        "art start",
+        "optional art timeout",
+        expected_any=("art start: OK",),
+        unsupported_ok=True,
+        timeout_s=0.1,
+    )
+    result, notes, _ = classify(spec, "art start: I2C_TIMEOUT\n")
+    assert result == hil.RESULT_FAIL
+    assert "failure token" in notes
 
 
 def test_summary_markdown_lists_itself_as_artifact() -> None:

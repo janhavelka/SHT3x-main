@@ -151,7 +151,7 @@ def soak_commands(count: int) -> list[CommandSpec]:
     return [
         CommandSpec("stress 10", "Short stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=90.0),
         CommandSpec(f"stress {count}", "Configured bounded stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(count) * 3.0)),
-        CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=("stress_mix summary", "Total:", "stress_mix", "stress: ok="), requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
+        CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=("stress_mix summary", "Total:", "stress_mix"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
         CommandSpec("drv", "Final health after stress.", group="soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), requires_opt_in="--include-soak"),
         CommandSpec("settings", "Final settings after stress.", group="soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), requires_opt_in="--include-soak"),
     ]
@@ -394,7 +394,7 @@ def has_unsupported(text: str, spec: CommandSpec) -> bool:
     if not spec.unsupported_ok:
         return False
     plain = strip_ansi(text)
-    return any(pattern.search(plain) for pattern in UNSUPPORTED_PATTERNS) or "I2C_TIMEOUT" in plain
+    return any(pattern.search(plain) for pattern in UNSUPPORTED_PATTERNS)
 
 
 def expected(text: str, spec: CommandSpec) -> bool:

@@ -712,6 +712,7 @@ private:
   static uint16_t _commandForAlertRead(AlertLimitKind kind);
   static uint16_t _commandForAlertWrite(AlertLimitKind kind);
   static uint32_t _periodMsForRate(PeriodicRate rate);
+  static bool _durationElapsed(uint32_t now, uint32_t start, uint32_t duration);
   static bool _timeElapsed(uint32_t now, uint32_t target);
   static void _parseStatusRegister(uint16_t raw, StatusRegister& out);
 

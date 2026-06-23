@@ -489,6 +489,13 @@ Host tests (requires a native compiler like `g++`):
 pio test -e native
 ```
 
+Host HIL parser/contract checks (stdlib Python; no pytest required):
+
+```
+python tools/test_run_i2c_hil_parser.py
+python tools/check_hil_contract.py
+```
+
 Firmware build (ESP32-S3 example):
 
 ```

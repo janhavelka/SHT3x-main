@@ -1,4 +1,5 @@
 #include <cctype>
+#include <cerrno>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -32,6 +33,7 @@ constexpr size_t LINE_LEN = 128U;
 constexpr int CLI_QUEUE_DEPTH = 4;
 constexpr uint32_t CLI_TICK_MS = 5;
 constexpr int PROBE_TIMEOUT_MS = 50;
+constexpr uint32_t STRESS_MAX_COUNT = 100000;
 
 struct AppContext {
   IdfI2cContext i2c = {};
@@ -217,9 +219,13 @@ bool parseU32(const char* text, uint32_t* value) {
   if (text == nullptr || value == nullptr || *text == '\0') {
     return false;
   }
+  if (*text == '-' || *text == '+') {
+    return false;
+  }
   char* end = nullptr;
+  errno = 0;
   const unsigned long parsed = std::strtoul(text, &end, 0);
-  if (end == text) {
+  if (end == text || *end != '\0' || errno == ERANGE || parsed > UINT32_MAX) {
     return false;
   }
   *value = static_cast<uint32_t>(parsed);
@@ -342,7 +348,7 @@ void scanBus() {
     return;
   }
   int count = 0;
-  for (uint8_t addr = 1; addr < 127; ++addr) {
+  for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
     if (i2c_master_probe(gApp.i2c.bus, addr, PROBE_TIMEOUT_MS) == ESP_OK) {
       std::printf("found 0x%02X%s\n", addr, addr == SHT3X_ADDR ? " (configured)" : "");
       ++count;
@@ -482,23 +488,29 @@ void startPeriodicCommand(char* args, const char* label) {
                                           "usage: periodic start <rate> <rep>"));
 }
 
+SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& measurement) {
+  SHT3x::Status st = gDevice.requestMeasurement();
+  if (!(st.ok() || st.inProgress())) {
+    return st;
+  }
+  const uint32_t deadline = nowMs(nullptr) + gDevice.estimateMeasurementTimeMs() + 50U;
+  while (!gDevice.measurementReady() &&
+         static_cast<int32_t>(nowMs(nullptr) - deadline) < 0) {
+    gDevice.tick(nowMs(nullptr));
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+  if (!gDevice.measurementReady()) {
+    return SHT3x::Status::Error(SHT3x::Err::TIMEOUT, "Timed out waiting for sample");
+  }
+  return gDevice.getMeasurement(measurement);
+}
+
 void runStress(uint32_t count) {
   uint32_t ok = 0;
   uint32_t fail = 0;
   for (uint32_t i = 0; i < count; ++i) {
-    SHT3x::Status st = gDevice.requestMeasurement();
-    if (!(st.ok() || st.inProgress())) {
-      ++fail;
-      continue;
-    }
-    const uint32_t deadline = nowMs(nullptr) + gDevice.estimateMeasurementTimeMs() + 50U;
-    while (!gDevice.measurementReady() &&
-           static_cast<int32_t>(nowMs(nullptr) - deadline) < 0) {
-      gDevice.tick(nowMs(nullptr));
-      vTaskDelay(pdMS_TO_TICKS(2));
-    }
     SHT3x::Measurement measurement{};
-    st = gDevice.getMeasurement(measurement);
+    SHT3x::Status st = performMeasurementBlocking(measurement);
     if (st.ok()) {
       ++ok;
     } else {
@@ -510,6 +522,91 @@ void runStress(uint32_t count) {
   }
   std::printf("stress: ok=%lu fail=%lu\n",
               static_cast<unsigned long>(ok), static_cast<unsigned long>(fail));
+}
+
+void runStressMix(uint32_t count) {
+  struct OpStats {
+    const char* name;
+    uint32_t ok;
+    uint32_t fail;
+  };
+
+  OpStats stats[] = {
+      {"measure", 0, 0},
+      {"readStatus", 0, 0},
+      {"readSerial", 0, 0},
+      {"setRepeat", 0, 0},
+      {"setRate", 0, 0},
+      {"setStretch", 0, 0},
+      {"heaterStat", 0, 0},
+  };
+  const uint32_t opCount = static_cast<uint32_t>(sizeof(stats) / sizeof(stats[0]));
+  uint32_t okTotal = 0;
+  uint32_t failTotal = 0;
+
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t op = i % opCount;
+    SHT3x::Status st = SHT3x::Status::Ok();
+
+    switch (op) {
+      case 0: {
+        SHT3x::Measurement measurement{};
+        st = performMeasurementBlocking(measurement);
+        break;
+      }
+      case 1: {
+        SHT3x::StatusRegister reg{};
+        st = gDevice.readStatus(reg);
+        break;
+      }
+      case 2: {
+        uint32_t serial = 0;
+        st = gDevice.readSerialNumber(serial, SHT3x::ClockStretching::STRETCH_DISABLED);
+        break;
+      }
+      case 3:
+        st = gDevice.setRepeatability(
+            static_cast<SHT3x::Repeatability>((i / opCount) % 3U));
+        break;
+      case 4:
+        st = gDevice.setPeriodicRate(static_cast<SHT3x::PeriodicRate>((i / opCount) % 5U));
+        break;
+      case 5:
+        st = gDevice.setClockStretching(((i / opCount) % 2U) != 0U
+                                            ? SHT3x::ClockStretching::STRETCH_ENABLED
+                                            : SHT3x::ClockStretching::STRETCH_DISABLED);
+        break;
+      case 6: {
+        bool enabled = false;
+        st = gDevice.readHeaterStatus(enabled);
+        break;
+      }
+      default:
+        break;
+    }
+
+    if (st.ok()) {
+      stats[op].ok++;
+      okTotal++;
+    } else {
+      stats[op].fail++;
+      failTotal++;
+      if (gVerbose) {
+        printStatus(stats[op].name, st);
+      }
+    }
+  }
+
+  std::puts("stress_mix summary");
+  std::printf("Total: ok=%lu fail=%lu\n",
+              static_cast<unsigned long>(okTotal),
+              static_cast<unsigned long>(failTotal));
+  for (uint32_t i = 0; i < opCount; ++i) {
+    std::printf("%s: ok=%lu fail=%lu\n",
+                stats[i].name,
+                static_cast<unsigned long>(stats[i].ok),
+                static_cast<unsigned long>(stats[i].fail));
+  }
 }
 
 void runSelftest() {
@@ -895,8 +992,20 @@ void handleCommandLine(char* line) {
     std::printf("verbose=%d\n", gVerbose ? 1 : 0);
   } else if (std::strcmp(cmd, "stress") == 0 || std::strcmp(cmd, "stress_mix") == 0) {
     uint32_t count = 10;
-    (void)parseU32(args, &count);
-    runStress(count);
+    if (*args != '\0' && !parseU32(args, &count)) {
+      std::puts("Usage: stress[_mix] [count]");
+      return;
+    }
+    if (count == 0 || count > STRESS_MAX_COUNT) {
+      std::printf("stress count must be 1..%lu\n",
+                  static_cast<unsigned long>(STRESS_MAX_COUNT));
+      return;
+    }
+    if (std::strcmp(cmd, "stress_mix") == 0) {
+      runStressMix(count);
+    } else {
+      runStress(count);
+    }
   } else if (std::strcmp(cmd, "selftest") == 0) {
     runSelftest();
   } else {

@@ -8,6 +8,7 @@
 #include "Arduino.h"
 #include "Wire.h"
 #include "examples/common/I2cTransport.h"
+#include "examples/common/I2cScanner.h"
 
 // Stub implementations
 SerialClass Serial;
@@ -24,6 +25,11 @@ uint32_t gMicrosStep = 0;
 
 using namespace SHT3x;
 using SHT3xDevice = SHT3x::SHT3x;
+
+static uint32_t stubNowMs(void*);
+static uint32_t stubNowUs(void*);
+static void stubYield(void*);
+static void installTimingHooks(SHT3xDevice& device);
 
 struct AlertAppNoteVector {
   AlertLimitKind kind;
@@ -195,6 +201,11 @@ void test_time_elapsed_wrap() {
   const uint32_t nearMax = 0xFFFFFFF0U;
   TEST_ASSERT_TRUE(SHT3xDevice::_timeElapsed(5, nearMax));
   TEST_ASSERT_FALSE(SHT3xDevice::_timeElapsed(nearMax, 5));
+
+  TEST_ASSERT_FALSE(SHT3xDevice::_durationElapsed(10, 5, 6));
+  TEST_ASSERT_TRUE(SHT3xDevice::_durationElapsed(11, 5, 6));
+  TEST_ASSERT_TRUE(SHT3xDevice::_durationElapsed(5, nearMax, 20));
+  TEST_ASSERT_FALSE(SHT3xDevice::_durationElapsed(5, nearMax, 22));
 }
 
 void test_command_delay_guard() {
@@ -210,6 +221,23 @@ void test_command_delay_guard() {
   device._lastCommandValid = true;
   Status st = device._ensureCommandDelay();
   TEST_ASSERT_EQUAL(Err::TIMEOUT, st.code);
+}
+
+void test_command_delay_allows_long_idle_after_microsecond_half_range() {
+  SHT3xDevice device;
+  device._initialized = true;
+  device._config.commandDelayMs = 1;
+  device._config.i2cTimeoutMs = 1;
+  installTimingHooks(device);
+  gMicros = 0x80001000U;
+  gMicrosStep = 0;
+  gMillis = 0;
+  gMillisStep = 0;
+  device._lastCommandUs = 0;
+  device._lastCommandValid = true;
+
+  Status st = device._ensureCommandDelay();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
 }
 
 struct FakeTransport {
@@ -1228,7 +1256,7 @@ void test_wire_adapter_timeout_and_stop() {
   uint8_t buf[2] = {0x00, 0x00};
   Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, &Wire);
   TEST_ASSERT_TRUE(st.ok());
-  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(33u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._clockSetCount());
   TEST_ASSERT_TRUE(Wire._lastStopWasTrue());
 }
@@ -1240,9 +1268,42 @@ void test_wire_adapter_drains_partial_read() {
   uint8_t buf[6] = {};
   Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
-  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(20u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());
   Wire._clearRequestFromOverride();
+}
+
+void test_wire_adapter_rejects_invalid_buffers_and_timeout() {
+  uint8_t buf[2] = {0x00, 0x00};
+
+  Status st = transport::wireWrite(0x44, nullptr, sizeof(buf), 10, &Wire);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = transport::wireWrite(0x44, buf, 0, 10, &Wire);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = transport::wireWrite(0x44, buf, sizeof(buf), 0, &Wire);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = transport::wireWriteRead(0x44, nullptr, 0, nullptr, sizeof(buf), 10, &Wire);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+
+  st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 0, &Wire);
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
+}
+
+void test_i2c_scanner_restores_timeout() {
+  Wire.setTimeOut(77);
+
+  TEST_ASSERT_TRUE(i2c_scanner::checkAddress(Wire, 0x44, 12));
+  TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
+
+  TEST_ASSERT_FALSE(i2c_scanner::checkAddress(Wire, 0x07, 12));
+  TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
+
+  const int count = i2c_scanner::scan(Wire, 14);
+  TEST_ASSERT_EQUAL(112, count);
+  TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
 }
 
 void test_cache_updates_only_on_success() {
@@ -2275,6 +2336,53 @@ void test_public_recover_bus_reset_failure_preserves_precise_status() {
   TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
 }
 
+void test_recover_periodic_requires_break_before_success() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  cfg.recoverUseBusReset = false;
+  cfg.recoverUseSoftReset = true;
+  cfg.recoverUseHardReset = false;
+  cfg.allowGeneralCallReset = false;
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  clearFrameLog(ctx);
+
+  st = device.recover();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_FALSE(device.isPeriodicActive());
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
+  TEST_ASSERT_EQUAL(4u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[1]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_SOFT_RESET, ctx.commands[2]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[3]);
+  TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
+}
+
+void test_stop_periodic_waits_after_break() {
+  FakeTransport bus;
+  SHT3xDevice device;
+  Config cfg = makeConfig(bus);
+  device._config = cfg;
+  device._initialized = true;
+  device._driverState = DriverState::READY;
+  device._periodicActive = true;
+  device._mode = Mode::PERIODIC;
+  device._config.mode = Mode::PERIODIC;
+  device._periodMs = 100;
+  device._lastCommandValid = false;
+  bus.nowMs = 10;
+
+  Status st = device.stopPeriodic();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_FALSE(device.isPeriodicActive());
+  TEST_ASSERT_TRUE(bus.nowMs >= 12u);
+}
+
 void test_reset_and_restore_partial_alert_restore_failure_preserves_desired_cache() {
   FrameScriptTransport ctx;
   SHT3xDevice device;
@@ -2656,6 +2764,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_get_settings_snapshot_fields);
   RUN_TEST(test_begin_resets_invalid_config_to_uninit_defaults_and_no_startup_health);
+  RUN_TEST(test_begin_i2c_failure_does_not_update_health);
   RUN_TEST(test_begin_rejects_missing_timing_hooks_before_i2c);
   RUN_TEST(test_crc8_example);
   RUN_TEST(test_conversions_basic);
@@ -2666,6 +2775,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_alert_limit_quantized_roundtrip_edges);
   RUN_TEST(test_time_elapsed_wrap);
   RUN_TEST(test_command_delay_guard);
+  RUN_TEST(test_command_delay_allows_long_idle_after_microsecond_half_range);
   RUN_TEST(test_begin_rejects_oversized_timing_config);
   RUN_TEST(test_single_shot_pending_blocks_unrelated_commands);
   RUN_TEST(test_low_level_command_helpers_write_and_read);
@@ -2681,6 +2791,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_example_adapter_ambiguous_zero_bytes);
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_drains_partial_read);
+  RUN_TEST(test_wire_adapter_rejects_invalid_buffers_and_timeout);
+  RUN_TEST(test_i2c_scanner_restores_timeout);
   RUN_TEST(test_cache_updates_only_on_success);
   RUN_TEST(test_write_alert_limit_rejects_nan);
   RUN_TEST(test_reset_to_defaults_clears_cache);
@@ -2715,6 +2827,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_write_alert_limit_uses_app_note_encoder_vectors);
   RUN_TEST(test_disable_alerts_second_write_failure_exposes_partial_cache);
   RUN_TEST(test_public_recover_bus_reset_failure_preserves_precise_status);
+  RUN_TEST(test_recover_periodic_requires_break_before_success);
+  RUN_TEST(test_stop_periodic_waits_after_break);
   RUN_TEST(test_reset_and_restore_partial_alert_restore_failure_preserves_desired_cache);
   RUN_TEST(test_periodic_fetch_margin_blocks_early_fetch);
   RUN_TEST(test_raw_and_compensated_samples_remain_after_measurement_read);

@@ -32,9 +32,12 @@ inline bool checkAddress(TwoWire& wire, uint8_t addr, uint32_t timeoutMs = 50U) 
   if (addr < 0x08U || addr > 0x77U) {
     return false;
   }
+  const uint32_t previousTimeoutMs = wire.getTimeOut();
   wire.setTimeOut(timeoutMs);
   wire.beginTransmission(addr);
-  return wire.endTransmission(true) == 0;
+  const bool ok = wire.endTransmission(true) == 0;
+  wire.setTimeOut(previousTimeoutMs);
+  return ok;
 }
 
 /// Scan I2C bus and print found devices
@@ -45,8 +48,9 @@ inline int scan(TwoWire& wire = Wire, uint32_t timeoutMs = 50U) {
   LOGI("Scanning I2C bus...");
 
   int count = 0;
+  const uint32_t previousTimeoutMs = wire.getTimeOut();
+  wire.setTimeOut(timeoutMs);
   for (uint8_t addr = 0x08U; addr <= 0x77U; addr++) {
-    wire.setTimeOut(timeoutMs);
     wire.beginTransmission(addr);
     const uint8_t error = wire.endTransmission(true);
 
@@ -60,6 +64,7 @@ inline int scan(TwoWire& wire = Wire, uint32_t timeoutMs = 50U) {
       count++;
     }
   }
+  wire.setTimeOut(previousTimeoutMs);
 
   if (count == 0) {
     LOGW("No I2C devices found");
