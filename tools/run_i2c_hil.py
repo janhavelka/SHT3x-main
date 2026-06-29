@@ -531,16 +531,30 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
         match = re.search(r"\bconsecutive=(\d+)", plain)
     if match:
         parsed["consecutive_failures"] = int(match.group(1))
-    match = re.search(r"Total success:\s*(\d+)", plain)
-    if not match:
-        match = re.search(r"\bok=(\d+)", plain)
-    if match:
-        parsed["total_success"] = int(match.group(1))
-    match = re.search(r"Total failures:\s*(\d+)", plain)
-    if not match:
-        match = re.search(r"\bfail=(\d+)", plain)
-    if match:
-        parsed["total_failures"] = int(match.group(1))
+    stress_totals = None
+    if command.startswith("stress_mix"):
+        stress_totals = re.search(r"(?m)^\s*Total:\s*ok=(\d+)\s+fail=(\d+)", plain)
+    elif command.startswith("stress"):
+        stress_totals = re.search(
+            r"(?ms)^\s*Success:\s*(\d+)\s*$.*?^\s*Errors:\s*(\d+)\s*$",
+            plain,
+        )
+        if not stress_totals:
+            stress_totals = re.search(r"\bstress:\s*ok=(\d+)\s+fail=(\d+)", plain)
+    if stress_totals:
+        parsed["total_success"] = int(stress_totals.group(1))
+        parsed["total_failures"] = int(stress_totals.group(2))
+    else:
+        match = re.search(r"Total success:\s*(\d+)", plain)
+        if not match:
+            match = re.search(r"\bok=(\d+)", plain)
+        if match:
+            parsed["total_success"] = int(match.group(1))
+        match = re.search(r"Total failures:\s*(\d+)", plain)
+        if not match:
+            match = re.search(r"\bfail=(\d+)", plain)
+        if match:
+            parsed["total_failures"] = int(match.group(1))
 
     match = re.search(r"\b(?:Mode:\s*|mode=)(single|periodic|art|SINGLE_SHOT|PERIODIC|ART)", plain, re.IGNORECASE)
     if match:

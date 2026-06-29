@@ -559,6 +559,35 @@ def test_stress_mix_requires_mixed_summary_not_plain_stress() -> None:
     assert "expected output token missing" in notes
 
 
+def test_stress_parser_prefers_final_summary_over_progress() -> None:
+    parsed = hil.parse_command_output(
+        "stress 500",
+        """
+  Progress: 50/500 (10%, ok=50, fail=0)
+=== Stress Summary ===
+  Target: 500
+  Attempts: 500
+  Success: 500
+  Errors: 0
+""",
+    )
+    assert parsed["total_success"] == 500
+    assert parsed["total_failures"] == 0
+
+
+def test_stress_mix_parser_prefers_final_summary_over_progress() -> None:
+    parsed = hil.parse_command_output(
+        "stress_mix 250",
+        """
+  Progress: 25/250 (10%, ok=25, fail=0)
+=== stress_mix summary ===
+  Total: ok=250 fail=0 (100.00%)
+""",
+    )
+    assert parsed["total_success"] == 250
+    assert parsed["total_failures"] == 0
+
+
 def test_duration_soak_plan_uses_warmup_only() -> None:
     specs = hil.soak_commands(25, duration_s=8.0)
     assert len(specs) == 1
