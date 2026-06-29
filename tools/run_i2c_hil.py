@@ -145,9 +145,13 @@ def destructive_commands(include_bus_wide_reset: bool) -> list[CommandSpec]:
     return specs
 
 
-def soak_commands(count: int) -> list[CommandSpec]:
+def soak_commands(count: int, duration_s: float = 0.0) -> list[CommandSpec]:
     count = max(1, count)
     mix_count = max(1, count // 2)
+    if duration_s > 0.0:
+        return [
+            CommandSpec("stress 10", "Short stress warmup before duration-bound soak.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=90.0),
+        ]
     return [
         CommandSpec("stress 10", "Short stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=90.0),
         CommandSpec(f"stress {count}", "Configured bounded stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(count) * 3.0)),
@@ -197,6 +201,16 @@ def extra_periodic_commands() -> list[CommandSpec]:
         CommandSpec("periodic start 10 high", "Start 10 mps periodic acquisition.", group="periodic-all", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), requires_opt_in="--include-all-periodic-rates", recovery_command="periodic stop"),
         CommandSpec("periodic fetch", "Fetch one 10 mps periodic sample.", group="periodic-all", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), requires_opt_in="--include-all-periodic-rates", pre_delay_s=0.35, timeout_s=12.0),
         CommandSpec("periodic stop", "Stop 10 mps periodic acquisition.", group="periodic-all", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0"), requires_opt_in="--include-all-periodic-rates"),
+    ]
+
+
+def benchmark_commands(count: int) -> list[CommandSpec]:
+    if count <= 0:
+        return []
+    count = max(1, count)
+    return [
+        CommandSpec(f"stress {count}", "Sample-rate benchmark using bounded single-shot stress.", group="benchmark", expected_any=("Stress Summary", "stress: ok=", "stress summary"), timeout_s=max(90.0, float(count) * 3.0)),
+        CommandSpec("drv", "Final health after benchmark.", group="benchmark", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
     ]
 
 
@@ -314,10 +328,11 @@ def with_timeout(spec: CommandSpec, timeout_s: float) -> CommandSpec:
 def all_optional_specs(args: argparse.Namespace) -> list[CommandSpec]:
     return [
         *destructive_commands(args.include_bus_wide_reset),
-        *soak_commands(args.soak_count),
+        *soak_commands(args.soak_count, args.soak_duration_s),
         *clock_stretch_commands(),
         *alert_write_commands(),
         *extra_periodic_commands(),
+        *benchmark_commands(args.benchmark_count),
         *operator_specs(),
     ]
 
@@ -689,6 +704,41 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
     return errors
 
 
+def parser_self_test() -> int:
+    args = argparse.Namespace(expect_address="0x44")
+
+    version = version_step()
+    parsed = parse_command_output(
+        version.command,
+        "=== Version Info ===\n  SHT3x library version: 1.6.0\n",
+    )
+    result, notes = classify("SHT3x library version: 1.6.0\n", version, False, parsed, args)
+    if result != RESULT_PASS:
+        raise AssertionError(f"version parser failed: {notes}")
+
+    scan = next(item for item in DEFAULT_COMMAND_SEQUENCE if item.command == "scan")
+    parsed = parse_command_output(scan.command, "I2C scan:\n  Found device at 0x44\n")
+    result, notes = classify("I2C scan:\n  Found device at 0x44\n", scan, False, parsed, args)
+    if result != RESULT_PASS:
+        raise AssertionError(f"scan parser failed: {notes}")
+
+    probe = CommandSpec("probe", "failure token", expected_any=("Status:",))
+    parsed = parse_command_output(probe.command, "Status: OK\nI2C_TIMEOUT\n")
+    result, notes = classify("Status: OK\nI2C_TIMEOUT\n", probe, False, parsed, args)
+    if result != RESULT_FAIL or "failure token" not in notes:
+        raise AssertionError("failure-token classifier failed")
+
+    stress = soak_commands(10)[1]
+    if stress.command != "stress 10":
+        raise AssertionError("count-based soak command generation failed")
+    duration = soak_commands(10, duration_s=1.0)
+    if len(duration) != 1 or duration[0].command != "stress 10":
+        raise AssertionError("duration-bound soak warmup generation failed")
+
+    print("run_i2c_hil parser self-test: OK")
+    return 0
+
+
 def classify(text: str, spec: CommandSpec, timed_out: bool, parsed: dict[str, Any], args: argparse.Namespace) -> tuple[str, str]:
     if spec.operator_check:
         return RESULT_OPERATOR, "OPERATOR_REVIEW_REQUIRED"
@@ -789,6 +839,83 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
     parsed = parse_command_output(spec.command, output)
     result, note = classify(output, spec, reason == "timeout", parsed, args)
     return result_row(spec, result, note, time.monotonic() - start, output, reason, parsed)
+
+
+def duration_soak_cycle_specs(args: argparse.Namespace, cycle: int) -> list[CommandSpec]:
+    chunk_count = max(1, args.soak_chunk_count)
+    mix_count = max(1, chunk_count // 2)
+    cycle_note = f"duration-cycle={cycle}"
+    specs = [
+        CommandSpec(f"stress {chunk_count}", "Duration-bound single-shot stress chunk.", group="duration-soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), timeout_s=max(90.0, float(chunk_count) * 3.0), notes=cycle_note),
+        CommandSpec("raw", "Read cached raw sample during duration soak.", group="duration-soak", expected_any=("Raw:", "rawT=0x"), validators=("raw_sample",), notes=cycle_note),
+        CommandSpec("comp", "Read cached fixed-point sample during duration soak.", group="duration-soak", expected_any=("Comp:", "tempC_x100="), validators=("comp_sample",), notes=cycle_note),
+        CommandSpec(f"stress_mix {mix_count}", "Duration-bound mixed-operation stress chunk.", group="duration-soak", expected_any=("stress_mix summary", "Total:", "stress_mix"), timeout_s=max(90.0, float(mix_count) * 2.0), notes=cycle_note),
+    ]
+    if cycle % 2 == 0:
+        specs.extend([
+            CommandSpec("periodic start 10 high", "Duration-soak 10 mps periodic start.", group="duration-soak", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop", notes=cycle_note),
+            CommandSpec("periodic fetch", "Duration-soak periodic fetch.", group="duration-soak", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), pre_delay_s=0.35, timeout_s=12.0, notes=cycle_note),
+            CommandSpec("periodic stop", "Duration-soak periodic stop.", group="duration-soak", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0"), notes=cycle_note),
+        ])
+    if cycle % 3 == 0:
+        specs.extend([
+            CommandSpec("art start", "Duration-soak ART start.", group="duration-soak", expected_any=("art start: OK", "start_art: OK", "Status: OK", "art start: OK code=0"), recovery_command="art stop", unsupported_ok=True, notes=cycle_note),
+            CommandSpec("art fetch", "Duration-soak ART fetch.", group="duration-soak", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), pre_delay_s=1.0, timeout_s=12.0, unsupported_ok=True, notes=cycle_note),
+            CommandSpec("art stop", "Duration-soak ART stop.", group="duration-soak", expected_any=("art stop: OK", "stop_periodic: OK", "Status: OK", "art stop: OK code=0"), unsupported_ok=True, notes=cycle_note),
+        ])
+    if args.soak_recover_every > 0 and cycle % args.soak_recover_every == 0:
+        specs.append(CommandSpec("recover", "Optional manual recovery during duration soak.", group="duration-soak", expected_any=("recover: OK", "Status: OK"), timeout_s=20.0, notes=f"{cycle_note} configured by --soak-recover-every"))
+    specs.extend([
+        CommandSpec("probe", "Duration-soak diagnostic probe without health side effect.", group="duration-soak", expected_any=("Status: OK", "probe: OK", "probe: OK code=0"), notes=cycle_note),
+        CommandSpec("drv", "Duration-soak health snapshot.", group="duration-soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), notes=cycle_note),
+        CommandSpec("settings", "Duration-soak settings snapshot.", group="duration-soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), notes=cycle_note),
+    ])
+    return [with_timeout(spec, args.timeout) for spec in specs]
+
+
+def duration_soak_marker(args: argparse.Namespace) -> CommandSpec:
+    return CommandSpec(
+        f"duration_soak {args.soak_duration_s:.3f}s",
+        "Duration-bound soak loop.",
+        group="duration-soak",
+        send=False,
+        requires_opt_in="--include-soak",
+        notes=f"chunk_count={max(1, args.soak_chunk_count)} recover_every={args.soak_recover_every}",
+    )
+
+
+def run_duration_soak(ser: object, args: argparse.Namespace) -> list[dict[str, Any]]:
+    duration_s = max(0.0, float(args.soak_duration_s))
+    if duration_s <= 0.0:
+        return []
+    results: list[dict[str, Any]] = []
+    start = time.monotonic()
+    deadline = start + duration_s
+    cycle = 0
+    while time.monotonic() < deadline:
+        cycle += 1
+        for spec in duration_soak_cycle_specs(args, cycle):
+            if time.monotonic() >= deadline:
+                break
+            row = run_serial(ser, spec, args.idle, args)
+            results.append(row)
+            recovery = recovery_spec_for(spec)
+            if row["result"] == RESULT_FAIL and recovery is not None:
+                results.append(run_serial(ser, recovery, args.idle, args))
+            if row["result"] == RESULT_FAIL:
+                return results
+    elapsed = time.monotonic() - start
+    marker = dataclasses.replace(
+        duration_soak_marker(args),
+        notes=f"requested_s={duration_s:.3f} actual_s={elapsed:.3f} cycles={cycle}",
+    )
+    results.append(result_row(marker, RESULT_PASS, "", elapsed, "", "duration-complete", {}))
+    for spec in (
+        CommandSpec("drv", "Final health after duration-bound soak.", group="duration-soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
+        CommandSpec("settings", "Final settings after duration-bound soak.", group="duration-soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",)),
+    ):
+        results.append(run_serial(ser, with_timeout(spec, args.timeout), args.idle, args))
+    return results
 
 
 def run_dry(spec: CommandSpec) -> dict[str, Any]:
@@ -915,10 +1042,17 @@ def write_environment(path: Path, args: argparse.Namespace, state: dict[str, str
         fh.write(f"worktree_clean={state['worktree_clean']}\n")
         fh.write(f"port={args.port or '<dry-run>'}\n")
         fh.write(f"baud={args.baud}\n")
+        fh.write(f"boot_settle_s={args.boot_settle_s}\n")
+        fh.write(f"reconnect_attempts={args.reconnect_attempts}\n")
+        fh.write(f"reconnect_delay_s={args.reconnect_delay_s}\n")
+        fh.write(f"serial_reset={args.serial_reset}\n")
         fh.write(f"board={args.board}\n")
         fh.write(f"target_name={args.target_name}\n")
         fh.write(f"operator={args.operator}\n")
         fh.write(f"expected_address={args.expect_address}\n")
+        fh.write(f"soak_duration_s={args.soak_duration_s}\n")
+        fh.write(f"soak_chunk_count={args.soak_chunk_count}\n")
+        fh.write(f"benchmark_count={args.benchmark_count}\n")
         fh.write(f"firmware_version={aggregate.get('firmware_version', '')}\n")
         fh.write(f"library_version={aggregate.get('library_version', '')}\n")
 
@@ -949,6 +1083,7 @@ def write_summary_md(path: Path, args: argparse.Namespace, log_dir: Path, result
         fh.write(f"Date/time UTC: {iso_timestamp()}\n\n")
         fh.write(f"Branch: `{state['branch']}`\n\nCommit: `{state['commit']}`\n\nWorktree state: `{dirty}`\n\n")
         fh.write(f"Serial port: `{args.port or '<dry-run>'}`\n\nBaud rate: `{args.baud}`\n\n")
+        fh.write(f"Boot settle: `{args.boot_settle_s}` s\n\nReconnect attempts: `{args.reconnect_attempts}`\n\n")
         fh.write(f"Board: `{args.board}`\n\nTarget name: `{args.target_name}`\n\nOperator: `{args.operator}`\n\n")
         fh.write(f"Firmware version: `{aggregate.get('firmware_version') or '<not parsed>'}`\n\n")
         fh.write(f"Library version: `{aggregate.get('library_version') or '<not parsed>'}`\n\n")
@@ -1006,6 +1141,10 @@ def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, resu
         "worktree_clean": state["worktree_clean"] == "true",
         "port": args.port or "",
         "baud": args.baud,
+        "boot_settle_s": args.boot_settle_s,
+        "reconnect_attempts": args.reconnect_attempts,
+        "reconnect_delay_s": args.reconnect_delay_s,
+        "serial_reset": args.serial_reset,
         "board": args.board,
         "target_name": args.target_name,
         "operator": args.operator,
@@ -1013,6 +1152,9 @@ def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, resu
         "library_version": aggregate.get("library_version", ""),
         "i2c_addresses_seen": aggregate.get("i2c_addresses_seen", []),
         "expected_address": args.expect_address,
+        "soak_duration_s": args.soak_duration_s,
+        "soak_chunk_count": args.soak_chunk_count,
+        "benchmark_count": args.benchmark_count,
         "dry_run": args.dry_run,
         "initial_serial_output_present": bool(initial_output),
         "commands": [json_command(row) for row in results],
@@ -1024,7 +1166,7 @@ def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, resu
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def open_serial(args: argparse.Namespace) -> object:
+def open_serial_once(args: argparse.Namespace) -> object:
     try:
         import serial  # type: ignore
     except ImportError as exc:
@@ -1032,10 +1174,29 @@ def open_serial(args: argparse.Namespace) -> object:
         print(f"Install with: {PY_SERIAL_INSTALL_HINT}", file=sys.stderr)
         raise SystemExit(2) from exc
     ser = serial.Serial(port=args.port, baudrate=args.baud, timeout=0.05, write_timeout=2)
+    if args.serial_reset:
+        ser.dtr = True
+        ser.rts = True
+        time.sleep(0.1)
     ser.dtr = False
     ser.rts = False
-    time.sleep(1.0)
+    time.sleep(max(0.0, args.boot_settle_s))
     return ser
+
+
+def open_serial(args: argparse.Namespace) -> object:
+    attempts = max(1, args.reconnect_attempts)
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return open_serial_once(args)
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 < attempts:
+                time.sleep(max(0.0, args.reconnect_delay_s))
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("serial open failed")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1045,7 +1206,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out", default="hil_logs")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     parser.add_argument("--idle", type=float, default=DEFAULT_IDLE_S)
+    parser.add_argument("--boot-settle-s", type=float, default=1.0)
+    parser.add_argument("--reconnect-attempts", type=int, default=1)
+    parser.add_argument("--reconnect-delay-s", type=float, default=1.0)
+    parser.add_argument("--serial-reset", action="store_true", help="Pulse DTR/RTS before the boot settle wait.")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--parser-self-test", action="store_true")
     parser.add_argument("--commands", help="Optional command file, one CLI command per line.")
     parser.add_argument("--include-destructive", action="store_true")
     parser.add_argument("--include-soak", action="store_true")
@@ -1056,6 +1222,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--include-all-periodic-rates", action="store_true")
     parser.add_argument("--include-bus-wide-reset", action="store_true")
     parser.add_argument("--soak-count", type=int, default=100)
+    parser.add_argument("--soak-duration-s", type=float, default=0.0)
+    parser.add_argument("--soak-chunk-count", type=int, default=50)
+    parser.add_argument("--soak-recover-every", type=int, default=0, help="Run recover every N duration-soak cycles; 0 disables.")
+    parser.add_argument("--benchmark-count", type=int, default=0)
     parser.add_argument("--expect-address", default="0x44")
     parser.add_argument("--board", default="unspecified")
     parser.add_argument("--target-name", default="unspecified")
@@ -1065,6 +1235,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.parser_self_test:
+        return parser_self_test()
     if args.include_bus_wide_reset and not args.include_destructive:
         print("--include-bus-wide-reset requires --include-destructive", file=sys.stderr)
         return 2
@@ -1080,6 +1252,8 @@ def main(argv: list[str]) -> int:
     initial_output = ""
     if args.dry_run:
         results = [run_dry(spec) for spec in specs]
+        if args.include_soak and args.soak_duration_s > 0.0:
+            results.append(run_dry(duration_soak_marker(args)))
     else:
         ser = open_serial(args)
         try:
@@ -1090,6 +1264,8 @@ def main(argv: list[str]) -> int:
                 recovery = recovery_spec_for(spec)
                 if row["result"] == RESULT_FAIL and recovery is not None:
                     results.append(run_serial(ser, recovery, args.idle, args))
+            if args.include_soak and args.soak_duration_s > 0.0 and RESULT_FAIL not in {str(row["result"]) for row in results}:
+                results.extend(run_duration_soak(ser, args))
         finally:
             ser.close()
 

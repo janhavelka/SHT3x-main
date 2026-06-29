@@ -510,6 +510,32 @@ def test_stress_mix_requires_mixed_summary_not_plain_stress() -> None:
     assert "expected output token missing" in notes
 
 
+def test_duration_soak_plan_uses_warmup_only() -> None:
+    specs = hil.soak_commands(25, duration_s=8.0)
+    assert len(specs) == 1
+    assert specs[0].command == "stress 10"
+    assert "warmup" in specs[0].purpose
+
+
+def test_duration_soak_cycle_specs_are_bounded() -> None:
+    args = argparse.Namespace(
+        soak_chunk_count=8,
+        soak_recover_every=0,
+        timeout=hil.DEFAULT_TIMEOUT_S,
+    )
+    specs = hil.duration_soak_cycle_specs(args, cycle=6)
+    commands = [spec.command for spec in specs]
+    assert "stress 8" in commands
+    assert "stress_mix 4" in commands
+    assert "periodic start 10 high" in commands
+    assert "art start" in commands
+    assert all(spec.timeout_s >= hil.DEFAULT_TIMEOUT_S for spec in specs)
+
+
+def test_parser_self_test() -> None:
+    assert hil.parser_self_test() == 0
+
+
 def test_serial_unsupported_response_skips_without_timeout() -> None:
     spec = hil.CommandSpec(
         "art start",
