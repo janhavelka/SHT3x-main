@@ -19,6 +19,8 @@ ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_IDLE_S = 0.35
+ASYNC_SAMPLE_NUDGE_INTERVAL_S = 0.25
+ASYNC_SAMPLE_NUDGE_COMMAND = b"online\n"
 CLAIM_BOUNDARY = (
     "PASS is limited to the selected automated serial command groups. It does "
     "not prove humidity accuracy, physical ALERT pin behavior, fault injection, "
@@ -424,7 +426,12 @@ def parse_i2c_addresses(command: str, text: str) -> list[str]:
         return []
     addresses: set[str] = set()
     for line in strip_ansi(text).splitlines():
-        if "Common addresses" in line:
+        lowered = line.lower()
+        if "common addresses" in lowered or "known:" in lowered:
+            continue
+        found = re.search(r"found device at\s+0x([0-7][0-9A-Fa-f])\b", line, re.IGNORECASE)
+        if found:
+            addresses.add(f"0x{found.group(1).upper()}")
             continue
         for match in re.finditer(r"\b0x([0-7][0-9A-Fa-f])\b", line):
             addresses.add(f"0x{match.group(1).upper()}")
@@ -814,17 +821,47 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
     tokens = spec.completion or spec.expected or spec.expected_any
     parts: list[str] = []
     last_rx = start
+    last_async_nudge = start
     reason = "timeout"
-    ser.write((spec.command + "\n").encode("utf-8"))
-    ser.flush()
+    try:
+        ser.write((spec.command + "\n").encode("utf-8"))
+        ser.flush()
+    except Exception as exc:
+        return result_row(
+            spec,
+            RESULT_FAIL,
+            f"serial write exception: {exc!r}",
+            time.monotonic() - start,
+            "",
+            "serial-exception",
+            {},
+        )
     while time.monotonic() < deadline:
-        chunk = read_available(ser)
         now = time.monotonic()
+        try:
+            chunk = read_available(ser)
+        except Exception as exc:
+            output = "".join(parts)
+            parsed = parse_command_output(spec.command, output)
+            return result_row(
+                spec,
+                RESULT_FAIL,
+                f"serial read exception: {exc!r}",
+                now - start,
+                output,
+                "serial-exception",
+                parsed,
+            )
         if chunk:
             parts.append(chunk)
             last_rx = now
         plain = strip_ansi("".join(parts))
+        measurement_required = "measurement_plausible" in spec.validators
+        measurement_seen = "Temp:" in plain or "temperature=" in plain
+        scheduled_sample = "Measurement scheduled" in plain or "request: IN_PROGRESS" in plain
         token_seen = bool(tokens) and any(token in plain for token in tokens)
+        if measurement_required and not measurement_seen:
+            token_seen = False
         unsupported_seen = has_unsupported(plain, spec)
         idle = (now - last_rx) >= idle_s
         prompt_seen = plain.rstrip().endswith(">")
@@ -834,6 +871,29 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
             else:
                 reason = "completion-token+idle" if token_seen else "serial-idle"
             break
+        if (
+            measurement_required
+            and scheduled_sample
+            and not measurement_seen
+            and idle
+            and now - last_async_nudge >= ASYNC_SAMPLE_NUDGE_INTERVAL_S
+        ):
+            try:
+                ser.write(ASYNC_SAMPLE_NUDGE_COMMAND)
+                ser.flush()
+            except Exception as exc:
+                output = "".join(parts)
+                parsed = parse_command_output(spec.command, output)
+                return result_row(
+                    spec,
+                    RESULT_FAIL,
+                    f"serial nudge exception: {exc!r}",
+                    now - start,
+                    output,
+                    "serial-exception",
+                    parsed,
+                )
+            last_async_nudge = now
         time.sleep(0.02)
     output = "".join(parts)
     parsed = parse_command_output(spec.command, output)
@@ -899,9 +959,12 @@ def run_duration_soak(ser: object, args: argparse.Namespace) -> list[dict[str, A
                 break
             row = run_serial(ser, spec, args.idle, args)
             results.append(row)
+            append_progress(args, row)
             recovery = recovery_spec_for(spec)
             if row["result"] == RESULT_FAIL and recovery is not None:
-                results.append(run_serial(ser, recovery, args.idle, args))
+                recovery_row = run_serial(ser, recovery, args.idle, args)
+                results.append(recovery_row)
+                append_progress(args, recovery_row)
             if row["result"] == RESULT_FAIL:
                 return results
     elapsed = time.monotonic() - start
@@ -910,11 +973,14 @@ def run_duration_soak(ser: object, args: argparse.Namespace) -> list[dict[str, A
         notes=f"requested_s={duration_s:.3f} actual_s={elapsed:.3f} cycles={cycle}",
     )
     results.append(result_row(marker, RESULT_PASS, "", elapsed, "", "duration-complete", {}))
+    append_progress(args, results[-1])
     for spec in (
         CommandSpec("drv", "Final health after duration-bound soak.", group="duration-soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
         CommandSpec("settings", "Final settings after duration-bound soak.", group="duration-soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",)),
     ):
-        results.append(run_serial(ser, with_timeout(spec, args.timeout), args.idle, args))
+        row = run_serial(ser, with_timeout(spec, args.timeout), args.idle, args)
+        results.append(row)
+        append_progress(args, row)
     return results
 
 
@@ -983,6 +1049,18 @@ def json_command(row: dict[str, Any]) -> dict[str, Any]:
         "completion_reason": row.get("completion_reason", ""),
         "requires_opt_in": row.get("requires_opt_in"),
     }
+
+
+def append_progress(args: argparse.Namespace, row: dict[str, Any]) -> None:
+    path_text = getattr(args, "progress_path", "")
+    if not path_text:
+        return
+    payload = {
+        "timestamp_utc": iso_timestamp(),
+        **json_command(row),
+    }
+    with Path(path_text).open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def write_transcript(path: Path, args: argparse.Namespace, results: list[dict[str, Any]], initial_output: str) -> None:
@@ -1109,7 +1187,7 @@ def write_summary_md(path: Path, args: argparse.Namespace, log_dir: Path, result
         fh.write(f"\n## Final Verdict\n\n`{final}`\n\n")
         fh.write(f"## Claim Boundary\n\n{CLAIM_BOUNDARY}\n\n")
         fh.write("## Artifacts\n\n")
-        for name in ("serial_transcript.txt", "summary.md", "summary.json", "operator_checklist.md", "environment.txt"):
+        for name in ("serial_transcript.txt", "summary.md", "summary.json", "progress.jsonl", "operator_checklist.md", "environment.txt"):
             fh.write(f"- `{log_dir / name}`\n")
         if args.include_output_tests or args.include_fault_tests:
             for name in ("operator_notes.md", "photos_or_evidence_manifest.md", "alert_gpio_capture.csv", "logic_analyzer_reference.txt"):
@@ -1123,6 +1201,7 @@ def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, resu
         "serial_transcript": str(log_dir / "serial_transcript.txt"),
         "summary_md": str(log_dir / "summary.md"),
         "summary_json": str(path),
+        "progress_jsonl": str(log_dir / "progress.jsonl"),
         "operator_checklist": str(log_dir / "operator_checklist.md"),
         "environment": str(log_dir / "environment.txt"),
     }
@@ -1247,13 +1326,19 @@ def main(argv: list[str]) -> int:
         return 2
 
     log_dir = make_log_dir(Path(args.out))
+    args.progress_path = str(log_dir / "progress.jsonl")
     specs, skipped = build_plan(args)
     results: list[dict[str, Any]] = []
     initial_output = ""
     if args.dry_run:
-        results = [run_dry(spec) for spec in specs]
+        for spec in specs:
+            row = run_dry(spec)
+            results.append(row)
+            append_progress(args, row)
         if args.include_soak and args.soak_duration_s > 0.0:
-            results.append(run_dry(duration_soak_marker(args)))
+            row = run_dry(duration_soak_marker(args))
+            results.append(row)
+            append_progress(args, row)
     else:
         ser = open_serial(args)
         try:
@@ -1261,9 +1346,12 @@ def main(argv: list[str]) -> int:
             for spec in specs:
                 row = run_serial(ser, spec, args.idle, args)
                 results.append(row)
+                append_progress(args, row)
                 recovery = recovery_spec_for(spec)
                 if row["result"] == RESULT_FAIL and recovery is not None:
-                    results.append(run_serial(ser, recovery, args.idle, args))
+                    recovery_row = run_serial(ser, recovery, args.idle, args)
+                    results.append(recovery_row)
+                    append_progress(args, recovery_row)
             if args.include_soak and args.soak_duration_s > 0.0 and RESULT_FAIL not in {str(row["result"]) for row in results}:
                 results.extend(run_duration_soak(ser, args))
         finally:

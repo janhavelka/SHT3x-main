@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -39,6 +41,42 @@ class FakeSerial:
 
     def read(self, _size: int) -> bytes:
         return self._chunks.pop(0) if self._chunks else b""
+
+
+class AsyncSampleSerial:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+        self._scheduled_sent = False
+        self._sample_sent = False
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    def flush(self) -> None:
+        pass
+
+    def read(self, _size: int) -> bytes:
+        if not self._scheduled_sent:
+            self._scheduled_sent = True
+            return b"periodic fetch: IN_PROGRESS code=10 detail=0 msg=Measurement scheduled\n> "
+        if len(self.writes) > 1 and not self._sample_sent:
+            self._sample_sent = True
+            return b"Temp: 27.81 C, Humidity: 42.95 %\n"
+        return b""
+
+
+class ReadErrorSerial:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    def flush(self) -> None:
+        pass
+
+    def read(self, _size: int) -> bytes:
+        raise OSError("synthetic serial read failure")
 
 
 def fake_args() -> argparse.Namespace:
@@ -128,6 +166,17 @@ def test_missing_expected_address_fails() -> None:
     assert parsed["i2c_addresses_seen"] == ["0x45"]
     assert result == hil.RESULT_FAIL
     assert "expected address 0x44 not seen" in notes
+
+
+def test_scan_parser_ignores_known_address_documentation() -> None:
+    parsed = hil.parse_command_output(
+        "scan",
+        "I2C scan:\n"
+        "  Found device at 0x3C\n"
+        "  Found device at 0x44 (0x44/0x45=SHT3x)\n"
+        "Known: 0x44/0x45=SHT3x, 0x76/0x77=BME280/BMP280\n",
+    )
+    assert parsed["i2c_addresses_seen"] == ["0x3C", "0x44"]
 
 
 def test_configured_address_mismatch_fails() -> None:
@@ -550,6 +599,30 @@ def test_serial_unsupported_response_skips_without_timeout() -> None:
     assert row["completion_reason"] == "unsupported-token+idle"
 
 
+def test_async_measurement_wait_sends_online_nudge() -> None:
+    spec = hil.CommandSpec(
+        "periodic fetch",
+        "async periodic fetch",
+        expected_any=("Temp:", "temperature="),
+        validators=("measurement_plausible",),
+        timeout_s=1.0,
+    )
+    ser = AsyncSampleSerial()
+    row = hil.run_serial(ser, spec, idle_s=0.0, args=fake_args())
+    assert row["result"] == hil.RESULT_PASS, row["notes"]
+    assert row["parsed"]["temperature_c"] == 27.81
+    assert len(ser.writes) >= 2
+    assert ser.writes[1] == b"online\n"
+
+
+def test_serial_read_exception_returns_fail_row() -> None:
+    spec = hil.CommandSpec("drv", "health", expected_any=("Driver Health",))
+    row = hil.run_serial(ReadErrorSerial(), spec, idle_s=0.0, args=fake_args())
+    assert row["result"] == hil.RESULT_FAIL
+    assert row["completion_reason"] == "serial-exception"
+    assert "serial read exception" in row["notes"]
+
+
 def test_optional_command_i2c_timeout_fails_not_unsupported() -> None:
     spec = hil.CommandSpec(
         "art start",
@@ -568,6 +641,26 @@ def test_summary_markdown_lists_itself_as_artifact() -> None:
         isinstance(value, tuple) and "summary.md" in value and "summary.json" in value
         for value in hil.write_summary_md.__code__.co_consts
     )
+
+
+def test_append_progress_writes_compact_jsonl() -> None:
+    row = hil.result_row(
+        hil.version_step(),
+        hil.RESULT_PASS,
+        "",
+        0.123,
+        "verbose serial output should stay out of progress",
+        "completion-token+idle",
+        {"library_version": "1.6.0"},
+    )
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "progress.jsonl"
+        hil.append_progress(argparse.Namespace(progress_path=str(path)), row)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["command"] == "version"
+    assert payload["result"] == hil.RESULT_PASS
+    assert payload["parsed"]["library_version"] == "1.6.0"
+    assert "output" not in payload
 
 
 def test_operator_required_classification() -> None:
