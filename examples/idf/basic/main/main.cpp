@@ -505,6 +505,14 @@ SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& measurement) {
   return gDevice.getMeasurement(measurement);
 }
 
+SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& measurement) {
+  SHT3x::Status st = gDevice.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
+  if (!st.ok()) {
+    return st;
+  }
+  return performMeasurementBlocking(measurement);
+}
+
 void runStress(uint32_t count) {
   uint32_t ok = 0;
   uint32_t fail = 0;
@@ -551,7 +559,7 @@ void runStressMix(uint32_t count) {
     switch (op) {
       case 0: {
         SHT3x::Measurement measurement{};
-        st = performMeasurementBlocking(measurement);
+        st = performNoStretchMeasurementBlocking(measurement);
         break;
       }
       case 1: {
@@ -607,6 +615,7 @@ void runStressMix(uint32_t count) {
                 static_cast<unsigned long>(stats[i].ok),
                 static_cast<unsigned long>(stats[i].fail));
   }
+  (void)gDevice.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
 }
 
 void runSelftest() {

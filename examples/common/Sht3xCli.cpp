@@ -763,6 +763,9 @@ void finishStressStats() {
 
 SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& out, uint32_t timeoutMs = 500) {
   SHT3x::Status st = deviceInstance.requestMeasurement();
+  if (st.code == SHT3x::Err::BUSY && !deviceInstance.measurementPending()) {
+    return st;
+  }
   if (st.code != SHT3x::Err::IN_PROGRESS && st.code != SHT3x::Err::BUSY) {
     return st;
   }
@@ -776,6 +779,16 @@ SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& out, uint32_t timeo
     yield();
   }
   return SHT3x::Status::Error(SHT3x::Err::TIMEOUT, "measurement timeout", timeoutMs);
+}
+
+SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
+                                                  uint32_t timeoutMs = 500) {
+  SHT3x::Status st =
+      deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
+  if (!st.ok()) {
+    return st;
+  }
+  return performMeasurementBlocking(out, timeoutMs);
 }
 
 void runStressMix(int count) {
@@ -815,7 +828,7 @@ void runStressMix(int count) {
     switch (op) {
       case 0: {
         SHT3x::Measurement m;
-        st = performMeasurementBlocking(m);
+        st = performNoStretchMeasurementBlocking(m);
         break;
       }
       case 1: {
@@ -928,6 +941,7 @@ void runStressMix(int count) {
       printStatus(lastFailure);
     }
   }
+  (void)deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
 }
 
 void runSelfTest() {
