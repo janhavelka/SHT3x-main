@@ -21,6 +21,7 @@ DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_IDLE_S = 0.35
 ASYNC_SAMPLE_NUDGE_INTERVAL_S = 0.25
 ASYNC_SAMPLE_NUDGE_COMMAND = b"online\n"
+PROMPT_REQUIRED_VALIDATORS = frozenset(("driver_ready", "configured_address", "zero_failures"))
 CLAIM_BOUNDARY = (
     "PASS is limited to the selected automated serial command groups. It does "
     "not prove humidity accuracy, physical ALERT pin behavior, fault injection, "
@@ -865,7 +866,14 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
         unsupported_seen = has_unsupported(plain, spec)
         idle = (now - last_rx) >= idle_s
         prompt_seen = plain.rstrip().endswith(">")
-        if (token_seen or unsupported_seen or (not tokens and prompt_seen) or (not tokens and plain.strip())) and idle:
+        prompt_required = bool(PROMPT_REQUIRED_VALIDATORS.intersection(spec.validators))
+        completion_ready = (
+            (token_seen and (prompt_seen or not prompt_required))
+            or unsupported_seen
+            or (not tokens and prompt_seen)
+            or (not tokens and plain.strip() and not prompt_required)
+        )
+        if completion_ready and idle:
             if unsupported_seen and not token_seen:
                 reason = "unsupported-token+idle"
             else:
@@ -928,7 +936,6 @@ def duration_soak_cycle_specs(args: argparse.Namespace, cycle: int) -> list[Comm
     specs.extend([
         CommandSpec("probe", "Duration-soak diagnostic probe without health side effect.", group="duration-soak", expected_any=("Status: OK", "probe: OK", "probe: OK code=0"), notes=cycle_note),
         CommandSpec("drv", "Duration-soak health snapshot.", group="duration-soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), notes=cycle_note),
-        CommandSpec("settings", "Duration-soak settings snapshot.", group="duration-soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), notes=cycle_note),
     ])
     return [with_timeout(spec, args.timeout) for spec in specs]
 

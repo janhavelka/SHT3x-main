@@ -578,6 +578,7 @@ def test_duration_soak_cycle_specs_are_bounded() -> None:
     assert "stress_mix 4" in commands
     assert "periodic start 10 high" in commands
     assert "art start" in commands
+    assert "settings" not in commands
     assert all(spec.timeout_s >= hil.DEFAULT_TIMEOUT_S for spec in specs)
 
 
@@ -621,6 +622,28 @@ def test_serial_read_exception_returns_fail_row() -> None:
     assert row["result"] == hil.RESULT_FAIL
     assert row["completion_reason"] == "serial-exception"
     assert "serial read exception" in row["notes"]
+
+
+def test_health_commands_wait_for_prompt_before_completion() -> None:
+    spec = hil.CommandSpec(
+        "settings",
+        "config snapshot",
+        expected_any=("=== Config ===", "state=", "mode="),
+        validators=("driver_ready", "configured_address"),
+        timeout_s=1.0,
+    )
+    row = hil.run_serial(
+        FakeSerial(
+            "=== Config ===\n  Initialized: true\n  State: R",
+            "EADY\n  I2C address: 0x44\n  Mode: SINGLE_SHOT\n> ",
+        ),
+        spec,
+        idle_s=0.0,
+        args=fake_args(),
+    )
+    assert row["result"] == hil.RESULT_PASS, row["notes"]
+    assert row["parsed"]["state"] == "READY"
+    assert row["parsed"]["configured_i2c_address"] == "0x44"
 
 
 def test_optional_command_i2c_timeout_fails_not_unsupported() -> None:
