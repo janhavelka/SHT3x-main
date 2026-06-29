@@ -14,29 +14,28 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-This tree is prepared as release `v1.6.0`. Local software checks for the
-release commit have passed for native tests (76/76), guard scripts, Doxygen,
-package packing, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
+This tree is prepared as release `v1.6.1`. Local software checks for the
+release commit have passed for native tests (85/85), guard scripts, package
+packing, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
 in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
 or local ESP-IDF build log.
 
-Hardware validation remains incomplete. A release-readiness default
-serial HIL run passed on ESP32-S3/COM17 at address `0x44` for code commit
-`7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`, and the flashed firmware reported
-matching clean git metadata. The maintained evidence summary is
-`docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md`. This is still
-only the default automated serial sequence. ALERT pin behavior, humidity
-accuracy, fault injection, ESP32-S2 hardware, clock stretching, address `0x45`,
-alert writes, destructive reset groups, and soak evidence remain pending. Every
-unexecuted hardware row stays `Not run`.
+Hardware validation remains incomplete. The latest maintained COM20 report is
+`docs/reports/hil-validation-COM20-20260629.md`: destructive/all-round ESP32-S3
+serial HIL passed all executable commands at SHT3x address `0x44`, and a
+post-reboot smoke run passed. The requested long soak was interrupted by a
+Windows/pyserial host serial error before the requested duration completed, so
+long-soak stability is not claimed. ALERT pin behavior, humidity accuracy,
+fault injection, ESP32-S2 hardware, address `0x45`, and an uninterrupted long
+soak remain pending. Every unexecuted hardware row stays `Not run`.
 
-Version metadata is `1.6.0` in `library.json`, `idf_component.yml`, Doxyfile,
+Version metadata is `1.6.1` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
 
-Next step: use the HIL runbook or host-side serial HIL runner for the remaining
-hardware-only rows, then attach the corresponding fixture evidence.
+Next step: run the host-side serial HIL soak to completion and attach the
+corresponding fixture evidence.
 
 ## Installation
 

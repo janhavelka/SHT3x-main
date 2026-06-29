@@ -1,6 +1,6 @@
 # SHT3x Documentation
 
-Last updated: 2026-06-16
+Last updated: 2026-06-29
 
 This directory keeps only maintained project documentation and source reference
 material. Historical audit reports, prompt captures, implementation journals,
@@ -14,15 +14,16 @@ and generated PDF text dumps are intentionally not part of the active docs tree.
 | [esp-idf.md](esp-idf.md) | ESP-IDF component/example boundary, adapter contract, and validation commands. |
 | [reference/README.md](reference/README.md) | Vendor source-document inventory and local chip notes. |
 | [hil/](hil/) | Curated hardware evidence summaries only. Generated `hil_logs/` output stays local unless deliberately curated. |
+| [reports/](reports/) | Detailed hardware validation and audit reports. |
 
 ## Current Status
 
-- Version metadata is `1.6.0` in `library.json`, `idf_component.yml`, Doxyfile,
+- Version metadata is `1.6.1` in `library.json`, `idf_component.yml`, Doxyfile,
   and generated `include/SHT3x/Version.h`.
-- Latest curated hardware evidence is
-  [hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md](hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md).
-- That evidence covers only the default automated ESP32-S3 serial command
-  sequence at address `0x44`.
+- Latest maintained hardware evidence is
+  [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md).
+- That evidence covers COM20 ESP32-S3 destructive serial HIL and post-reboot
+  smoke at address `0x44`; long-soak stability remains incomplete.
 - Pure ESP-IDF S2/S3 builds are configured in CI. Use a passing CI log or local
   ESP-IDF build log before claiming pure ESP-IDF validation.
 
@@ -45,8 +46,8 @@ spreadsheets, audit leftovers, and prompt history.
 ## Claim Boundary
 
 Safe wording today: software-hardened, locally software-tested, CI-configured,
-and default ESP32-S3 serial HIL smoke passed for the curated `7847ed0` evidence
-summary.
+and COM20 ESP32-S3 destructive serial HIL plus post-reboot smoke passed at
+address `0x44`.
 
 Do not claim full hardware validation, physical ALERT pin validation, humidity
 accuracy validation, pure ESP-IDF validation, fault-injection validation,

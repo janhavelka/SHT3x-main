@@ -1,12 +1,14 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-06-16
+Last updated: 2026-06-29
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
 behavior, board layout, fixture quality, or sensor accuracy.
 
-No physical HIL validation was performed by a dry run.
+No physical HIL validation was performed by a dry run. Physical HIL evidence is
+limited to the serial transcripts and reports listed below. Dry runs remain
+parser/planning checks only.
 
 ACK alone is not chip identity. A bus scan proves only that something
 acknowledged an address. Stronger SHT3x evidence is a CRC-checked status read,
@@ -17,14 +19,32 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | Passed locally during `v1.6.0` release preparation. | Test log from the target commit. |
-| Arduino PlatformIO ESP32-S3/S2 builds | Passed locally during `v1.6.0` release preparation. | Build logs from the target commit. |
+| Native tests | Passed locally during `v1.6.1` release preparation. | Test log from the target commit. |
+| Arduino PlatformIO ESP32-S3/S2 builds | Passed locally during `v1.6.1` release preparation. | Build logs from the target commit. |
 | Pure ESP-IDF ESP32-S3/S2 builds | CI configured; local `idf.py` availability depends on the shell. | Passing GitHub CI log or local ESP-IDF 5.4+ build log. |
-| Package validation | `platformio pkg pack` passed locally during `v1.6.0` release preparation. | Package command log and content inspection from the final target commit. |
+| Package validation | `platformio pkg pack` passed locally during `v1.6.1` release preparation. | Package command log and content inspection from the final target commit. |
 
 ## Current Curated Evidence
 
-Latest curated default serial HIL evidence:
+Latest maintained serial HIL evidence:
+
+- COM20 report: [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md)
+- Source runs:
+  `hil_logs/i2c_20260629T134150Z/summary.md`,
+  `hil_logs/i2c_20260629T140211Z/progress.jsonl`,
+  `hil_logs/i2c_20260629T151741Z/summary.md`
+- Branch recorded by runner: `main`
+- Code commit recorded by runner: `df3ba5c45df552dce74629e363b0dc55e1a13776`
+- Firmware metadata: `1.6.0 (df3ba5c45df5, Jun 29 2026 15:40:53, clean)`
+- Port/target: COM20, ESP32-S3, Arduino PlatformIO `esp32s3dev`
+- Expected SHT3x address: `0x44`
+- Destructive/all-round executable commands: 79 PASS, 0 FAIL, 1
+  `SKIP_UNSUPPORTED` for `iface_reset`
+- Post-reboot smoke: 42 PASS, 0 FAIL
+- Long soak: incomplete; longest clean segment was about 65.8 minutes with
+  2853 PASS rows before a host pyserial `ClearCommError`
+
+Latest curated default serial HIL evidence from the older COM17 run:
 
 - Summary: [hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md](hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md)
 - Source run: `hil_logs/i2c_20260601T183017Z/summary.md`
@@ -35,33 +55,36 @@ Latest curated default serial HIL evidence:
 - Expected SHT3x address: `0x44`
 - Final runner verdict: `PASS`
 
-This evidence covers only the default automated serial command sequence. It
-does not validate physical ALERT pin behavior, humidity accuracy, fault
-injection, clock stretching, ESP32-S2 hardware, address `0x45`, alert writes,
-destructive reset flows, all periodic rates, or long-soak stability.
+The COM20 evidence covers default serial diagnostics, destructive/reset paths,
+clock-stretch read/serial paths, alert-limit write/readback, all periodic rates,
+ART mode, and a post-reboot smoke run. It does not validate physical ALERT pin behavior,
+humidity accuracy, fault injection, ESP32-S2 hardware, address `0x45`, or
+uninterrupted long-soak stability.
 
 ## Evidence Status
 
 | Area | Current result | Evidence |
 | --- | --- | --- |
-| Address probe `0x44` | PASS in current default serial HIL | Curated ESP32-S3 COM17 summary |
+| Address probe `0x44` | PASS on COM20 ESP32-S3 | COM20 report |
 | Address probe `0x45` | Not run | Needs serial log |
-| Single-shot low/medium/high no-stretch | PASS in current default serial HIL | Curated ESP32-S3 COM17 summary |
-| Single-shot clock stretching | Not run | Needs serial log and timeout policy |
-| Periodic fetch 0.5/1/2 mps | PASS in current default serial HIL | Curated ESP32-S3 COM17 summary |
-| Periodic fetch 4/10 mps | Not run | Needs serial log |
-| ART mode | PASS in current default serial HIL | Curated ESP32-S3 COM17 summary |
-| Status read/status restore | PASS in current default serial HIL, without induced ALERT | Curated ESP32-S3 COM17 summary |
-| Status clear | Not run | Needs register log |
-| Alert read and encode/decode vectors | PASS in current default serial HIL | Curated ESP32-S3 COM17 summary |
-| Alert write/read round trip | Not run on hardware | Needs serial log and cleanup record |
+| Single-shot low/medium/high no-stretch | PASS on COM20 ESP32-S3 | COM20 report |
+| Single-shot clock stretching | PASS on COM20 ESP32-S3 | COM20 report |
+| Periodic fetch 0.5/1/2 mps | PASS on COM20 ESP32-S3 | COM20 report |
+| Periodic fetch 4/10 mps | PASS on COM20 ESP32-S3 | COM20 report |
+| ART mode | PASS on COM20 ESP32-S3 | COM20 report |
+| Status read/status restore | PASS on COM20 ESP32-S3, without induced ALERT | COM20 report |
+| Status clear | PASS on COM20 ESP32-S3 | COM20 report |
+| Alert read and encode/decode vectors | PASS on COM20 ESP32-S3 | COM20 report |
+| Alert write/read round trip | PASS on COM20 ESP32-S3 with cleanup | COM20 report |
 | Physical ALERT pin | Not run | Needs GPIO or logic-analyzer evidence |
-| Heater status read | PASS in current default serial HIL; heater enable not run | Curated ESP32-S3 COM17 summary |
+| Heater status read | PASS on COM20 ESP32-S3; heater enable not run | COM20 report |
 | Heater enable/disable behavior | Not run | Needs controlled ambient log |
-| Soft/interface/general-call reset | Not run | Needs serial and, where relevant, logic evidence |
+| Soft reset/recover/restore | PASS on COM20 ESP32-S3 | COM20 report |
+| Interface reset | Unsupported by current firmware callback | COM20 report |
+| General-call reset | Not run; bus had other ACKing devices | Needs isolated bus evidence |
 | ESP32-S2 hardware smoke | Not run | Needs ESP32-S2 serial log |
 | Fault injection | Not run | Needs safe jig/interposer/emulator or documented manual fault evidence |
-| Long soak | Not run | Needs soak log and fixture notes |
+| Long soak | Incomplete; host serial link interrupted before requested duration | COM20 report; needs uninterrupted soak log |
 | Humidity production fixture | Not run | Needs reference fixture report |
 
 ## Serial Runner

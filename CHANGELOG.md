@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-06-29
+
+### Added
+- Added COM20 ESP32-S3/SHT3x hardware validation report covering destructive
+  serial HIL, post-reboot smoke validation, and incomplete long-soak evidence.
+
 ### Changed
 - Simplified `docs/` to maintained guides plus source reference material:
   `docs/hardware.md`, `docs/esp-idf.md`, `docs/reference/`, and curated HIL
@@ -14,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Merged the original compact SHT3x `00` through `08` chip-documentation notes
   into `docs/reference/sht3x-chip-notes.md` so protocol, timing, status,
   ALERT, reset, and variant facts remain preserved.
+- Hardened the host serial HIL runner with incremental `progress.jsonl`
+  evidence, async periodic/ART measurement nudging, and structured serial
+  exception failures.
 
 ### Removed
 - Removed active audit leftovers, prompt captures, implementation reports, and
@@ -247,7 +256,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.1...v1.4.2

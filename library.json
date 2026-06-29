@@ -1,6 +1,6 @@
 {
   "name": "SHT3x",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Deterministic SHT3x temperature/humidity sensor driver for ESP32.",
   "keywords": [
     "sht3x",
@@ -65,6 +65,7 @@
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
       "docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md",
+      "docs/reports/hil-validation-COM20-20260629.md",
       "tools/run_sht3x_hil.py",
       "tools/run_i2c_hil.py"
     ],
