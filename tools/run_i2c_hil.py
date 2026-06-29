@@ -768,6 +768,12 @@ def classify(text: str, spec: CommandSpec, timed_out: bool, parsed: dict[str, An
     return RESULT_PASS, ""
 
 
+def promptless_completion_satisfies_validators(spec: CommandSpec, plain: str, args: argparse.Namespace) -> bool:
+    parsed = parse_command_output(spec.command, plain)
+    result, _notes = classify(plain, spec, False, parsed, args)
+    return result == RESULT_PASS
+
+
 def read_available(ser: object) -> str:
     data = ser.read(4096)
     return data.decode("utf-8", errors="replace") if data else ""
@@ -867,8 +873,13 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
         idle = (now - last_rx) >= idle_s
         prompt_seen = plain.rstrip().endswith(">")
         prompt_required = bool(PROMPT_REQUIRED_VALIDATORS.intersection(spec.validators))
+        promptless_complete = (
+            prompt_required
+            and token_seen
+            and promptless_completion_satisfies_validators(spec, plain, args)
+        )
         completion_ready = (
-            (token_seen and (prompt_seen or not prompt_required))
+            (token_seen and (prompt_seen or not prompt_required or promptless_complete))
             or unsupported_seen
             or (not tokens and prompt_seen)
             or (not tokens and plain.strip() and not prompt_required)

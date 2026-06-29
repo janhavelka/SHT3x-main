@@ -646,6 +646,35 @@ def test_health_commands_wait_for_prompt_before_completion() -> None:
     assert row["parsed"]["configured_i2c_address"] == "0x44"
 
 
+def test_health_command_accepts_complete_validators_without_prompt() -> None:
+    spec = hil.CommandSpec(
+        "drv",
+        "health snapshot",
+        expected_any=("Driver Health", "state=", "online="),
+        validators=("driver_ready", "zero_failures"),
+        timeout_s=1.0,
+    )
+    row = hil.run_serial(
+        FakeSerial(
+            "=== Driver Health ===\n"
+            "  State: READY\n"
+            "  Online: yes\n"
+            "  Consecutive failures: 0\n"
+            "  Total success: 4216\n"
+            "  Total failures: 0\n"
+            "=== Config ===\n"
+            "  State: R"
+        ),
+        spec,
+        idle_s=0.0,
+        args=fake_args(),
+    )
+    assert row["result"] == hil.RESULT_PASS, row["notes"]
+    assert row["parsed"]["state"] == "READY"
+    assert row["parsed"]["online"] is True
+    assert row["parsed"]["total_failures"] == 0
+
+
 def test_optional_command_i2c_timeout_fails_not_unsupported() -> None:
     spec = hil.CommandSpec(
         "art start",
