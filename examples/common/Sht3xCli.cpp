@@ -880,6 +880,7 @@ void runStressMix(int count) {
 
     printStressProgress(static_cast<uint32_t>(i + 1), static_cast<uint32_t>(count),
                         okTotal, failTotal);
+    yield();
   }
 
   const uint32_t elapsed = millis() - startMs;

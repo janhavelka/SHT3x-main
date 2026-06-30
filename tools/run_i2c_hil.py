@@ -48,6 +48,7 @@ TEMP_MIN_C = -40.0
 TEMP_MAX_C = 125.0
 HUMIDITY_MIN_PCT = 0.0
 HUMIDITY_MAX_PCT = 100.0
+STRESS_MIX_OPS = ("measure", "readStatus", "readSerial", "setRepeat", "setRate", "setStretch", "heaterStat")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -544,7 +545,23 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     if stress_totals:
         parsed["total_success"] = int(stress_totals.group(1))
         parsed["total_failures"] = int(stress_totals.group(2))
-    else:
+    elif command.startswith("stress"):
+        progress = re.findall(
+            r"Progress:\s*(\d+)/(\d+).*?\bok=(\d+).*?\bfail=(\d+)",
+            plain,
+        )
+        if progress:
+            completed, total, ok, fail = progress[-1]
+            parsed["progress_completed"] = int(completed)
+            parsed["progress_total"] = int(total)
+            parsed["total_success"] = int(ok)
+            parsed["total_failures"] = int(fail)
+        else:
+            match = re.search(r"\bstress:\s*ok=(\d+)\s+fail=(\d+)", plain)
+            if match:
+                parsed["total_success"] = int(match.group(1))
+                parsed["total_failures"] = int(match.group(2))
+    if not command.startswith("stress"):
         match = re.search(r"Total success:\s*(\d+)", plain)
         if not match:
             match = re.search(r"\bok=(\d+)", plain)
@@ -793,6 +810,28 @@ def read_available(ser: object) -> str:
     return data.decode("utf-8", errors="replace") if data else ""
 
 
+def timeout_progress_note(command: str, output: str) -> str:
+    plain = strip_ansi(output)
+    matches = re.findall(r"Progress:\s*(\d+)/(\d+)", plain)
+    if not matches:
+        return ""
+    completed = int(matches[-1][0])
+    total = int(matches[-1][1])
+    if completed >= total:
+        return f"last progress {completed}/{total}; timeout after final progress"
+
+    step = max(1, total // 10)
+    window_start = completed + 1
+    window_end = min(total, completed + step)
+    if command.startswith("stress_mix"):
+        next_op = STRESS_MIX_OPS[(window_start - 1) % len(STRESS_MIX_OPS)]
+        return (
+            f"last progress {completed}/{total}; next window {window_start}-{window_end}; "
+            f"next stress_mix op {window_start}:{next_op}"
+        )
+    return f"last progress {completed}/{total}; next window {window_start}-{window_end}"
+
+
 def drain_initial_output(ser: object, idle_s: float, max_s: float = 2.0) -> str:
     start = time.monotonic()
     last_rx = start
@@ -813,6 +852,10 @@ def result_row(spec: CommandSpec, result: str, reason: str, elapsed_s: float, ou
     note_parts = [spec.notes] if spec.notes else []
     if reason:
         note_parts.append(reason)
+    if completion == "timeout":
+        progress_note = timeout_progress_note(spec.command, output)
+        if progress_note:
+            note_parts.append(progress_note)
     return {
         "command": spec.command,
         "purpose": spec.purpose,

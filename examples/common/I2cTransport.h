@@ -46,11 +46,20 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
     return Status::Error(Err::INVALID_PARAM, "I2C timeout must be > 0");
   }
 
+  const uint32_t previousTimeoutMs = wire->getTimeOut();
   wire->setTimeOut(timeoutMs);
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   // SHT3x requires STOP between command write and read header.
+  const uint32_t startMs = millis();
   uint8_t result = wire->endTransmission(true);
+  const uint32_t elapsedMs = millis() - startMs;
+  wire->setTimeOut(previousTimeoutMs);
+
+  if (elapsedMs > timeoutMs) {
+    return Status::Error(Err::I2C_TIMEOUT, "I2C write timeout",
+                         static_cast<int32_t>(elapsedMs));
+  }
 
   if (result != 0) {
     // Arduino Wire error codes (core-dependent): 1=data too long, 2=NACK addr, 3=NACK data,
@@ -103,8 +112,19 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   }
 
   // Read phase
+  const uint32_t previousTimeoutMs = wire->getTimeOut();
   wire->setTimeOut(timeoutMs);
+  const uint32_t startMs = millis();
   size_t received = wire->requestFrom(addr, rxLen);
+  const uint32_t elapsedMs = millis() - startMs;
+  wire->setTimeOut(previousTimeoutMs);
+  if (elapsedMs > timeoutMs) {
+    for (size_t i = 0; i < received; i++) {
+      (void)wire->read();
+    }
+    return Status::Error(Err::I2C_TIMEOUT, "I2C read timeout",
+                         static_cast<int32_t>(elapsedMs));
+  }
   if (received != rxLen) {
     if (received == 0) {
       return Status::Error(Err::I2C_ERROR, "I2C read returned 0 bytes",

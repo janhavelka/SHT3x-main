@@ -603,6 +603,7 @@ void runStressMix(uint32_t count) {
         printStatus(stats[op].name, st);
       }
     }
+    taskYIELD();
   }
 
   std::puts("stress_mix summary");

@@ -588,6 +588,36 @@ def test_stress_mix_parser_prefers_final_summary_over_progress() -> None:
     assert parsed["total_failures"] == 0
 
 
+def test_stress_mix_timeout_parser_uses_last_progress() -> None:
+    parsed = hil.parse_command_output(
+        "stress_mix 250",
+        """
+  Progress: 25/250 (10%, ok=25, fail=0)
+  Progress: 225/250 (90%, ok=225, fail=0)
+""",
+    )
+    assert parsed["progress_completed"] == 225
+    assert parsed["progress_total"] == 250
+    assert parsed["total_success"] == 225
+    assert parsed["total_failures"] == 0
+
+
+def test_timeout_notes_include_last_stress_mix_window() -> None:
+    spec = hil.CommandSpec("stress_mix 250", "mixed")
+    row = hil.result_row(
+        spec,
+        hil.RESULT_FAIL,
+        "timeout",
+        500.0,
+        "Progress: 225/250 (90%, ok=225, fail=0)\n",
+        "timeout",
+        {},
+    )
+    assert "last progress 225/250" in row["notes"]
+    assert "next window 226-250" in row["notes"]
+    assert "226:readStatus" in row["notes"]
+
+
 def test_duration_soak_plan_uses_warmup_only() -> None:
     specs = hil.soak_commands(25, duration_s=8.0)
     assert len(specs) == 1

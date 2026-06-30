@@ -1240,6 +1240,8 @@ void test_periodic_fetch_expected_nack_no_failure() {
 }
 
 void test_example_adapter_ambiguous_zero_bytes() {
+  gMillis = 0;
+  gMillisStep = 0;
   Wire._setRequestFromResult(0);
   uint8_t buf[3] = {};
   Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 10, &Wire);
@@ -1251,29 +1253,55 @@ void test_example_adapter_ambiguous_zero_bytes() {
 }
 
 void test_wire_adapter_timeout_and_stop() {
+  gMillis = 0;
+  gMillisStep = 0;
   Wire.setTimeOut(123);
   Wire._clearClockSetCount();
   uint8_t buf[2] = {0x00, 0x00};
   Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, &Wire);
   TEST_ASSERT_TRUE(st.ok());
-  TEST_ASSERT_EQUAL_UINT32(33u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._clockSetCount());
   TEST_ASSERT_TRUE(Wire._lastStopWasTrue());
+
+  gMillis = 0;
+  gMillisStep = 20;
+  st = transport::wireWrite(0x44, buf, sizeof(buf), 10, &Wire);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(20, st.detail);
+  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  gMillisStep = 0;
 }
 
 void test_wire_adapter_drains_partial_read() {
+  gMillis = 0;
+  gMillisStep = 0;
   Wire.setTimeOut(123);
   Wire._setRequestFromResult(2);
   Wire._clearReadCallCount();
   uint8_t buf[6] = {};
   Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
-  TEST_ASSERT_EQUAL_UINT32(20u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());
   Wire._clearRequestFromOverride();
+
+  gMillis = 0;
+  gMillisStep = 30;
+  Wire._setRequestFromResult(sizeof(buf));
+  Wire._clearReadCallCount();
+  st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
+  TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
+  TEST_ASSERT_EQUAL_INT32(30, st.detail);
+  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(sizeof(buf), Wire._readCallCount());
+  Wire._clearRequestFromOverride();
+  gMillisStep = 0;
 }
 
 void test_wire_adapter_rejects_invalid_buffers_and_timeout() {
+  gMillis = 0;
+  gMillisStep = 0;
   uint8_t buf[2] = {0x00, 0x00};
 
   Status st = transport::wireWrite(0x44, nullptr, sizeof(buf), 10, &Wire);
