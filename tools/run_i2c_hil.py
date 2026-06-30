@@ -49,6 +49,9 @@ TEMP_MAX_C = 125.0
 HUMIDITY_MIN_PCT = 0.0
 HUMIDITY_MAX_PCT = 100.0
 STRESS_MIX_OPS = ("measure", "readStatus", "readSerial", "setRepeat", "setRate", "setStretch", "heaterStat")
+STRESS_EXPECTED = ("Stress Summary", "stress: ok=", "stress summary")
+STRESS_MIX_EXPECTED = ("stress_mix:", "stress_mix summary", "Total:")
+STRESS_VALIDATORS = ("stress_totals", "stress_zero_failures")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -154,12 +157,12 @@ def soak_commands(count: int, duration_s: float = 0.0) -> list[CommandSpec]:
     mix_count = max(1, count // 2)
     if duration_s > 0.0:
         return [
-            CommandSpec("stress 10", "Short stress warmup before duration-bound soak.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=90.0),
+            CommandSpec("stress 10", "Short stress warmup before duration-bound soak.", group="soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=90.0),
         ]
     return [
-        CommandSpec("stress 10", "Short stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=90.0),
-        CommandSpec(f"stress {count}", "Configured bounded stress run.", group="soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(count) * 3.0)),
-        CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=("stress_mix summary", "Total:", "stress_mix"), requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
+        CommandSpec("stress 10", "Short stress run.", group="soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=90.0),
+        CommandSpec(f"stress {count}", "Configured bounded stress run.", group="soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=max(90.0, float(count) * 3.0)),
+        CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=STRESS_MIX_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
         CommandSpec("drv", "Final health after stress.", group="soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), requires_opt_in="--include-soak"),
         CommandSpec("settings", "Final settings after stress.", group="soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), requires_opt_in="--include-soak"),
     ]
@@ -213,7 +216,7 @@ def benchmark_commands(count: int) -> list[CommandSpec]:
         return []
     count = max(1, count)
     return [
-        CommandSpec(f"stress {count}", "Sample-rate benchmark using bounded single-shot stress.", group="benchmark", expected_any=("Stress Summary", "stress: ok=", "stress summary"), timeout_s=max(90.0, float(count) * 3.0)),
+        CommandSpec(f"stress {count}", "Sample-rate benchmark using bounded single-shot stress.", group="benchmark", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, timeout_s=max(90.0, float(count) * 3.0)),
         CommandSpec("drv", "Final health after benchmark.", group="benchmark", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
     ]
 
@@ -293,6 +296,16 @@ def iso_timestamp() -> str:
 def parse_boolish(value: str) -> int:
     text = value.strip().lower()
     return 1 if text in ("1", "true", "yes", "on") else 0
+
+
+def command_count(command: str) -> int | None:
+    parts = command.split()
+    if len(parts) < 2 or not parts[0].startswith("stress"):
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
 
 
 def default_executable_commands() -> list[str]:
@@ -547,6 +560,15 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     if stress_totals:
         parsed["total_success"] = int(stress_totals.group(1))
         parsed["total_failures"] = int(stress_totals.group(2))
+        duration = re.search(r"\bduration_ms=(\d+)", plain)
+        if duration:
+            parsed["duration_ms"] = int(duration.group(1))
+        attempts = re.search(r"\battempts=(\d+)", plain)
+        if attempts:
+            parsed["attempts"] = int(attempts.group(1))
+        target = re.search(r"\btarget=(\d+)", plain)
+        if target:
+            parsed["target"] = int(target.group(1))
     elif command.startswith("stress"):
         progress = re.findall(
             r"Progress:\s*(\d+)/(\d+).*?\bok=(\d+).*?\bfail=(\d+)",
@@ -676,6 +698,20 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
                 errors.append("total failures not parsed")
             elif parsed.get("total_failures") != 0:
                 errors.append("total failures is nonzero")
+        elif validator == "stress_totals":
+            if "total_success" not in parsed or "total_failures" not in parsed:
+                errors.append("stress totals not parsed")
+                continue
+            total_success = int(parsed.get("total_success", 0))
+            total_failures = int(parsed.get("total_failures", 0))
+            expected_count = command_count(spec.command)
+            if expected_count is not None and (total_success + total_failures) != expected_count:
+                errors.append(f"stress total {total_success + total_failures} != requested {expected_count}")
+        elif validator == "stress_zero_failures":
+            if "total_failures" not in parsed:
+                errors.append("stress failures not parsed")
+            elif int(parsed.get("total_failures", 0)) != 0:
+                errors.append("stress failures is nonzero")
         elif validator == "status_word":
             if not parsed.get("status_word"):
                 errors.append("status word not parsed")
@@ -984,10 +1020,10 @@ def duration_soak_cycle_specs(args: argparse.Namespace, cycle: int) -> list[Comm
     mix_count = max(1, chunk_count // 2)
     cycle_note = f"duration-cycle={cycle}"
     specs = [
-        CommandSpec(f"stress {chunk_count}", "Duration-bound single-shot stress chunk.", group="duration-soak", expected_any=("Stress Summary", "stress: ok=", "stress summary"), timeout_s=max(90.0, float(chunk_count) * 3.0), notes=cycle_note),
+        CommandSpec(f"stress {chunk_count}", "Duration-bound single-shot stress chunk.", group="duration-soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, timeout_s=max(90.0, float(chunk_count) * 3.0), notes=cycle_note),
         CommandSpec("raw", "Read cached raw sample during duration soak.", group="duration-soak", expected_any=("Raw:", "rawT=0x"), validators=("raw_sample",), notes=cycle_note),
         CommandSpec("comp", "Read cached fixed-point sample during duration soak.", group="duration-soak", expected_any=("Comp:", "tempC_x100="), validators=("comp_sample",), notes=cycle_note),
-        CommandSpec(f"stress_mix {mix_count}", "Duration-bound mixed-operation stress chunk.", group="duration-soak", expected_any=("stress_mix summary", "Total:", "stress_mix"), timeout_s=max(90.0, float(mix_count) * 2.0), notes=cycle_note),
+        CommandSpec(f"stress_mix {mix_count}", "Duration-bound mixed-operation stress chunk.", group="duration-soak", expected_any=STRESS_MIX_EXPECTED, validators=STRESS_VALIDATORS, timeout_s=max(90.0, float(mix_count) * 2.0), notes=cycle_note),
     ]
     if cycle % 2 == 0:
         specs.extend([

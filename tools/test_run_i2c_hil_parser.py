@@ -554,9 +554,18 @@ def test_stress_mix_requires_mixed_summary_not_plain_stress() -> None:
     spec = hil.soak_commands(10)[2]
     assert spec.command.startswith("stress_mix ")
     assert "stress: ok=" not in spec.expected_any
+    assert "stress_mix" not in spec.expected_any
     result, notes, _ = classify(spec, "stress: ok=5 fail=0\n")
     assert result == hil.RESULT_FAIL
-    assert "expected output token missing" in notes
+    assert "stress total 5 != requested 5" not in notes
+
+
+def test_stress_mix_plain_token_is_not_completion_token() -> None:
+    spec = hil.soak_commands(10)[2]
+    result, notes, parsed = classify(spec, "stress_mix\n")
+    assert parsed == {}
+    assert result == hil.RESULT_FAIL
+    assert "stress totals not parsed" in notes
 
 
 def test_stress_parser_prefers_final_summary_over_progress() -> None:
@@ -595,6 +604,49 @@ def test_stress_mix_parser_accepts_compact_summary() -> None:
     )
     assert parsed["total_success"] == 250
     assert parsed["total_failures"] == 0
+    assert parsed["duration_ms"] == 512
+
+
+def test_stress_parser_accepts_compact_summary_metadata() -> None:
+    parsed = hil.parse_command_output(
+        "stress 500",
+        "stress: ok=500 fail=0 attempts=500 target=500 duration_ms=9123\n",
+    )
+    assert parsed["total_success"] == 500
+    assert parsed["total_failures"] == 0
+    assert parsed["attempts"] == 500
+    assert parsed["target"] == 500
+    assert parsed["duration_ms"] == 9123
+
+
+def test_stress_validator_rejects_nonzero_failures() -> None:
+    spec = hil.soak_commands(500)[1]
+    result, notes, parsed = classify(
+        spec,
+        "stress: ok=499 fail=1 attempts=500 target=500 duration_ms=10000\n",
+    )
+    assert parsed["total_failures"] == 1
+    assert result == hil.RESULT_FAIL
+    assert "failure token detected" in notes or "stress failures is nonzero" in notes
+
+
+def test_stress_validator_rejects_incomplete_totals() -> None:
+    spec = hil.soak_commands(500)[1]
+    result, notes, parsed = classify(
+        spec,
+        "stress: ok=499 fail=0 attempts=499 target=500 duration_ms=10000\n",
+    )
+    assert parsed["total_success"] == 499
+    assert result == hil.RESULT_FAIL
+    assert "stress total 499 != requested 500" in notes
+
+
+def test_stress_mix_validator_rejects_nonzero_failures() -> None:
+    spec = hil.soak_commands(500)[2]
+    result, notes, parsed = classify(spec, "stress_mix: ok=249 fail=1 duration_ms=512\n")
+    assert parsed["total_failures"] == 1
+    assert result == hil.RESULT_FAIL
+    assert "failure token detected" in notes or "stress failures is nonzero" in notes
 
 
 def test_stress_mix_timeout_parser_uses_last_progress() -> None:

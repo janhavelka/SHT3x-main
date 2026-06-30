@@ -12,11 +12,54 @@
 namespace {
 
 constexpr size_t INPUT_BUFFER_LEN = 128U;
+constexpr uint32_t SERIAL_WRITE_TIMEOUT_MS = 100U;
+
+void serialWriteBounded(const char* text, size_t len) {
+  if (text == nullptr || len == 0U) {
+    return;
+  }
+
+  size_t offset = 0;
+  uint32_t lastProgressMs = millis();
+  while (offset < len) {
+    const int available = Serial.availableForWrite();
+    if (available <= 0) {
+      if ((millis() - lastProgressMs) >= SERIAL_WRITE_TIMEOUT_MS) {
+        return;
+      }
+      yield();
+      continue;
+    }
+
+    const size_t remaining = len - offset;
+    const size_t chunk = (remaining < static_cast<size_t>(available))
+                             ? remaining
+                             : static_cast<size_t>(available);
+    const size_t written = Serial.write(reinterpret_cast<const uint8_t*>(text + offset), chunk);
+    if (written == 0U) {
+      if ((millis() - lastProgressMs) >= SERIAL_WRITE_TIMEOUT_MS) {
+        return;
+      }
+      yield();
+      continue;
+    }
+
+    offset += written;
+    lastProgressMs = millis();
+  }
+}
 
 void arduinoVprintf(void*, const char* fmt, va_list args) {
   char buffer[192];
-  vsnprintf(buffer, sizeof(buffer), fmt, args);
-  Serial.print(buffer);
+  const int written = vsnprintf(buffer, sizeof(buffer), fmt, args);
+  if (written <= 0) {
+    return;
+  }
+  size_t len = static_cast<size_t>(written);
+  if (len >= sizeof(buffer)) {
+    len = sizeof(buffer) - 1U;
+  }
+  serialWriteBounded(buffer, len);
 }
 
 uint32_t arduinoNowMs(void*) {
