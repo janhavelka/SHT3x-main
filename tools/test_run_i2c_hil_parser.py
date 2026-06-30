@@ -588,6 +588,15 @@ def test_stress_mix_parser_prefers_final_summary_over_progress() -> None:
     assert parsed["total_failures"] == 0
 
 
+def test_stress_mix_parser_accepts_compact_summary() -> None:
+    parsed = hil.parse_command_output(
+        "stress_mix 250",
+        "stress_mix: ok=250 fail=0 duration_ms=512\n",
+    )
+    assert parsed["total_success"] == 250
+    assert parsed["total_failures"] == 0
+
+
 def test_stress_mix_timeout_parser_uses_last_progress() -> None:
     parsed = hil.parse_command_output(
         "stress_mix 250",

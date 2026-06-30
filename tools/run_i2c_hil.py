@@ -535,6 +535,8 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     stress_totals = None
     if command.startswith("stress_mix"):
         stress_totals = re.search(r"(?m)^\s*Total:\s*ok=(\d+)\s+fail=(\d+)", plain)
+        if not stress_totals:
+            stress_totals = re.search(r"\bstress_mix:\s*ok=(\d+)\s+fail=(\d+)", plain)
     elif command.startswith("stress"):
         stress_totals = re.search(
             r"(?ms)^\s*Success:\s*(\d+)\s*$.*?^\s*Errors:\s*(\d+)\s*$",

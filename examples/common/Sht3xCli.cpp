@@ -297,6 +297,9 @@ uint32_t stressProgressStep(uint32_t total) {
 }
 
 void printStressProgress(uint32_t completed, uint32_t total, uint32_t okCount, uint32_t failCount) {
+  if (!verboseMode) {
+    return;
+  }
   if (completed == 0U || total == 0U) {
     return;
   }
@@ -707,6 +710,16 @@ void finishStressStats() {
              static_cast<float>(stressStats.attempts))
           : 0.0f;
 
+  Serial.printf("stress: ok=%d fail=%lu attempts=%d target=%d duration_ms=%lu\n",
+                stressStats.success,
+                static_cast<unsigned long>(stressStats.errors),
+                stressStats.attempts,
+                stressStats.target,
+                static_cast<unsigned long>(durationMs));
+  if (!verboseMode) {
+    return;
+  }
+
   Serial.println("=== Stress Summary ===");
   Serial.printf("  Target: %d\n", stressStats.target);
   Serial.printf("  Attempts: %d\n", stressStats.attempts);
@@ -887,6 +900,15 @@ void runStressMix(int count) {
   HealthSnapshot<SHT3x::SHT3x> healthAfter;
   healthAfter.capture(deviceInstance);
 
+  (void)deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
+  Serial.printf("stress_mix: ok=%lu fail=%lu duration_ms=%lu\n",
+                static_cast<unsigned long>(okTotal),
+                static_cast<unsigned long>(failTotal),
+                static_cast<unsigned long>(elapsed));
+  if (!verboseMode) {
+    return;
+  }
+
   Serial.println("=== stress_mix summary ===");
   const float successPct =
       (count > 0) ? (100.0f * static_cast<float>(okTotal) / static_cast<float>(count)) : 0.0f;
@@ -942,7 +964,6 @@ void runStressMix(int count) {
       printStatus(lastFailure);
     }
   }
-  (void)deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
 }
 
 void runSelfTest() {
