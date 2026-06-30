@@ -804,6 +804,32 @@ SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
   return performMeasurementBlocking(out, timeoutMs);
 }
 
+void runStress(int count) {
+  cancelPending();
+  resetStressStats(count);
+  logInfo("Starting stress test: %d cycles", count);
+
+  for (int i = 0; i < count; ++i) {
+    SHT3x::Measurement measurement;
+    const SHT3x::Status st = performMeasurementBlocking(measurement);
+    if (st.ok()) {
+      updateStressStats(measurement);
+    } else {
+      noteStressError(st);
+    }
+    stressStats.attempts++;
+    stressRemaining = count - i - 1;
+    printStressProgress(static_cast<uint32_t>(stressStats.attempts),
+                        static_cast<uint32_t>(stressStats.target),
+                        static_cast<uint32_t>(stressStats.success),
+                        stressStats.errors);
+    yield();
+  }
+
+  stressRemaining = 0;
+  finishStressStats();
+}
+
 void runStressMix(int count) {
   struct OpStats {
     const char* name;
@@ -2098,10 +2124,7 @@ void processCommandString(const CliString& cmdLine) {
       return;
     }
 
-    cancelPending();
-    stressRemaining = count;
-    resetStressStats(count);
-    logInfo("Starting stress test: %d cycles", count);
+    runStress(count);
     return;
   }
 
