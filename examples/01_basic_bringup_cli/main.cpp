@@ -12,7 +12,8 @@
 namespace {
 
 constexpr size_t INPUT_BUFFER_LEN = 128U;
-constexpr uint32_t SERIAL_WRITE_TIMEOUT_MS = 100U;
+constexpr size_t SERIAL_WRITE_CHUNK_MAX = 32U;
+constexpr uint32_t SERIAL_WRITE_TIMEOUT_MS = 5000U;
 
 void serialWriteBounded(const char* text, size_t len) {
   if (text == nullptr || len == 0U) {
@@ -22,8 +23,12 @@ void serialWriteBounded(const char* text, size_t len) {
   size_t offset = 0;
   uint32_t lastProgressMs = millis();
   while (offset < len) {
+    const size_t remaining = len - offset;
+    const size_t chunk = (remaining < SERIAL_WRITE_CHUNK_MAX)
+                             ? remaining
+                             : SERIAL_WRITE_CHUNK_MAX;
     const int available = Serial.availableForWrite();
-    if (available <= 0) {
+    if (available < static_cast<int>(chunk)) {
       if ((millis() - lastProgressMs) >= SERIAL_WRITE_TIMEOUT_MS) {
         return;
       }
@@ -31,10 +36,6 @@ void serialWriteBounded(const char* text, size_t len) {
       continue;
     }
 
-    const size_t remaining = len - offset;
-    const size_t chunk = (remaining < static_cast<size_t>(available))
-                             ? remaining
-                             : static_cast<size_t>(available);
     const size_t written = Serial.write(reinterpret_cast<const uint8_t*>(text + offset), chunk);
     if (written == 0U) {
       if ((millis() - lastProgressMs) >= SERIAL_WRITE_TIMEOUT_MS) {

@@ -807,7 +807,9 @@ SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
 void runStress(int count) {
   cancelPending();
   resetStressStats(count);
-  logInfo("Starting stress test: %d cycles", count);
+  if (verboseMode) {
+    logInfo("Starting stress test: %d cycles", count);
+  }
 
   for (int i = 0; i < count; ++i) {
     SHT3x::Measurement measurement;
