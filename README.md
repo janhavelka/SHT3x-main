@@ -492,7 +492,11 @@ Host HIL parser/contract checks (stdlib Python; no pytest required):
 
 ```
 python tools/test_run_i2c_hil_parser.py
+python tools/run_i2c_hil.py --parser-self-test
+python tools/check_cli_contract.py
 python tools/check_hil_contract.py
+python tools/check_core_timing_guard.py
+python tools/check_idf_example_contract.py
 ```
 
 Firmware build (ESP32-S3 example):
@@ -500,6 +504,7 @@ Firmware build (ESP32-S3 example):
 ```
 pio run -e esp32s3dev
 pio run -e esp32s2dev
+pio pkg pack
 ```
 
 Native ESP-IDF example build (requires an ESP-IDF 5.4+ shell):

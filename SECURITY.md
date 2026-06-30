@@ -26,7 +26,7 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 This library is designed for embedded systems. Security considerations include:
 - No dynamic memory allocation in steady state (reduces attack surface)
 - No network code (networking is out of scope for this library)
-- No persistent storage by default (NVS side effects are opt-in)
+- No persistent storage in the core library
 
 ## Security Best Practices for Users
 

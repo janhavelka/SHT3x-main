@@ -1,6 +1,6 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-06-29
+Last updated: 2026-06-30
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
@@ -30,19 +30,19 @@ Latest maintained serial HIL evidence:
 
 - COM20 report: [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md)
 - Source runs:
-  `hil_logs/i2c_20260629T134150Z/summary.md`,
-  `hil_logs/i2c_20260629T140211Z/progress.jsonl`,
-  `hil_logs/i2c_20260629T151741Z/summary.md`
+  `hil_logs/i2c_20260630T094139Z/summary.md`,
+  `hil_logs/i2c_20260630T094228Z/summary.md`,
+  `hil_logs/i2c_20260630T094228Z/progress.jsonl`
 - Branch recorded by runner: `main`
-- Code commit recorded by runner: `df3ba5c45df552dce74629e363b0dc55e1a13776`
-- Firmware metadata: `1.6.0 (df3ba5c45df5, Jun 29 2026 15:40:53, clean)`
+- Code commit recorded by runner: `56ad12e98d43`
+- Firmware metadata: `1.6.1 (56ad12e98d43, Jun 30 2026 11:41:13, clean)`
 - Port/target: COM20, ESP32-S3, Arduino PlatformIO `esp32s3dev`
 - Expected SHT3x address: `0x44`
-- Destructive/all-round executable commands: 79 PASS, 0 FAIL, 1
-  `SKIP_UNSUPPORTED` for `iface_reset`
-- Post-reboot smoke: 42 PASS, 0 FAIL
-- Long soak: incomplete; longest clean segment was about 65.8 minutes with
-  2853 PASS rows before a host pyserial `ClearCommError`
+- Final short smoke: 47 PASS, 0 FAIL
+- Final long attempt: 5765 PASS, 1 `SKIP_UNSUPPORTED`, 1 FAIL timeout at
+  `duration-cycle=670` on diagnostic `stress 500`
+- Long soak: not completed; last health before timeout was `READY`,
+  `consecutive_failures=0`, `total_success=862912`, `total_failures=0`
 
 Latest curated default serial HIL evidence from the older COM17 run:
 
@@ -57,9 +57,11 @@ Latest curated default serial HIL evidence from the older COM17 run:
 
 The COM20 evidence covers default serial diagnostics, destructive/reset paths,
 clock-stretch read/serial paths, alert-limit write/readback, all periodic rates,
-ART mode, and a post-reboot smoke run. It does not validate physical ALERT pin behavior,
+ART mode, and a short smoke run. It does not validate physical ALERT pin behavior,
 humidity accuracy, fault injection, ESP32-S2 hardware, address `0x45`, or
-uninterrupted long-soak stability.
+uninterrupted long-soak stability. The v1.6.1 final release remains blocked on
+the incomplete 16-hour serial HIL soak unless the release criterion is reduced
+and documented before tagging.
 
 ## Evidence Status
 
@@ -84,7 +86,7 @@ uninterrupted long-soak stability.
 | General-call reset | Not run; bus had other ACKing devices | Needs isolated bus evidence |
 | ESP32-S2 hardware smoke | Not run | Needs ESP32-S2 serial log |
 | Fault injection | Not run | Needs safe jig/interposer/emulator or documented manual fault evidence |
-| Long soak | Incomplete; host serial link interrupted before requested duration | COM20 report; needs uninterrupted soak log |
+| Long soak | FAIL/incomplete; diagnostic serial output timed out before requested 16 hours | COM20 report; needs uninterrupted soak log |
 | Humidity production fixture | Not run | Needs reference fixture report |
 
 ## Serial Runner
