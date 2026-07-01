@@ -52,6 +52,8 @@ STRESS_MIX_OPS = ("measure", "readStatus", "readSerial", "setRepeat", "setRate",
 STRESS_EXPECTED = ("Stress Summary", "stress: ok=", "stress summary")
 STRESS_MIX_EXPECTED = ("stress_mix:", "stress_mix summary", "Total:")
 STRESS_VALIDATORS = ("stress_totals", "stress_zero_failures")
+I2C_SOAK_EXPECTED = ("i2c_soak:",)
+I2C_SOAK_VALIDATORS = ("i2c_soak",)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -166,6 +168,21 @@ def soak_commands(count: int, duration_s: float = 0.0) -> list[CommandSpec]:
         CommandSpec("drv", "Final health after stress.", group="soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), requires_opt_in="--include-soak"),
         CommandSpec("settings", "Final settings after stress.", group="soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), requires_opt_in="--include-soak"),
     ]
+
+
+def i2c_soak_command(duration_s: float) -> CommandSpec:
+    requested_s = max(1, int(round(max(0.0, duration_s))))
+    margin_s = max(60.0, min(600.0, float(requested_s) * 0.02))
+    return CommandSpec(
+        f"i2c_soak {requested_s}",
+        "Firmware-side low-USB SHT3x I2C measurement soak.",
+        group="duration-soak",
+        expected_any=I2C_SOAK_EXPECTED,
+        validators=I2C_SOAK_VALIDATORS,
+        timeout_s=float(requested_s) + margin_s,
+        requires_opt_in="--include-soak",
+        notes=f"requested_s={duration_s:.3f} usb_mode=low-output",
+    )
 
 
 def clock_stretch_commands() -> list[CommandSpec]:
@@ -585,6 +602,21 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
             if match:
                 parsed["total_success"] = int(match.group(1))
                 parsed["total_failures"] = int(match.group(2))
+    if command.startswith("i2c_soak"):
+        match = re.search(
+            r"\bi2c_soak:\s*ok=(\d+)\s+fail=(\d+)\s+duration_ms=(\d+)"
+            r".*?\bhealth_ok_delta=(\d+)\s+health_fail_delta=(\d+)"
+            r"\s+state=([A-Za-z_]+)\s+consec=(\d+)",
+            plain,
+        )
+        if match:
+            parsed["total_success"] = int(match.group(1))
+            parsed["total_failures"] = int(match.group(2))
+            parsed["duration_ms"] = int(match.group(3))
+            parsed["health_ok_delta"] = int(match.group(4))
+            parsed["health_fail_delta"] = int(match.group(5))
+            parsed["state"] = match.group(6).upper()
+            parsed["consecutive_failures"] = int(match.group(7))
     if not command.startswith("stress"):
         match = re.search(r"Total success:\s*(\d+)", plain)
         if not match:
@@ -712,6 +744,23 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
                 errors.append("stress failures not parsed")
             elif int(parsed.get("total_failures", 0)) != 0:
                 errors.append("stress failures is nonzero")
+        elif validator == "i2c_soak":
+            if "total_success" not in parsed or "total_failures" not in parsed:
+                errors.append("i2c_soak totals not parsed")
+                continue
+            if int(parsed.get("total_success", 0)) <= 0:
+                errors.append("i2c_soak had no successful measurements")
+            if int(parsed.get("total_failures", 0)) != 0:
+                errors.append("i2c_soak failures is nonzero")
+            if int(parsed.get("duration_ms", 0)) <= 0:
+                errors.append("i2c_soak duration not parsed")
+            if int(parsed.get("health_fail_delta", 0)) != 0:
+                errors.append("i2c_soak health failures is nonzero")
+            state = str(parsed.get("state", "")).upper()
+            if state != "READY":
+                errors.append(f"i2c_soak state is {state or '<missing>'}, expected READY")
+            if int(parsed.get("consecutive_failures", -1)) != 0:
+                errors.append("i2c_soak consecutive failures is nonzero")
         elif validator == "status_word":
             if not parsed.get("status_word"):
                 errors.append("status word not parsed")
@@ -811,6 +860,16 @@ def parser_self_test() -> int:
     duration = soak_commands(10, duration_s=1.0)
     if len(duration) != 1 or duration[0].command != "stress 10":
         raise AssertionError("duration-bound soak warmup generation failed")
+    firmware_soak = i2c_soak_command(1.0)
+    parsed = parse_command_output(
+        firmware_soak.command,
+        "i2c_soak: ok=12 fail=0 duration_ms=1001 temp_min=24.10 "
+        "temp_max=24.20 humidity_min=45.00 humidity_max=45.20 "
+        "health_ok_delta=12 health_fail_delta=0 state=READY consec=0\n",
+    )
+    result, notes = classify("i2c_soak: ok=12 fail=0 duration_ms=1001 health_ok_delta=12 health_fail_delta=0 state=READY consec=0\n", firmware_soak, False, parsed, args)
+    if result != RESULT_PASS:
+        raise AssertionError(f"i2c_soak parser failed: {notes}")
 
     print("run_i2c_hil parser self-test: OK")
     return 0
@@ -1053,7 +1112,11 @@ def duration_soak_marker(args: argparse.Namespace) -> CommandSpec:
         group="duration-soak",
         send=False,
         requires_opt_in="--include-soak",
-        notes=f"chunk_count={max(1, args.soak_chunk_count)} recover_every={args.soak_recover_every}",
+        notes=(
+            f"mode=firmware-low-usb command=i2c_soak "
+            f"chunk_count={max(1, args.soak_chunk_count)} "
+            f"recover_every={args.soak_recover_every}"
+        ),
     )
 
 
@@ -1063,27 +1126,16 @@ def run_duration_soak(ser: object, args: argparse.Namespace) -> list[dict[str, A
         return []
     results: list[dict[str, Any]] = []
     start = time.monotonic()
-    deadline = start + duration_s
-    cycle = 0
-    while time.monotonic() < deadline:
-        cycle += 1
-        for spec in duration_soak_cycle_specs(args, cycle):
-            if time.monotonic() >= deadline:
-                break
-            row = run_serial(ser, spec, args.idle, args)
-            results.append(row)
-            append_progress(args, row)
-            recovery = recovery_spec_for(spec)
-            if row["result"] == RESULT_FAIL and recovery is not None:
-                recovery_row = run_serial(ser, recovery, args.idle, args)
-                results.append(recovery_row)
-                append_progress(args, recovery_row)
-            if row["result"] == RESULT_FAIL:
-                return results
+    soak_spec = i2c_soak_command(duration_s)
+    row = run_serial(ser, soak_spec, args.idle, args)
+    results.append(row)
+    append_progress(args, row)
+    if row["result"] == RESULT_FAIL:
+        return results
     elapsed = time.monotonic() - start
     marker = dataclasses.replace(
         duration_soak_marker(args),
-        notes=f"requested_s={duration_s:.3f} actual_s={elapsed:.3f} cycles={cycle}",
+        notes=f"requested_s={duration_s:.3f} actual_s={elapsed:.3f} usb_mode=low-output",
     )
     results.append(result_row(marker, RESULT_PASS, "", elapsed, "", "duration-complete", {}))
     append_progress(args, results[-1])
@@ -1131,6 +1183,7 @@ def aggregate_parsed(results: list[dict[str, Any]]) -> dict[str, Any]:
         "library_full": "",
         "serial_eic": "",
         "final_health": {},
+        "i2c_soak": {},
     }
     addresses: set[str] = set()
     for row in results:
@@ -1144,6 +1197,20 @@ def aggregate_parsed(results: list[dict[str, Any]]) -> dict[str, Any]:
             aggregate["final_health"] = {
                 key: parsed[key]
                 for key in ("state", "online", "consecutive_failures", "total_success", "total_failures")
+                if key in parsed
+            }
+        if str(row.get("command", "")).startswith("i2c_soak") and parsed:
+            aggregate["i2c_soak"] = {
+                key: parsed[key]
+                for key in (
+                    "total_success",
+                    "total_failures",
+                    "duration_ms",
+                    "health_ok_delta",
+                    "health_fail_delta",
+                    "state",
+                    "consecutive_failures",
+                )
                 if key in parsed
             }
     aggregate["i2c_addresses_seen"] = sorted(addresses)
@@ -1449,6 +1516,9 @@ def main(argv: list[str]) -> int:
             results.append(row)
             append_progress(args, row)
         if args.include_soak and args.soak_duration_s > 0.0:
+            row = run_dry(i2c_soak_command(args.soak_duration_s))
+            results.append(row)
+            append_progress(args, row)
             row = run_dry(duration_soak_marker(args))
             results.append(row)
             append_progress(args, row)

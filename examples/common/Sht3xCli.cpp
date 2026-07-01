@@ -12,6 +12,7 @@ namespace {
 
 static constexpr size_t MAX_STRING_LEN = 160U;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
+static constexpr uint32_t I2C_SOAK_MAX_SECONDS = 24UL * 60UL * 60UL;
 
 static constexpr const char* LOG_COLOR_RESET = "\033[0m";
 static constexpr const char* LOG_COLOR_RED = "\033[31m";
@@ -830,6 +831,74 @@ void runStress(int count) {
 
   stressRemaining = 0;
   finishStressStats();
+}
+
+void runI2cSoak(uint32_t durationS) {
+  cancelPending();
+  const uint32_t durationMs = durationS * 1000UL;
+  const uint32_t startMs = millis();
+  const uint32_t successBefore = deviceInstance.totalSuccess();
+  const uint32_t failBefore = deviceInstance.totalFailures();
+  uint32_t okCount = 0;
+  uint32_t failCount = 0;
+  bool hasSample = false;
+  float minTemp = 0.0f;
+  float maxTemp = 0.0f;
+  float minHumidity = 0.0f;
+  float maxHumidity = 0.0f;
+
+  SHT3x::Status st = deviceInstance.setMode(SHT3x::Mode::SINGLE_SHOT);
+  if (!st.ok()) {
+    failCount++;
+  }
+  if (st.ok()) {
+    st = deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
+    if (!st.ok()) {
+      failCount++;
+    }
+  }
+
+  while (st.ok() && (millis() - startMs) < durationMs) {
+    SHT3x::Measurement measurement;
+    st = performMeasurementBlocking(measurement);
+    if (st.ok()) {
+      okCount++;
+      if (!hasSample) {
+        minTemp = measurement.temperatureC;
+        maxTemp = measurement.temperatureC;
+        minHumidity = measurement.humidityPct;
+        maxHumidity = measurement.humidityPct;
+        hasSample = true;
+      } else {
+        if (measurement.temperatureC < minTemp) minTemp = measurement.temperatureC;
+        if (measurement.temperatureC > maxTemp) maxTemp = measurement.temperatureC;
+        if (measurement.humidityPct < minHumidity) minHumidity = measurement.humidityPct;
+        if (measurement.humidityPct > maxHumidity) maxHumidity = measurement.humidityPct;
+      }
+    } else {
+      failCount++;
+    }
+    yield();
+  }
+
+  const uint32_t elapsedMs = millis() - startMs;
+  const uint32_t successDelta = deviceInstance.totalSuccess() - successBefore;
+  const uint32_t failDelta = deviceInstance.totalFailures() - failBefore;
+  Serial.printf(
+      "i2c_soak: ok=%lu fail=%lu duration_ms=%lu temp_min=%.2f temp_max=%.2f "
+      "humidity_min=%.2f humidity_max=%.2f health_ok_delta=%lu "
+      "health_fail_delta=%lu state=%s consec=%u\n",
+      static_cast<unsigned long>(okCount),
+      static_cast<unsigned long>(failCount),
+      static_cast<unsigned long>(elapsedMs),
+      static_cast<double>(hasSample ? minTemp : 0.0f),
+      static_cast<double>(hasSample ? maxTemp : 0.0f),
+      static_cast<double>(hasSample ? minHumidity : 0.0f),
+      static_cast<double>(hasSample ? maxHumidity : 0.0f),
+      static_cast<unsigned long>(successDelta),
+      static_cast<unsigned long>(failDelta),
+      stateToStr(deviceInstance.state()),
+      static_cast<unsigned>(deviceInstance.consecutiveFailures()));
 }
 
 void runStressMix(int count) {
@@ -2101,6 +2170,16 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
+  if (cmd.startsWith("i2c_soak ")) {
+    const long seconds = cmd.substring(9).toInt();
+    if (seconds <= 0 || seconds > static_cast<long>(I2C_SOAK_MAX_SECONDS)) {
+      logWarn("Invalid i2c_soak seconds");
+      return;
+    }
+    runI2cSoak(static_cast<uint32_t>(seconds));
+    return;
+  }
+
   if (cmd == "stress_mix") {
     runStressMix(50);
     return;
@@ -2221,6 +2300,7 @@ void printHelp() {
   cli::printHelpItem("probe", "Probe device (no health tracking)");
   cli::printHelpItem("recover", "Manual recovery attempt");
   cli::printHelpItem("verbose [0|1]", "Enable/disable verbose output");
+  cli::printHelpItem("i2c_soak <seconds>", "Run low-USB I2C measurement soak");
   cli::printHelpItem("stress [N]", "Run N measurement cycles");
   cli::printHelpItem("stress_mix [N]", "Run N mixed-operation cycles");
   cli::printHelpItem("selftest", "Run safe command self-test report");

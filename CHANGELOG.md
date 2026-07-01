@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added COM20 ESP32-S3/SHT3x hardware validation report covering destructive
   serial HIL, post-reboot smoke validation, and incomplete long-soak evidence.
+- Added a low-USB Arduino diagnostic `i2c_soak <seconds>` command for
+  duration-based SHT3x I2C stability soaks.
 
 ### Changed
 - Simplified `docs/` to maintained guides plus source reference material:
@@ -23,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened the host serial HIL runner with incremental `progress.jsonl`
   evidence, async periodic/ART measurement nudging, and structured serial
   exception failures.
+- Changed duration-based HIL soaks to use the firmware-side low-output
+  `i2c_soak` command instead of thousands of host-issued serial stress
+  commands.
+- Documented the v1.6.1 release boundary as core SHT3x functionality and I2C
+  stability, without claiming uninterrupted 16-hour HIL or host CLI liveness.
 
 ### Removed
 - Removed active audit leftovers, prompt captures, implementation reports, and

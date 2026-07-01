@@ -686,6 +686,43 @@ def test_duration_soak_plan_uses_warmup_only() -> None:
     assert "warmup" in specs[0].purpose
 
 
+def test_i2c_soak_command_uses_low_usb_firmware_path() -> None:
+    spec = hil.i2c_soak_command(57600.0)
+    assert spec.command == "i2c_soak 57600"
+    assert spec.group == "duration-soak"
+    assert spec.timeout_s > 57600.0
+    assert spec.timeout_s <= 58200.0
+    assert spec.expected_any == hil.I2C_SOAK_EXPECTED
+
+
+def test_i2c_soak_parser_accepts_zero_failure_summary() -> None:
+    spec = hil.i2c_soak_command(1.0)
+    result, notes, parsed = classify(
+        spec,
+        "i2c_soak: ok=64 fail=0 duration_ms=1005 temp_min=24.10 "
+        "temp_max=24.40 humidity_min=44.00 humidity_max=44.50 "
+        "health_ok_delta=64 health_fail_delta=0 state=READY consec=0\n",
+    )
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["total_success"] == 64
+    assert parsed["total_failures"] == 0
+    assert parsed["health_fail_delta"] == 0
+    assert parsed["state"] == "READY"
+
+
+def test_i2c_soak_parser_rejects_health_failure() -> None:
+    spec = hil.i2c_soak_command(1.0)
+    result, notes, parsed = classify(
+        spec,
+        "i2c_soak: ok=63 fail=1 duration_ms=1005 temp_min=24.10 "
+        "temp_max=24.40 humidity_min=44.00 humidity_max=44.50 "
+        "health_ok_delta=63 health_fail_delta=1 state=DEGRADED consec=1\n",
+    )
+    assert result == hil.RESULT_FAIL
+    assert parsed["total_failures"] == 1
+    assert "failure token detected" in notes or "i2c_soak failures is nonzero" in notes
+
+
 def test_duration_soak_cycle_specs_are_bounded() -> None:
     args = argparse.Namespace(
         soak_chunk_count=8,

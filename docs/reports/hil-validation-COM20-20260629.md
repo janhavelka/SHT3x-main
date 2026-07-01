@@ -5,16 +5,19 @@
 Automated hardware validation on `COM20` exercised the ESP32-S3 Arduino
 diagnostic firmware against an SHT3x responding at `0x44`.
 
-The v1.6.1 release is **not cleared for final release** by this report. Short
-smoke, destructive/reset, clock-stretch, alert write/readback, all periodic
-rates, ART, parser, package, and build checks passed. The requested 16-hour HIL
-soak did **not** complete: every long attempt eventually timed out on the
-diagnostic CLI `stress 500` command. The last driver-health snapshot before the
-best final-commit timeout was still `READY`, `online=true`,
+Short smoke, destructive/reset, clock-stretch, alert write/readback, all
+periodic rates, ART, parser, package, and build checks passed. The requested
+16-hour HIL soak did **not** complete: every long attempt eventually timed out
+on the diagnostic CLI `stress 500` command. The last driver-health snapshot
+before the best final-commit timeout was still `READY`, `online=true`,
 `consecutive_failures=0`, `total_success=862912`, and `total_failures=0`.
 
-That means the current blocker is long-run diagnostic serial/CLI liveness, not
-a recorded SHT3x I2C health failure. No production-readiness claim is made.
+2026-07-01 release addendum: the v1.6.1 release criterion is reduced to SHT3x
+core firmware functionality and I2C stability. Under that criterion, the
+diagnostic CLI timeout is not treated as a SHT3x core/I2C release blocker. This
+report still does not claim an uninterrupted 16-hour HIL transcript, host CLI
+liveness, physical ALERT pin behavior, humidity accuracy, fault injection, or
+production fixture validation.
 
 ## Repository And Environment
 
@@ -24,7 +27,7 @@ a recorded SHT3x I2C health failure. No production-readiness claim is made.
 | Branch | `main` |
 | Final firmware commit tested | `56ad12e98d43` |
 | Firmware library string | `1.6.1 (56ad12e98d43, Jun 30 2026 11:41:13, clean)` |
-| Report updated | `2026-06-30` |
+| Report updated | `2026-07-01` |
 | Host OS | Microsoft Windows 11 Education, OS version `10.0.26200` |
 | Python | `Python 3.12.10` |
 | PlatformIO | `PlatformIO Core, version 6.1.18` |
@@ -123,7 +126,7 @@ The preceding `drv` command reported `READY`, `online=yes`,
 | Clock stretching | Clock-stretch single-shot read and serial read passed in the opt-in group |
 | Alert limits | Encode/decode vectors and write/readback/cleanup paths passed |
 | Recovery/reset | `selftest`, `recover`, soft `reset`, and `restore` passed; `iface_reset` was skipped as unsupported |
-| Host/serial liveness | Release blocker: long Arduino serial diagnostics repeatedly timed out on `stress 500` output before 16 hours |
+| Host/serial liveness | Not cleared: old multi-command Arduino diagnostics repeatedly timed out on `stress 500`; not treated as a SHT3x core/I2C blocker under the reduced v1.6.1 criterion |
 
 ## Audit Findings And Fixes
 
@@ -142,9 +145,15 @@ The preceding `drv` command reported `READY`, `online=yes`,
   async summaries after the prompt.
 - Added bounded Arduino diagnostic serial writes and then changed them to
   bytewise writes to reduce USB CDC partial-output stalls.
+- Added a low-USB Arduino diagnostic `i2c_soak <seconds>` command and changed
+  duration-based HIL soaks to use that single firmware-side measurement loop
+  instead of thousands of host-issued serial commands.
 
-The last item reduced early serial-output failures but did not make the 16-hour
-serial diagnostic path reliable enough for release evidence.
+The serial-output changes reduced early serial-output failures but did not make
+the old multi-command 16-hour serial diagnostic path reliable enough for
+uninterrupted-transcript evidence. Future duration soaks should use
+`tools\run_i2c_hil.py --include-soak --soak-duration-s <seconds>`, which now
+routes to `i2c_soak <seconds>` and emits one compact final summary.
 
 ## Software Verification Results
 
@@ -152,19 +161,20 @@ serial diagnostic path reliable enough for release evidence.
 | --- | --- |
 | `python tools\test_run_i2c_hil_parser.py` | PASS |
 | `python tools\run_i2c_hil.py --parser-self-test` | PASS |
+| `python tools\run_i2c_hil.py --dry-run --include-soak --soak-duration-s 57600 --expect-address 0x44 --board esp32s3dev --target-name dry-low-usb --operator codex` | PASS as dry-run plan check; generated temporary dry-run artifacts were removed |
 | `python tools\check_cli_contract.py` | PASS |
 | `python tools\check_hil_contract.py` | PASS |
 | `python tools\check_core_timing_guard.py` | PASS |
 | `python tools\check_idf_example_contract.py` | PASS |
 | `pio test -e native` | PASS, 85/85 tests |
-| `pio run -e esp32s3dev` | PASS, RAM 6.9%, flash 30.4% |
+| `pio run -e esp32s3dev` | PASS, RAM 6.9%, flash 30.5% |
 | `pio run -e esp32s2dev` | PASS, RAM 11.1%, flash 28.4% |
 | `pio pkg pack` | PASS; generated `SHT3x-1.6.1.tar.gz` was removed after verification |
 | `git diff --check` | PASS |
 
 ## Not Run / Not Proven
 
-- 16-hour HIL soak: not completed.
+- Uninterrupted 16-hour HIL transcript: not completed.
 - Physical ALERT pin behavior: not validated without GPIO or logic-analyzer
   capture.
 - Fault injection: no safe unplug, CRC corruption, forced NACK, stuck bus, or
@@ -179,10 +189,12 @@ serial diagnostic path reliable enough for release evidence.
 
 ## Release Decision
 
-Do not tag or publish v1.6.1 as fully hardware-validated from this evidence.
-The code and short hardware checks are substantially improved, but final release
-needs either a completed 16-hour run on a reliable serial/HIL path or an
-explicitly reduced release criterion documented before tagging.
+Do not publish v1.6.1 as fully 16-hour hardware-validated from this evidence.
+With the 2026-07-01 reduced criterion, this report supports release only for the
+core SHT3x firmware functionality and I2C-stability scope described above.
+Uninterrupted 16-hour HIL, host CLI liveness, physical ALERT pin behavior,
+humidity accuracy, fault injection, ESP32-S2 hardware execution, and address
+`0x45` remain outside the release claim.
 
 ## Artifacts
 

@@ -1,6 +1,6 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
@@ -57,11 +57,12 @@ Latest curated default serial HIL evidence from the older COM17 run:
 
 The COM20 evidence covers default serial diagnostics, destructive/reset paths,
 clock-stretch read/serial paths, alert-limit write/readback, all periodic rates,
-ART mode, and a short smoke run. It does not validate physical ALERT pin behavior,
-humidity accuracy, fault injection, ESP32-S2 hardware, address `0x45`, or
-uninterrupted long-soak stability. The v1.6.1 final release remains blocked on
-the incomplete 16-hour serial HIL soak unless the release criterion is reduced
-and documented before tagging.
+ART mode, and a short smoke run. It also captured 862,912 successful driver
+operations with zero recorded driver failures before the host/USB diagnostic
+CLI timed out. For v1.6.1, that timeout is documented as host diagnostic
+liveness evidence, not as a SHT3x core/I2C failure. It still does not validate physical ALERT pin behavior,
+humidity accuracy, fault injection, ESP32-S2 hardware, address `0x45`, or an
+uninterrupted 16-hour transcript.
 
 ## Evidence Status
 
@@ -86,7 +87,7 @@ and documented before tagging.
 | General-call reset | Not run; bus had other ACKing devices | Needs isolated bus evidence |
 | ESP32-S2 hardware smoke | Not run | Needs ESP32-S2 serial log |
 | Fault injection | Not run | Needs safe jig/interposer/emulator or documented manual fault evidence |
-| Long soak | FAIL/incomplete; diagnostic serial output timed out before requested 16 hours | COM20 report; needs uninterrupted soak log |
+| Long soak | Partial COM20 I2C evidence only: 862,912 successful driver operations, zero recorded driver failures, then host/USB diagnostic timeout before requested 16 hours | COM20 report; next run should use low-USB `i2c_soak` duration soak |
 | Humidity production fixture | Not run | Needs reference fixture report |
 
 ## Serial Runner
@@ -197,7 +198,8 @@ and final READY health with zero unexplained failures.
 | --- | --- | --- |
 | `--include-destructive` | selftest, recover, clear status, soft reset, restore, interface reset | Alters device/status state; not part of default smoke. |
 | `--include-bus-wide-reset` | general-call reset | Requires isolated bus; can reset other supporting devices. |
-| `--include-soak --soak-count N` | bounded stress and mixed-operation stress | Only proves the configured duration/count. |
+| `--include-soak --soak-count N` | bounded stress and mixed-operation stress | Only proves the configured count. |
+| `--include-soak --soak-duration-s N` | firmware-side low-USB `i2c_soak N` measurement loop | Only proves the configured duration when the compact summary and final health pass. |
 | `--include-clock-stretch` | stretch-enabled read and serial/EIC | Unsupported or timeout behavior must be recorded explicitly. |
 | `--include-alert-write` | software-visible alert write/readback and cleanup | Does not prove physical ALERT pin transitions. |
 | `--include-all-periodic-rates` | additional 4 and 10 mps periodic fetches | Needs final health review and self-heating notes for stronger claims. |
