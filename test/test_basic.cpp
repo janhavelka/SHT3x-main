@@ -4512,6 +4512,31 @@ void test_recover_unknown_state_requires_reset_proof() {
     TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[1]);
     TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
   }
+
+  {
+    FrameScriptTransport ctx;
+    ctx.statusRaw = cmd::STATUS_COMMAND_ERROR;
+    SHT3xDevice device;
+    Config cfg = makeFrameConfig(ctx);
+    cfg.recoverUseBusReset = false;
+    cfg.recoverUseSoftReset = true;
+    cfg.recoverUseHardReset = false;
+    cfg.allowGeneralCallReset = false;
+    Status st = device.bind(cfg);
+    TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+    clearFrameLog(ctx);
+
+    st = device.recover();
+    TEST_ASSERT_EQUAL(Err::COMMAND_FAILED, st.code);
+    TEST_ASSERT_FALSE(device.hardwareStateValid());
+    TEST_ASSERT_EQUAL_UINT32(2u, device.protocolFailures());
+    TEST_ASSERT_EQUAL(4u, ctx.commandCount);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[1]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_SOFT_RESET, ctx.commands[2]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[3]);
+    TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
+  }
 }
 
 void test_recover_periodic_requires_break_before_success() {
