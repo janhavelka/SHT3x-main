@@ -1,6 +1,6 @@
 {
   "name": "SHT3x",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Deterministic SHT3x temperature/humidity sensor driver for ESP32.",
   "keywords": [
     "sht3x",

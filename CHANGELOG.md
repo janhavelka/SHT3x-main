@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-19
+
+### Added
+- Passive zero-I2C `bind()` lifecycle plus the bounded `requestEnsureIdle()`
+  reconciliation job for external bus-owner tasks.
+- Correlated `JobRequest` and phase-aware `PollJobResult` identity, outcome,
+  deadline, exactly-once terminal, and partial/indeterminate-effect semantics.
+- Zero-I2C `cancelJob()`/`cancelMeasurement()` and `HealthPolicy::OBSERVE_ONLY`.
+- Signed milli-degree Celsius/milli-percent measurement output and conversion
+  helpers using rounded 64-bit integer arithmetic.
+- Separate saturating logical-operation, transport, CRC/protocol, and expected
+  not-ready diagnostics, plus explicit hardware-cache verification state.
+
+### Changed
+- `pollJob()` now performs at most one transport callback per call, including
+  periodic Fetch Data command/read flows, and bus-silent waits consume no work.
+- Logical health is completed only after the final transfer; intermediate
+  command success no longer erases a preceding failed-read streak.
+- Conversion readiness and sample timestamps are captured after their transport
+  callbacks complete, using wrap-safe microsecond command spacing.
+- Raw command escape hatches explicitly invalidate verified hardware state, and
+  cached transport errors use library-owned static messages.
+- PlatformIO, the ESP32 platform package, and the ESP-IDF CI container are
+  version-pinned. The version generator now synchronizes ESP-IDF and Doxygen
+  metadata in addition to `Version.h`.
+
+### Fixed
+- Fixed fractional-millisecond and microsecond-wrap tIDLE enforcement.
+- Fixed stale-result risk by preserving the previous sample until a complete,
+  CRC-valid, in-deadline replacement frame succeeds.
+- Corrected public transaction-count, blocking, health-policy, cancellation,
+  and ownership documentation; superseded the TunnelMonitor suitability audit
+  with traceable finding dispositions.
+
 ## [1.6.1] - 2026-06-29
 
 ### Added
@@ -263,7 +297,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.2...v1.5.0

@@ -4,6 +4,101 @@
 
 Date: 2026-07-18
 
+## 2026-07-19 implementation re-audit and disposition
+
+This section **supersedes the pre-implementation assessment below** for the
+current hardening branch. The remainder of this document is intentionally
+preserved as the historical v1.6.1 audit, including its original evidence,
+recommended design, and validation gaps. A finding marked implemented here is
+not a hardware-validation claim. The core implementation is committed as
+`be2c18a` on the branch named below; release/documentation metadata and final
+review are subsequent focused chunks. The physical gates listed below remain
+open.
+
+### Re-audit baselines and scope
+
+| Repository | Re-audit baseline | Working-tree note |
+| --- | --- | --- |
+| SHT3x | Branch `hardening/tunnelmonitor-suitability-reaudit`, baseline `cf2ffad8eee28341edce74b05f06c12c8d71f7b6`; released v1.6.1 source/tag commit `113ecc67a082c844d062a402412b91eb7980202f`; core hardening commit `be2c18a` | `cf2ffad8` added this audit only. The owner-safe implementation and focused tests are committed separately from the release/documentation chunk. |
+| TunnelMonitor-node | Initially inspected clean `develop` at `0897f12c1a1369367747d1063936906005391580`, equal to the then-known `origin/develop` | During the read-only integration review, another process externally switched the shared TunnelMonitor worktree to `docs/mb85rc-suitability-contract-facts` and left unrelated documentation changes. No TunnelMonitor file was edited, committed, or reverted by this SHT3x work. |
+
+The current TunnelMonitor authority still keeps non-RV3032 I2C chip-library
+dependencies deferred in
+`docs/guidelines/dependency_policy.md`. Its existing ENV behavior remains
+authoritative: `I2cTask` owns the bus, scheduling, deadlines, retries, health,
+and recovery; `ReadEnv` uses a 20 ms transfer bound and 1000 ms operation
+deadline; its fixed candidates remain SHT3x `0x44`, SHT3x `0x45`, and BME280
+`0x76`; and only discovery-probe NACK is expected absence. This re-audit
+therefore completes the general library boundary without adding a production
+TunnelMonitor dependency or adapter.
+
+### Hard-finding dispositions
+
+| Finding | Current evidence and resolution | Native coverage | Final software status |
+| --- | --- | --- | --- |
+| H-01: mixed-clock tIDLE gate | `pollJob()` now samples `Config::nowUs` for the tIDLE comparison instead of multiplying caller milliseconds. The comparison remains wrapping-duration based. | Fractional-millisecond, exact-boundary, microsecond-wrap, and periodic Fetch transition tests pass in the 101-test native suite. | **Resolved in software.** |
+| H-02: active blocking lifecycle/recovery | Added zero-I2C `SHT3x::bind(const Config&)`. Added cooperative `requestEnsureIdle(const JobRequest&)`, whose Break, reset, status-command, and status-read phases advance through `pollJob()` with at most one callback per poll; its wait phases use zero I2C. The existing `begin()` and maintenance recovery APIs remain explicitly documented bounded synchronous compatibility surfaces rather than owner-safe entry points. | Bind/rebind/end, ensure-idle budget/wait, all four transport-stage failures, deadlines, and cancellation pass natively. Rebind refuses to discard an active identity. | **Resolved for the owner-safe surface; synchronous compatibility restrictions documented.** |
+| H-03: mandatory OFFLINE admission latch | Added `Config::healthPolicy` with `HealthPolicy::OBSERVE_ONLY` and `HealthPolicy::LATCH_OFFLINE`. Observe-only mode retains diagnostics but does not suppress a caller-authorized operation; latch mode preserves the standalone compatibility behavior. | Observe-only continues through OFFLINE and returns to READY on success; latch-mode admission remains bus-silent after threshold. | **Resolved in software.** |
+| H-04: health counted per transfer | Tracked wrappers now accept logical-completion provenance. Intermediate successful command writes update physical transport counters without resetting logical consecutive failures; the completing read updates logical success, while any physical transfer failure completes a logical failure. Separate saturating transport-success, transport-failure, CRC/protocol-failure, and expected-not-ready counters are exposed. | Three repeated command-success/read-timeout status operations now reach threshold exactly; separate counter saturation tests pass. | **Resolved in software.** |
+| H-05: pre-transfer conversion/sample timestamps | After successful command and read callbacks, `pollJob()` samples the configured millisecond clock and bases conversion readiness and sample timestamp on those completion-side values. | Delayed command/read callback timestamp and deadline-crossed-in-callback regressions pass. | **Resolved in software.** |
+| H-06: no owner-safe cancellation, deadline, or identity | Added `JobRequest` with nonzero request identity and optional wrapping absolute deadline; `PollJobResult` now reports request, type, phase, active/terminal outcome, instruction use, and possible physical effect. Added zero-I2C `cancelJob()` and compatibility `cancelMeasurement()`. Terminal results are emitted only on the poll/cancel call that clears the job, and measurement cancellation preserves the last-good sample while exposing pending, changed, or indeterminate hardware effect. | Zero/invalid identity, zero budget, deadline-before-work, deadline-inside-callback, wrap, pre/post-command cancellation, stale-result prevention, exactly-once terminal, and preserved-cache tests pass. | **Resolved in software.** |
+| H-07: centi-only output | Added signed `MeasurementMilli`, `getMeasurementMilli()`, `convertTemperatureMilliCelsius()`, and `convertHumidityMilliPercent()` with 64-bit intermediates. Float and milli results are derived from the unrounded raw sample. | Endpoints, midpoint, negative/near-zero, rounding vectors, fixed-layout assertions, and unrounded raw-to-float/milli tests pass. | **Resolved in software.** |
+| H-08: inaccurate transaction/wait documentation | Public Doxygen, README owner-safe model, operation-class table, exact transaction table, ESP-IDF notes, and changelog now state zero-I2C request/bind/cancel, one-callback polling, bus-silent waits, and bounded synchronous compatibility/maintenance behavior. | Instruction-count tests pass; CLI, IDF-example, timing, HIL, and version-metadata guards pass after documentation changes. | **Resolved in software/documentation.** |
+
+### Secondary-finding dispositions
+
+| Finding | Current disposition | Final software status |
+| --- | --- | --- |
+| S-01: budget broader than behavior | The API deliberately retains `maxInstructions`, but public Doxygen and README say the current implementation uses at most one instruction even when a larger value is supplied; zero and wait-only polls perform no I2C. No loop was added merely to consume budget. | **Resolved in API contract and tests.** |
+| S-02: transport/protocol diagnostics | Added fixed saturating counters for physical transport success/failure, logical operation success/failure, CRC/protocol failures, and expected not-ready outcomes. No log, queue, allocator, or history framework was added. | **Resolved; saturation and separation tests pass.** |
+| S-03: cached caller message lifetime | Cached transport errors now pass through `stableStatus()`, retaining enum/detail while replacing callback-owned text with a library static literal before storing `_lastError`. | **Resolved; transient-buffer regression passes.** |
+| S-04: unchecked raw command access | Raw command helpers remain an explicitly documented expert/diagnostic escape hatch; typed operations remain the production surface. No TunnelMonitor adapter may use the raw path. A breaking rename is deferred to a future major version. | **Accepted restricted surface; no current code change required.** |
+| S-05: reproducible release builds | The release metadata pins PlatformIO `6.1.18`, the PlatformIO Espressif32 platform archive `54.03.20`, and the ESP-IDF build container `v5.4.2`. Version generation now also synchronizes `idf_component.yml` and Doxyfile from `library.json`. | **Primary toolchain drift gates resolved; local pinned PlatformIO builds pass, live CI/pure-IDF execution remains an external gate.** |
+| S-06: monolithic native test file | The single native file remains large and still uses private-access test techniques. The focused hardening tests should land without a broad framework rewrite; later mechanical splitting may preserve the same test behavior. | **Accepted maintenance debt; not an integration gate.** |
+
+### TunnelMonitor cleanup and integration disposition
+
+- **C-01 still applies.** At the clean `0897f12` baseline,
+  `recordEnvCandidateFailure()` still treats post-probe SHT3x command/read NACK
+  like discovery absence, contrary to the authoritative phase-aware ENV
+  contract. It was not changed here because the authoritative SHT3x dependency
+  remains deferred and the shared TunnelMonitor worktree changed externally
+  during the read-only review. This existing TunnelMonitor defect remains a
+  separately owned application fix; only the discovery-probe NACK may become
+  expected absence.
+- **C-02 and production dependency integration remain an external product
+  decision.** TunnelMonitor still owns direct SHT3x command, wait, CRC, and
+  conversion code. Replacing it requires an authoritative dependency decision,
+  an exact immutable SHT3x pin, an owner-private adapter, native parity, and
+  then deletion of the duplicate direct protocol. Library types must not enter
+  `include/TunnelMonitor/contracts/`.
+- The eventual adapter must use `bind()`, `HealthPolicy::OBSERVE_ONLY`,
+  `JobRequest` with the owner request/deadline, `pollJob(..., 1, ...)`,
+  `cancelJob()` on owner expiry, and milli-unit output. TunnelMonitor remains
+  sole owner of discovery, candidate selection, fixed request/result capacity,
+  64-bit completion time, retry, health projection, and bus recovery.
+
+### Verification and physical gates
+
+The pre-edit baseline passed 85/85 native tests, both Arduino targets, and all
+repository guards. After implementation, the complete native suite passes
+101/101; strict framework-neutral core compilation passes with C++17,
+`-Wall -Wextra -Wpedantic -Werror`; pinned PlatformIO Arduino builds pass for
+ESP32-S3 and ESP32-S2; and the core timing, Arduino/IDF CLI, IDF-example, HIL,
+HIL-parser, version-metadata, and diff guards pass. Package inspection and the
+independent final review are recorded after their final run. `idf.py` and `gh`
+were unavailable in the inspected shell, so no new pure ESP-IDF or live-CI
+result is claimed.
+
+No new physical HIL was run. Native tests now cover address forwarding for
+`0x45`, hot-return behavior, and forced phase-specific NACK/timeout/CRC faults;
+that is not physical evidence. Physical `0x45`, hot-unplug/replug/replacement,
+fault injection, ALERT pin behavior, humidity or temperature accuracy,
+ESP32-S2 hardware, pure ESP-IDF hardware, shared-bus fault recovery, and an
+uninterrupted production-duration soak remain open. Existing COM20 evidence
+remains limited to its recorded `0x44` ESP32-S3 scenarios and partial long-run
+boundary.
+
 Audit result: **strong protocol base, focused refactor required before integration**
 
 SHT3x v1.6.1 already contains most of the chip work that TunnelMonitor should

@@ -9,20 +9,24 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 - **CRC validation** - all 16-bit data words CRC-checked
 - **Alert mode support** - read/write limits, encode/decode helpers
 - **Periodic + ART modes** - 0.5/1/2/4/10 mps and ART
-- **Health monitoring** - automatic state tracking (READY/DEGRADED/OFFLINE)
+- **Owner-safe jobs** - passive binding, one-transfer polling, deadlines, identity, and zero-I2C cancellation
+- **Health monitoring** - logical-operation and transfer diagnostics with selectable admission policy
 - **Deterministic behavior** - no unbounded loops, no heap allocations
 
 ## Current State
 
-This tree is prepared as release `v1.6.1`. Local software checks for the
-release commit have passed for native tests (85/85), guard scripts, package
-packing, and Arduino PlatformIO builds for ESP32-S3 and ESP32-S2.
+This tree contains the `1.7.0` owner-safe API. Local verification passes the
+101-test native fault/boundary suite, strict framework-neutral core compile,
+repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
+ESP32-S2. Hardware evidence remains the historical v1.6.1 evidence described
+below.
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
 in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
 or local ESP-IDF build log.
 
-Hardware validation has explicit boundaries. The latest maintained COM20 report
+Hardware validation has explicit boundaries. No new physical-hardware run was
+performed for 1.7.0. The latest maintained COM20 report
 is `docs/reports/hil-validation-COM20-20260629.md`: destructive/all-round
 ESP32-S3 serial HIL passed all executable commands at SHT3x address `0x44`, and
 a post-reboot smoke run passed. The best long attempt reached 862,912
@@ -33,7 +37,7 @@ failure. ALERT pin behavior, humidity accuracy, fault injection, ESP32-S2
 hardware, address `0x45`, and an uninterrupted 16-hour transcript remain
 pending. Every unexecuted hardware row stays `Not run`.
 
-Version metadata is `1.6.1` in `library.json`, `idf_component.yml`, Doxyfile,
+Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
 
 Next long HIL run should use the low-USB `i2c_soak <seconds>` firmware command
@@ -48,6 +52,14 @@ Add to `platformio.ini`:
 ```ini
 lib_deps = 
   https://github.com/janhavelka/SHT3x-main.git
+```
+
+Production firmware should exact-pin the reviewed immutable commit rather than
+tracking a branch:
+
+```ini
+lib_deps =
+  https://github.com/janhavelka/SHT3x-main.git#<reviewed-full-commit-sha>
 ```
 
 ### Manual
@@ -188,16 +200,78 @@ void loop() {
 }
 ```
 
+## Owner-safe production operation model
+
+Use `bind()` in an external I2C-owner task when lifecycle work must not perform
+hidden bus traffic. Binding validates and stores callbacks, normalizes local
+configuration, enters local `SINGLE_SHOT` state, and performs zero I2C. It does
+not claim that the sensor is present or that acquisition state matches the
+local state. `CachedSettings` remains a desired restore plan, never a live
+readback of heater/alert configuration. Rebinding returns `BUSY` while a job is
+active so identity cannot be silently discarded; cancel and consume its
+terminal result first.
+
+```cpp
+SHT3x::Config cfg = makeApplicationOwnedConfig();
+cfg.healthPolicy = SHT3x::HealthPolicy::OBSERVE_ONLY;
+cfg.i2cTimeoutMs = 20;  // The owner/adapter must enforce this callback bound.
+
+SHT3x::Status st = device.bind(cfg);  // zero I2C
+
+SHT3x::JobRequest startup{requestId, nowMs + 1000U, true};
+st = device.requestEnsureIdle(startup);  // zero I2C
+
+SHT3x::PollJobResult step;
+st = device.pollJob(nowMs, 1, step);     // zero or one transport callback
+if (step.terminal) {
+  publishOnce(step.requestId, step.outcome, step.phase, step.effect, st);
+}
+```
+
+`requestEnsureIdle()` is the destructive reconciliation job: Break, a zero-I2C
+settle phase, soft reset, another zero-I2C settle phase, then status command and
+CRC-checked status read. It uses at most four transport callbacks across polls
+and leaves the sensor in verified single-shot idle state on success.
+
+`requestMeasurement(JobRequest)` also performs zero I2C. Each `pollJob()` call
+uses at most one callback even if a larger budget is supplied. `maxInstructions
+== 0` and all conversion/settle/command-spacing wait phases are bus-silent.
+The caller-provided `nowMs` and `Config::nowMs` must be the same wrapping timebase;
+absolute deadlines must be within `INT32_MAX` milliseconds of the request.
+
+Terminal identity is emitted on exactly one `pollJob()` or `cancelJob()` call.
+The caller must consume that returned `PollJobResult` immediately; it is not an
+internal queue. Later polls have `terminal=false` and `requestId=0`, preventing
+a stale completion from being attributed to a new request. Cancellation is
+local and always performs zero I2C. `JobEffect` distinguishes no known effect,
+an unread measurement that may still be pending, a changed device state, and an
+indeterminate state after an ambiguous command transfer.
+
+The operation classes are intentionally small:
+
+| Class | APIs | Bound and intended context |
+|---|---|---|
+| Owner-safe steady state | measurement request + `pollJob()` | Zero or one callback per poll; normal I2C-owner scheduling. |
+| Owner-safe reconciliation | `requestEnsureIdle()` + `pollJob()` | Four callbacks maximum, two bus-silent waits, caller deadline/cancel; startup, hotplug, or explicit recovery. |
+| Synchronous convenience/configuration | `begin()`, mode/status/heater/alert/reset helpers | Bounded callbacks and waits documented below; use only where the caller accepts that latency. An owner can reconcile first, then issue an idle one-command setting change. |
+| Diagnostic/maintenance | raw commands, `probe()`, recovery ladder, general-call reset | Explicit expert/application policy; may invalidate hardware-state verification or affect the shared bus. |
+
+SHT3x has no nonvolatile programming, calibration storage, or endurance-limited
+write procedure, so there is no rare NVM operation class in this library.
+
 ## API Overview
 
 ### Lifecycle
 
 | Method | Description |
 |--------|-------------|
-| `begin(config)` | Initialize the driver, validate transport callbacks, and probe the sensor. |
-| `tick(nowMs)` | Poll pending measurement work; may perform one bounded I2C transaction when a sample is due. |
+| `bind(config)` | Validate/store configuration with zero I2C and no wait; hardware state remains unverified. |
+| `begin(config)` | Synchronous compatibility initialization: bind, Break/reset/status probe, and optional acquisition start. |
+| `requestEnsureIdle()` / `pollJob()` | Owner-safe destructive reconciliation with identity, deadline, phase, effect, and one-callback polling. |
+| `cancelJob()` | Cancel the active job locally with zero I2C and return its terminal result. |
+| `tick(nowMs)` | Compatibility one-step poll that discards detailed job results. |
 | `end()` | Clear runtime/session state and return to `UNINIT`; no sensor command is sent. |
-| `isInitialized()` | Return `true` after a successful `begin()` until `end()`. |
+| `isInitialized()` | Return `true` after a successful `bind()`/`begin()` until `end()`. |
 | `getConfig()` | Return the cached configuration currently held by the driver. |
 | `probe()` | Raw presence check with no health tracking. |
 | `recover()` | Manual recovery ladder that restores communications but leaves the driver in idle single-shot mode. |
@@ -207,9 +281,11 @@ void loop() {
 
 | Method | Description |
 |--------|-------------|
-| `requestMeasurement()` | Start a single-shot measurement or schedule the next periodic fetch. |
+| `requestMeasurement()` / `requestMeasurement(JobRequest)` | Schedule with zero I2C; the overload carries caller identity/deadline. |
+| `pollJob()` | Advance at most one transport callback and return active or exactly-once terminal provenance. |
+| `cancelMeasurement()` | Cancel a measurement locally with zero I2C. |
 | `measurementReady()` | Report whether a sample is ready to be read. |
-| `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` | Read float, raw, or fixed-point sample data. |
+| `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` / `getMeasurementMilli()` | Read float, raw, centi-unit, or signed milli-unit sample data. |
 | `hasSample()` | True after at least one raw/converted sample has been cached. |
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
@@ -226,8 +302,9 @@ fails with `INVALID_CONFIG`.
 |--------|-------------|
 | `setMode()` / `getMode()` | Switch between single-shot, periodic, and ART modes. |
 | `setRepeatability()`, `setPeriodicRate()`, `setClockStretching()` | Update core measurement policy. |
-| `driverState()` | Cross-library alias for the current `DriverState`. |
-| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read; snapshots include `hasSample`. |
+| `driverState()` | Diagnostic `DriverState`; I2C admission is selected by `HealthPolicy`. |
+| `hardwareStateValid()` | Whether typed reconciliation established a known acquisition baseline since the last raw/ambiguous operation. |
+| `getSettings()` / `readSettings()` | Read cached state only, or cached state plus a best-effort status-register read; snapshots expose cache/hardware validity. |
 | `writeCommand()` / `writeCommandWithData()` / `readCommand()` | Advanced command-level helpers for upper layers that need direct access to the SHT3x command set. |
 | `readStatus()` / `readStatusWithModeRestore()` / `clearStatus()` / `readHeaterStatus()` | Status-register, ALERT-cause, and heater helpers. |
 | `readSerialNumber()` | Read the electronic identification code. |
@@ -238,7 +315,8 @@ driver's tracked transport path and tIDLE guard, and they reject pending
 single-shot work, but they intentionally bypass high-level periodic/ART mode
 safety. The caller owns datasheet command legality, response length, raw
 response CRC interpretation, status side effects, local cache coherence, and
-desynchronization risk. Raw helpers do not update mode/heater/alert caches.
+desynchronization risk. Raw helpers do not update mode/heater/alert caches and
+invalidate `hardwareStateValid()` after an attempted raw command.
 Stop periodic/ART before raw commands unless the datasheet explicitly permits
 the command in the active mode. Dedicated mode/status/alert helpers remain the
 preferred entry points when the command has higher-level state implications.
@@ -260,7 +338,9 @@ the cached configuration is updated only after that restart succeeds.
   `if (st)` idiom. `Err::IN_PROGRESS` converts to `false`.
 - `Status::inProgress()` is the convenience check for `Err::IN_PROGRESS`.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
-- Expected periodic not-ready handling does not count as a failure. Validation errors and pre-`begin()` setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
+- `Err::CANCELLED` is a local terminal result and never implies an I2C attempt.
+- Expected periodic not-ready handling does not count as a failure. Validation errors and pre-bind setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
+- `totalSuccess()`/`totalFailures()` and `consecutiveFailures()` describe complete logical transport operations. `transportSuccess()`/`transportFailures()`, `protocolFailures()`, and `totalNotReady()` keep physical transfer, CRC, and expected-not-ready diagnostics separate; all counters saturate.
 
 ### ALERT and Status Register
 
@@ -291,9 +371,10 @@ failure; inspect `statusReadStatus` for the earlier status-read failure.
 `readSettings()` remains non-disruptive. If it cannot read status, it sets
 `statusValid=false` and records the exact reason in
 `SettingsSnapshot::statusReadStatus`. That OK snapshot behavior covers active
-periodic/ART and pending single-shot status unavailability. OFFLINE is the
-exception: like other normal public I2C APIs, `readSettings()` returns `BUSY`
-and does not issue a bus transaction while recovery is required.
+periodic/ART and pending single-shot status unavailability. Under
+`LATCH_OFFLINE`, OFFLINE is the exception: `readSettings()` returns `BUSY` and
+does not issue a bus transaction. Under `OBSERVE_ONLY`, health remains visible
+but never suppresses an owner-authorized attempt.
 
 `clearStatus()` is destructive for status flags 15, 11, 10, and 4. It is never
 called implicitly by `readStatus()`, `readStatusWithModeRestore()`, or
@@ -357,15 +438,22 @@ before being treated as a fault.
 Use `Config::periodicFetchMarginMs` to avoid early Fetch Data reads
 (0 = auto, max(2ms, period/20)).
 
-## Blocking Behavior (Max Time)
+## Bounded work and synchronous latency
 
-All public APIs are synchronous and bounded by config timeouts:
+Owner-safe job APIs do not spin. `bind()`, request, cancellation, cached getters,
+and zero-budget/waiting polls perform zero I2C. A non-waiting `pollJob()` performs
+at most one callback, bounded by `i2cTimeoutMs`; the adapter remains responsible
+for enforcing that bound.
+
+Synchronous convenience/advanced APIs are bounded by:
 
 - I2C write/read phases: `i2cTimeoutMs`
 - Command spacing gate: `commandDelayMs + i2cTimeoutMs` (guarded)
 - Reset/Break waits: `RESET_DELAY_MS` (2 ms), `BREAK_DELAY_MS` (1 ms), both guarded
 
-The driver has no unbounded loops.
+Legacy command-spacing/reset waits use deadline and stall guards plus
+`cooperativeYield`; they are not used by the owner-safe wait phases. The driver
+has no unbounded retry loop and performs no steady-state heap allocation.
 
 ### Public API Transaction and Latency Summary
 
@@ -375,11 +463,13 @@ command or read phase.
 
 | API | Sensor transactions | Bounded wait behavior | Notes |
 |-----|---------------------|-----------------------|-------|
-| `begin()` | Best-effort Break + soft reset, status read, optional periodic/ART start | Break 1 ms, reset 2 ms, each I2C phase <= `i2cTimeoutMs` | Missing callbacks/config are rejected before I2C. |
-| `requestMeasurement()` single-shot | 1 command write | command spacing + write timeout; sample readiness is later driven by `tick()` | Returns `IN_PROGRESS`; it does not block for conversion. |
-| `requestMeasurement()` periodic/ART | 0 transactions | none | Schedules next Fetch Data for `tick()`. |
-| `tick()` single-shot pending | 1 receive-only read when ready | command spacing + read timeout | CRC-checks temperature and humidity words. |
-| `tick()` periodic/ART pending | Fetch Data command + receive-only read when ready | command spacing + write/read timeout | Read-header NACK is "not ready" only if the transport can prove it. |
+| `bind()` | 0 | None | Passive local binding; `hardwareStateValid()==false`. |
+| `requestMeasurement()` / `requestEnsureIdle()` | 0 | None | Only schedules state with nonzero identity for `JobRequest`. |
+| `pollJob(..., 0, ...)` or a wait phase | 0 | None | Returns active progress without bus access. |
+| `pollJob(..., >=1, ...)` | 0 or 1 | One callback timeout maximum | Never consumes more than one instruction per call; terminal identity is returned once. |
+| `cancelJob()` / `cancelMeasurement()` | 0 | None | Local cancellation; effect reports pending/changed/indeterminate hardware state. |
+| `requestEnsureIdle()` complete job | 4 maximum across polls | Two bus-silent settle phases | Break, reset, status command, status read; caller deadline/cancel applies. |
+| `begin()` | 4, or 5 with periodic/ART start | Break 1 ms + reset 2 ms + command-spacing guards | Synchronous compatibility API: Break, reset, status command/read, optional start. Best-effort startup Break/reset failures are superseded by the verified status result. |
 | `getMeasurement()` / cached sample getters | 0 transactions | none | Reads cached data only. |
 | `setMode(SINGLE_SHOT)` / `stopPeriodic()` | Break command if periodic/ART active | command spacing + write timeout + 1 ms break wait | No sensor command when already idle. |
 | `startPeriodic()` / `startArt()` | Optional Break, then start command | command spacing + write timeout, plus break wait if needed | Updates cached desired settings only after success. |
@@ -391,42 +481,46 @@ command or read phase.
 | `setHeater()` | Heater command | command spacing + write timeout | Blocked while periodic/ART is active. Heater can affect measurements by self-heating. |
 | `readSerialNumber()` | Serial command + receive-only 6-byte read | command spacing + write/read timeout | CRC-checks both serial words. |
 | `readAlertLimit*()` | Alert-limit read command + receive-only 3-byte read | command spacing + write/read timeout | Blocked while periodic/ART is active. |
-| `writeAlertLimit*()` | Alert-limit write command + status read | command spacing + write/read timeout | Writes append CRC and then check command/checksum status bits. |
-| `disableAlerts()` | 2 alert-limit writes, each followed by status read | bounded by two `writeAlertLimitRaw()` calls | Partial success is possible; returned status identifies the failing step. |
+| `writeAlertLimit*()` | 3: alert write + status command/read | command spacing + three callback bounds | Writes append CRC and then check command/checksum status bits. Cache changes only after verification. |
+| `disableAlerts()` | 6 maximum | bounded by two `writeAlertLimitRaw()` calls | Partial success is possible; returned status identifies the failing call and the per-limit cache exposes confirmed writes. |
 | `writeCommand()` / `writeCommandWithData()` | 1 command write | command spacing + write timeout | Advanced direct access; normal helpers are preferred. |
 | `readCommand()` | Command write + receive-only read | command spacing + write/read timeout | Read length is capped to documented SHT3x frame sizes. |
 | `probe()` | Status command + read via raw transport | command spacing + write/read timeout | Diagnostic only; does not update health. |
 | `softReset()` | Soft-reset command | command spacing + write timeout + 2 ms reset wait | Blocked while periodic/ART is active. Success clears pending measurement/sample state and leaves local mode as single-shot. |
 | `generalCallReset()` | General-call write to address `0x00` | command spacing + write timeout + 2 ms reset wait | Bus-wide, disabled by default, and an application/bus-manager policy. Success clears local measurement state and leaves local mode as single-shot. |
 | `interfaceReset()` | Application callback only | bounded by callback contract | Callback must implement the SCL sequence and return a `Status`. |
-| `recover()` / reset-and-restore helpers | Multi-step recovery/reset ladder | bounded by configured ladder steps and backoff | Manual recovery only; no automatic retry loop in `tick()`. |
+| `recover()` | 2–15 callbacks maximum when every ladder option is enabled (at most 13 I2C callbacks plus interface/hard-reset callbacks) | Each enabled reset wait is bounded; no retry loop | Probe; optional interface-reset+probe; soft-reset+probe; optional hard-reset+probe; optional general-call-reset+probe. Use `requestEnsureIdle()` for owner-safe startup/reconciliation. |
+| `resetToDefaults()` / `resetAndRestore()` | Recovery bound; restore adds at most 14 I2C callbacks | Same finite ladder plus fixed restore plan (heater + up to four three-callback alert writes + optional acquisition start) | Maintenance convenience APIs; partial restore is reported and invalidates verified hardware state. |
 
-`tick()` returns `void`. When it performs I2C and the transaction fails, the
-failure is visible through `lastError()`, health counters, `driverState()`, and
-retry scheduling rather than as a returned `Status`. Protocol failures after a
-successful bus transaction, such as CRC mismatch, do not update transport
-health; they leave no ready sample and are retried through normal scheduling.
-Use explicit APIs when the caller must handle a synchronous error at the call
-site.
+`tick()` returns `void`; use `pollJob()` for exact failure, phase, identity, and
+effect at the call site. CRC failure is counted separately from a successful
+transport operation and never publishes the previous sample as a newly
+completed frame.
 
 `end()` is local-only. It clears runtime/session state, but does not clear the
 cached configuration, cached restore plan, health counters, or last error. It
 does not send Break or reset and does not guarantee that the physical sensor has
 stopped periodic/ART acquisition. Call `stopPeriodic()` before `end()` when
-hardware acquisition state matters.
+hardware acquisition state matters, and cancel an active job first when its
+terminal identity must be consumed; `end()` emits no result.
 
 ## Recovery Ladder
 
-`recover()` performs a configurable ladder and restores **comms only**:
+`recover()` performs one tracked status probe, then a configurable ladder, and
+leaves a single-shot local baseline on success:
 
 1. Interface/bus reset (`busReset` callback), then probe
 2. Soft reset, then probe
 3. Hard reset (`hardReset` callback), then probe
-4. General call reset (only if `allowGeneralCallReset` is `true`)
+4. General call reset (only if `allowGeneralCallReset` is `true`), then probe
 
 Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`--the orchestrator triggers it.
 
-`OFFLINE` is latched. Normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch the bus until `recover()` succeeds. `probe()` remains raw/diagnostic and does not update health counters.
+With `HealthPolicy::LATCH_OFFLINE`, normal public I2C operations return `BUSY`
+after the threshold and do not touch the bus until recovery or the cooperative
+ensure-idle job succeeds. With `OBSERVE_ONLY`, the same diagnostic state and
+counters are visible but no caller-authorized I2C attempt is suppressed.
+`probe()` remains raw/diagnostic and does not update health counters.
 
 After a successful `recover()`, the driver is left in **SINGLE_SHOT** idle mode with measurement state cleared. If you need periodic/ART/heater, re-apply those settings in your orchestrator.
 General-call reset is bus-wide, resets every supporting device on the bus, and

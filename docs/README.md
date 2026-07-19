@@ -1,6 +1,6 @@
 # SHT3x Documentation
 
-Last updated: 2026-06-29
+Last updated: 2026-07-19
 
 This directory keeps only maintained project documentation and source reference
 material. Historical audit reports, prompt captures, implementation journals,
@@ -18,8 +18,12 @@ and generated PDF text dumps are intentionally not part of the active docs tree.
 
 ## Current Status
 
-- Version metadata is `1.6.1` in `library.json`, `idf_component.yml`, Doxyfile,
+- Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
   and generated `include/SHT3x/Version.h`.
+- The owner-safe production surface is passive `bind()`, zero-I2C request/cancel,
+  and one-callback `pollJob()` with deadlines, identity, phase, outcome, and
+  partial/indeterminate-effect reporting. Synchronous APIs remain bounded
+  convenience/diagnostic/maintenance operations.
 - Latest maintained hardware evidence is
   [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md).
 - That evidence covers COM20 ESP32-S3 destructive serial HIL and post-reboot
@@ -45,11 +49,11 @@ spreadsheets, audit leftovers, and prompt history.
 
 ## Claim Boundary
 
-Safe wording today: software-hardened, locally software-tested, CI-configured,
-and COM20 ESP32-S3 destructive serial HIL plus post-reboot smoke passed at
-address `0x44`.
+Safe wording today: v1.7.0 is software-hardened and locally software-tested;
+the historical v1.6.1 COM20 ESP32-S3 destructive serial HIL plus post-reboot
+smoke passed at address `0x44`. No v1.7.0 physical-hardware run was performed.
 
 Do not claim full hardware validation, physical ALERT pin validation, humidity
-accuracy validation, pure ESP-IDF validation, fault-injection validation,
+accuracy validation, pure ESP-IDF validation,
 long-soak stability, release publication, field-proven behavior, or
 industrial-grade status until the corresponding evidence exists.

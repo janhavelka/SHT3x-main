@@ -1,6 +1,6 @@
 # SHT3x ESP-IDF Notes
 
-Last updated: 2026-06-16
+Last updated: 2026-07-19
 
 Scope: framework-neutral core component plus a native ESP-IDF diagnostic
 example. Arduino/PlatformIO support remains separate and intact.
@@ -16,6 +16,9 @@ example. Arduino/PlatformIO support remains separate and intact.
 - The ESP-IDF example owns the I2C bus/device handles, reset/bus-recovery GPIOs
   when configured, timing hooks, and CLI loop.
 - The ESP-IDF example is a diagnostic bring-up CLI, not a production task model.
+- Production bus-owner tasks should use `bind()`, `requestEnsureIdle()` or
+  `requestMeasurement(JobRequest)`, and `pollJob(..., 1, ...)`; each poll uses
+  zero or one transport callback and exposes deadline/identity/provenance.
 
 ## Core Boundary
 
@@ -33,8 +36,10 @@ Required framework-neutral callbacks:
 - optional `busReset`
 - optional `hardReset`
 
-`begin()` rejects missing timing/yield hooks as `INVALID_CONFIG` before I2C is
-touched.
+`bind()` and `begin()` reject missing timing/yield hooks as `INVALID_CONFIG`
+before I2C is touched. `bind()` itself performs no I2C or wait. `begin()` is a
+bounded synchronous compatibility API; it is not the recommended lifecycle
+entry point inside an externally scheduled bus-owner task.
 
 ## IDF Transport Adapter
 
