@@ -11,7 +11,7 @@
 
 namespace SHT3x {
 
-/// Driver state for health monitoring
+/// Local driver health/admission state, not proof of device presence.
 enum class DriverState : uint8_t {
   UNINIT,    ///< bind()/begin() not called or end() called
   READY,     ///< Operational, consecutiveFailures == 0
@@ -251,6 +251,9 @@ public:
   /// The current implementation deliberately uses at most one instruction per
   /// call even when maxInstructions is larger; zero performs no I2C. Waiting
   /// phases also perform no I2C.
+  /// @note Cancellation is observed only between pollJob() calls. An injected
+  ///       transport callback is externally bounded but atomic from the
+  ///       driver's perspective and cannot be interrupted by cancelJob().
   Status pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& result);
 
   /// Schedule bounded destructive reconciliation into single-shot idle state.
@@ -265,6 +268,7 @@ public:
   ///       An ensure-idle job that already completed reset may have cleared it.
   ///       Inspect effect for possible unread measurement data or
   ///       partial/indeterminate device state.
+  ///       Invalid CancelReason values return INVALID_PARAM and leave the job active.
   Status cancelJob(CancelReason reason, PollJobResult& result);
 
   /// Cancel an active measurement locally with zero I2C.
@@ -299,7 +303,7 @@ public:
   /// @return Status::Ok() if device responds, error otherwise
   Status probe();
 
-  /// Run the manual communication recovery ladder after begin().
+  /// Run the manual communication recovery ladder after bind()/begin().
   /// @note May run multiple bounded transactions through the configured
   ///       recovery ladder and is destructive to pending measurement/acquisition
   ///       state. On success the driver is left in safe SINGLE_SHOT idle mode.
@@ -333,7 +337,11 @@ public:
   /// Alias for state() used by shared diagnostics.
   DriverState driverState() const { return state(); }
 
-  /// Check if driver is ready for operations
+  /// Check the legacy local health/admission state.
+  /// @note A true result is not proof of presence or verified hardware state;
+  ///       passive bind() returns READY without I2C. OBSERVE_ONLY may still
+  ///       authorize work while this returns false. Inspect operation results
+  ///       and hardwareStateValid() for those separate facts.
   bool isOnline() const {
     return _driverState == DriverState::READY ||
            _driverState == DriverState::DEGRADED;
@@ -353,10 +361,10 @@ public:
   /// Timestamp of last successful complete logical transport operation after bind()/begin()
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed tracked transport operation after begin()
+  /// Timestamp of last failed tracked transport operation after bind()/begin()
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
-  /// Timestamp of last tracked I2C attempt after begin().
+  /// Timestamp of last tracked I2C attempt after bind()/begin().
   /// @note Includes successes, failures, and expected read-header NACKs.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
@@ -378,7 +386,9 @@ public:
   /// Total successful transport callbacks, including intermediate command writes
   uint32_t transportSuccess() const { return _transportSuccess; }
 
-  /// Total failed transport callbacks
+  /// Total failed transport callbacks.
+  /// @note Proven expected read-header NACK/not-ready responses are excluded
+  ///       and counted by totalNotReady().
   uint32_t transportFailures() const { return _transportFailures; }
 
   /// Total CRC/checksum failures and sensor-reported command rejections
@@ -628,9 +638,11 @@ public:
   /// @note Uses the application-provided bus reset callback. The callback must
   ///       be bounded, must not recursively call into the same SHT3x instance,
   ///       and must own any GPIO/SCL sequencing externally. Direct calls clear
-  ///       pending/sample state and update command spacing, but callback failure
-  ///       is not a tracked transport failure and success does not prove a
-  ///       sensor reset occurred.
+  ///       pending/sample state on success. Every callback attempt invalidates
+  ///       hardwareStateValid() and starts the tIDLE guard because a failed
+  ///       callback may still have produced SCL edges. Callback failure is not
+  ///       a tracked transport failure and success does not prove a sensor reset
+  ///       occurred.
   Status interfaceReset();
 
   /// General call reset (bus-wide).

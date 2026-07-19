@@ -81,13 +81,20 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
 /// Optional bus reset callback (SCL pulse sequence)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
-/// @note Must not recursively call public APIs on the same SHT3x instance.
+/// @note Application-owned shared-bus policy. It must be externally serialized,
+///       bounded by the application, return only after the attempted SCL
+///       sequence completes, and must not recursively call public APIs on the
+///       same SHT3x instance. Synchronous recovery latency includes this bound.
 using BusResetFn = Status (*)(void* user);
 
 /// Optional hard reset callback (nRESET pulse)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
-/// @note Must not recursively call public APIs on the same SHT3x instance.
+/// @note Application-owned reset-pin policy. It must be externally serialized,
+///       bounded by the application, return only after the attempted pulse and
+///       settle procedure completes, and must not recursively call public APIs
+///       on the same SHT3x instance. Synchronous recovery latency includes this
+///       bound.
 using HardResetFn = Status (*)(void* user);
 
 /// Millisecond timestamp callback.

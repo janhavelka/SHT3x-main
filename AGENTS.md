@@ -50,8 +50,12 @@ Rules:
 - Keep changes tightly scoped to the user's request.
 - Preserve dirty user changes and never revert unrelated work unless the user explicitly asks for that revert.
 - Deterministic: no unbounded loops/waits; all timeouts via deadlines, never `delay()` in library code.
-- Non-blocking lifecycle: `Status begin(const Config&)`, `void tick(uint32_t nowMs)`, `void end()`.
-- Any I/O that can exceed ~1-2 ms must be split into state machine steps driven by `tick()`.
+- Owner-safe lifecycle: zero-I2C `bind(const Config&)`, zero-I2C request/cancel,
+  one-callback `pollJob(nowMs, budget, result)`, and local `end()`. `begin()` is
+  retained only as a bounded synchronous compatibility convenience.
+- Owner-safe I/O that can exceed ~1-2 ms must be split into state-machine steps
+  driven by `pollJob()`/`tick()`. Retained synchronous compatibility and
+  maintenance helpers must publish finite callback/wait bounds.
 - No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
 - Avoid dynamic allocation, unbounded queues, and variable-size buffers in steady embedded paths unless already accepted locally and the bound is explicit.
 - Every hardware operation that can block must have a timeout and an observable failure path.
@@ -82,12 +86,16 @@ Rules:
 - Examples must be labeled honestly as diagnostic, bring-up, or production-style.
 - Do not claim hardware validation, ALERT validation, or pure ESP-IDF validation unless the commands/builds actually ran.
 
-## Planned hardening subagents
+## Hardening review focus areas
 
-- `sht3x-datasheet-agent`: Re-check datasheet and local extracted docs for status, ALERT, periodic, ART, and command-validity facts without inferring undocumented behavior.
-- `core-contracts-agent`: Inspect public API and core implementation for framework neutrality, timing, health/offline behavior, copy/move semantics, and thread/ISR contracts.
-- `tests-agent`: Inspect native tests and fake transports, then identify focused public API and partial-transaction tests.
-- `idf-ci-agent`: Inspect ESP-IDF example, component metadata, guard scripts, and CI gaps for pure ESP-IDF validation.
+- Re-check datasheet and local extracted docs for status, ALERT, periodic, ART,
+  and command-validity facts without inferring undocumented behavior.
+- Inspect public API and core implementation for framework neutrality, timing,
+  health/admission behavior, copy/move semantics, and thread/ISR contracts.
+- Inspect native tests and fake transports for focused public API and
+  partial-transaction coverage.
+- Inspect the ESP-IDF example, component metadata, guard scripts, and CI gaps
+  before claiming pure ESP-IDF validation.
 
 ---
 
@@ -154,20 +162,31 @@ struct Status {
 
 ---
 
-## Driver Architecture: Managed Synchronous Driver
+## Driver Architecture: Owner-Safe Cooperative Jobs
 
-The driver follows a **managed synchronous** model with health tracking:
+The production surface follows a **passive binding plus cooperative job** model:
 
-- All public I2C operations are **blocking** (no async state machine needed - SHT3x has no EEPROM writes).
-- `tick()` may be used for periodic polling or measurement-ready checks.
-- Health is tracked via **tracked transport wrappers** ? public API never calls `_updateHealth()` directly.
-- Recovery is **manual** via `recover()` - the application controls retry strategy.
+- `bind()` validates and stores injected callbacks without I2C or waits. It does
+  not prove presence or hardware state.
+- `requestMeasurement()` and `requestEnsureIdle()` only schedule fixed-memory
+  state and return `IN_PROGRESS`; they perform zero I2C.
+- `pollJob()` accepts a caller budget, performs at most one transport callback
+  per call, exposes zero-I2C wait phases, and returns request identity, phase,
+  outcome, and partial/indeterminate effect.
+- `cancelJob()` is zero-I2C and returns the active job's terminal identity once.
+- `tick()` is a compatibility wrapper around one-instruction polling and drops
+  detailed result provenance; external owners use `pollJob()` directly.
+- Bounded synchronous mode/status/heater/alert/reset helpers remain for callers
+  that explicitly accept their documented callback/wait bounds. They reject an
+  active cooperative job and share the same transport/cache rules.
+- Recovery remains caller-controlled. External owners normally use staged
+  `requestEnsureIdle()`; synchronous `recover()` is a maintenance convenience.
 
 ### DriverState (4 states only)
 
 ```cpp
 enum class DriverState : uint8_t {
-  UNINIT,    // begin() not called or end() called
+  UNINIT,    // bind()/begin() not called or end() called
   READY,     // Operational, consecutiveFailures == 0
   DEGRADED,  // 1 <= consecutiveFailures < offlineThreshold
   OFFLINE    // consecutiveFailures >= offlineThreshold
@@ -175,8 +194,8 @@ enum class DriverState : uint8_t {
 ```
 
 State transitions:
-- `begin()` success -> READY
-- Any I2C failure in READY -> DEGRADED
+- `bind()`/`begin()` success -> READY (local admission/health state, not proof of presence)
+- Any completed logical I2C failure in READY -> DEGRADED
 - Success in DEGRADED/OFFLINE -> READY
 - Failures reach `offlineThreshold` -> OFFLINE
 - `end()` -> UNINIT
@@ -186,14 +205,14 @@ State transitions:
 All I2C goes through layered wrappers:
 
 ```
-Public API (readMeasurement, setMode, etc.)
-    ?
+Public API (pollJob, readStatus, setMode, etc.)
+    ->
 Command helpers (writeCommand/readAfterCommand)
-    ?
+    ->
 TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
-    ?  ? _updateHealth() called here ONLY
+    -> _updateHealth() called here ONLY
 RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
-    ?
+    ->
 Transport callbacks (Config::i2cWrite, i2cWriteRead)
 ```
 
@@ -205,19 +224,26 @@ Transport callbacks (Config::i2cWrite, i2cWriteRead)
 
 ### Health Tracking Rules
 
-- `_updateHealth()` called ONLY inside tracked transport wrappers.
-- State transitions guarded by `_initialized` (no DEGRADED/OFFLINE before `begin()` succeeds).
+- `_updateHealth()` called ONLY inside tracked transport wrappers; command/read
+  pairs mark only the final callback as logical completion.
+- State transitions guarded by `_initialized` (no DEGRADED/OFFLINE before
+  `bind()`/`begin()` succeeds).
 - NOT called for config/param validation errors (INVALID_CONFIG, INVALID_PARAM).
 - NOT called for precondition errors (NOT_INITIALIZED).
-- `probe()` uses raw I2C and does NOT update health (diagnostic only).
+- `probe()` uses raw I2C and does NOT update logical, transport, protocol, or
+  state health (diagnostic only).
 
 ### Health Tracking Fields
 
-- `_lastOkMs` - timestamp of last successful I2C operation
-- `_lastErrorMs` - timestamp of last failed I2C operation
+- `_lastOkMs` - timestamp of last successful complete logical transport operation
+- `_lastErrorMs` - timestamp of last failed tracked logical transport operation
 - `_lastError` - most recent error Status
 - `_consecutiveFailures` - failures since last success (resets on success)
-- `_totalFailures` / `_totalSuccess` - lifetime counters (wrap at max)
+- `_totalFailures` / `_totalSuccess` - session logical-operation counters
+- `_transportFailures` / `_transportSuccess` - physical callback counters
+- `_protocolFailures` - CRC/checksum and sensor command-rejection counter
+- `_totalNotReady` - expected periodic read-header NACK counter
+- All counters saturate at their integer maximum; they never wrap.
 
 ---
 

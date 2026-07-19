@@ -131,6 +131,16 @@ static Status mapPresenceProbeFailure(const Status& st) {
   return st;
 }
 
+static Status statusDiagnosticFailure(uint16_t raw) {
+  if ((raw & cmd::STATUS_WRITE_CRC_ERROR) != 0U) {
+    return Status::Error(Err::WRITE_CRC_ERROR, "Write checksum error");
+  }
+  if ((raw & cmd::STATUS_COMMAND_ERROR) != 0U) {
+    return Status::Error(Err::COMMAND_FAILED, "Command rejected");
+  }
+  return Status::Ok();
+}
+
 static Status stableStatus(const Status& st) {
   if (st.ok()) {
     return Status::Ok();
@@ -148,12 +158,6 @@ static Status stableStatus(const Status& st) {
     default: break;
   }
   return Status::Error(st.code, message, st.detail);
-}
-
-static bool isTransportStatus(const Status& st) {
-  return st.code == Err::I2C_ERROR || st.code == Err::I2C_NACK_ADDR ||
-         st.code == Err::I2C_NACK_DATA || st.code == Err::I2C_NACK_READ ||
-         st.code == Err::I2C_TIMEOUT || st.code == Err::I2C_BUS;
 }
 
 static uint32_t baseMeasurementMs(Repeatability rep, bool lowVdd) {
@@ -300,12 +304,12 @@ Status SHT3x::begin(const Config& config) {
   // If the MCU rebooted but the sensor did not, the sensor may still be in
   // periodic mode, which rejects most commands.  BREAK exits periodic mode;
   // soft reset then brings the sensor to a known idle state.
-  // Errors are intentionally ignored — the probe below will catch real issues.
+  // Individual command errors are ignored; the status read, CRC, and diagnostic
+  // flags below determine whether reconciliation actually succeeded.
   (void)_writeCommand(cmd::CMD_BREAK, false);
   (void)_waitMs(BREAK_DELAY_MS);
   (void)_writeCommand(cmd::CMD_SOFT_RESET, false);
   (void)_waitMs(RESET_DELAY_MS);
-  _lastCommandValid = false;
 
   uint16_t statusRaw = 0;
   st = _readStatusRaw(statusRaw, false);
@@ -313,6 +317,11 @@ Status SHT3x::begin(const Config& config) {
     const Status failure = mapPresenceProbeFailure(st);
     end();
     return failure;
+  }
+  st = statusDiagnosticFailure(statusRaw);
+  if (!st.ok()) {
+    end();
+    return st;
   }
 
   _mode = requestedMode;
@@ -347,7 +356,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
   result = PollJobResult{};
 
   if (!_initialized) {
-    result.status = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    result.status = Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
     return result.status;
   }
   if (!_jobActive()) {
@@ -362,12 +371,12 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
   result.outcome = JobOutcome::ACTIVE;
   result.effect = _jobEffect;
 
-  auto recordDeadline = [this, &result](bool measurementResultConsumed = false) -> Status {
+  auto recordDeadline = [this, &result](bool measurementReadResolved = false) -> Status {
     const uint8_t instructionsUsed = result.instructionsUsed;
     const bool hardwareStateWasValid = _hardwareStateValid;
     Status st = cancelJob(CancelReason::DEADLINE_EXPIRED, result);
     result.instructionsUsed = instructionsUsed;
-    if (measurementResultConsumed) {
+    if (measurementReadResolved) {
       result.effect = JobEffect::NONE;
       _hardwareStateValid = hardwareStateWasValid;
     }
@@ -391,7 +400,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
                                  : _effectForPhase(phase, ambiguous);
 
     if (type == JobType::MEASUREMENT) {
-      _lastMeasurementStatus = isTransportStatus(st) ? stableStatus(st) : st;
+      _lastMeasurementStatus = isTransportError(st.code) ? stableStatus(st) : st;
       _measurementReady = false;
       _measurementRequested = false;
     }
@@ -576,6 +585,13 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
         return recordFailure(Status::Error(Err::CRC_MISMATCH,
                                            "CRC mismatch (status)"));
       }
+      const uint16_t statusRaw =
+          static_cast<uint16_t>((static_cast<uint16_t>(buf[0]) << 8) | buf[1]);
+      st = statusDiagnosticFailure(statusRaw);
+      if (!st.ok()) {
+        _recordProtocolFailure();
+        return recordFailure(st);
+      }
       if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
         return recordDeadline();
       }
@@ -674,8 +690,8 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
   bool allowNoData = hasCapability(_config.transportCapabilities,
                                    TransportCapability::READ_HEADER_NACK);
   if (allowNoData && _config.notReadyTimeoutMs > 0 && _notReadyStartValid) {
-    const uint32_t deadline = _notReadyStartMs + _config.notReadyTimeoutMs;
-    if (_timeElapsed(nowMs, deadline)) {
+    if (_durationElapsed(nowMs, _notReadyStartMs,
+                         _config.notReadyTimeoutMs)) {
       allowNoData = false;
     }
   }
@@ -692,6 +708,9 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
       }
       if (_notReadyCount < std::numeric_limits<uint32_t>::max()) {
         _notReadyCount++;
+      }
+      if (_jobHasDeadline && _timeElapsed(readCompletedMs, _jobDeadlineMs)) {
+        return recordDeadline(true);
       }
       _measurementPhase = JobPhase::PERIODIC_FETCH_COMMAND;
       _measurementReadyMs = _periodicRetryMs(readCompletedMs);
@@ -750,7 +769,7 @@ void SHT3x::end() {
 
 Status SHT3x::probe() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -767,7 +786,7 @@ Status SHT3x::probe() {
 
 Status SHT3x::recover() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -784,7 +803,7 @@ Status SHT3x::recover() {
 
 Status SHT3x::resetToDefaults() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -802,7 +821,7 @@ Status SHT3x::resetToDefaults() {
 
 Status SHT3x::resetAndRestore() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -827,7 +846,7 @@ Status SHT3x::resetAndRestore() {
 
 Status SHT3x::requestMeasurement() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   JobRequest request;
   request.requestId = _allocateJobId();
@@ -836,7 +855,7 @@ Status SHT3x::requestMeasurement() {
 
 Status SHT3x::requestMeasurement(const JobRequest& request) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (request.requestId == 0) {
     return Status::Error(Err::INVALID_PARAM, "Job request ID must be nonzero");
@@ -903,7 +922,7 @@ Status SHT3x::requestMeasurement(const JobRequest& request) {
 
 Status SHT3x::requestEnsureIdle(const JobRequest& request) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (request.requestId == 0) {
     return Status::Error(Err::INVALID_PARAM, "Job request ID must be nonzero");
@@ -912,10 +931,7 @@ Status SHT3x::requestEnsureIdle(const JobRequest& request) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
   }
 
-  _measurementRequested = false;
-  _measurementReady = false;
   _measurementPhase = JobPhase::ENSURE_BREAK_COMMAND;
-  _measurementReadyMs = 0;
   _jobType = JobType::ENSURE_IDLE;
   _jobRequestId = request.requestId;
   _jobDeadlineMs = request.deadlineMs;
@@ -927,11 +943,22 @@ Status SHT3x::requestEnsureIdle(const JobRequest& request) {
 Status SHT3x::cancelJob(CancelReason reason, PollJobResult& result) {
   result = PollJobResult{};
   if (!_initialized) {
-    result.status = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    result.status = Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
     return result.status;
   }
   if (!_jobActive()) {
     result.status = Status::Error(Err::MEASUREMENT_NOT_READY, "No poll job active");
+    return result.status;
+  }
+  if (reason != CancelReason::REQUESTED &&
+      reason != CancelReason::DEADLINE_EXPIRED) {
+    result.status = Status::Error(Err::INVALID_PARAM, "Invalid cancel reason");
+    result.active = true;
+    result.requestId = _jobRequestId;
+    result.type = _jobType;
+    result.phase = _measurementPhase;
+    result.outcome = JobOutcome::ACTIVE;
+    result.effect = _jobEffect;
     return result.status;
   }
 
@@ -966,7 +993,7 @@ Status SHT3x::cancelJob(CancelReason reason, PollJobResult& result) {
 
 Status SHT3x::cancelMeasurement() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobType != JobType::MEASUREMENT) {
     return Status::Error(Err::MEASUREMENT_NOT_READY, "No measurement job active");
@@ -977,7 +1004,7 @@ Status SHT3x::cancelMeasurement() {
 
 Status SHT3x::measurementStatus() const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_measurementReady) {
     return Status::Ok();
@@ -987,7 +1014,7 @@ Status SHT3x::measurementStatus() const {
 
 Status SHT3x::getMeasurement(Measurement& out) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (!_measurementReady) {
     return measurementStatus();
@@ -1003,7 +1030,7 @@ Status SHT3x::getMeasurement(Measurement& out) {
 
 Status SHT3x::getRawSample(RawSample& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (!_hasSample) {
     return measurementStatus();
@@ -1015,7 +1042,7 @@ Status SHT3x::getRawSample(RawSample& out) const {
 
 Status SHT3x::getCompensatedSample(CompensatedSample& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (!_hasSample) {
     return measurementStatus();
@@ -1027,7 +1054,7 @@ Status SHT3x::getCompensatedSample(CompensatedSample& out) const {
 
 Status SHT3x::getMeasurementMilli(MeasurementMilli& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (!_hasSample) {
     return measurementStatus();
@@ -1039,7 +1066,7 @@ Status SHT3x::getMeasurementMilli(MeasurementMilli& out) const {
 
 Status SHT3x::setMode(Mode mode) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1073,7 +1100,7 @@ Status SHT3x::setMode(Mode mode) {
 
 Status SHT3x::getMode(Mode& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   out = _mode;
   return Status::Ok();
@@ -1081,7 +1108,7 @@ Status SHT3x::getMode(Mode& out) const {
 
 Status SHT3x::getSettings(SettingsSnapshot& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
 
   out.initialized = _initialized;
@@ -1137,7 +1164,7 @@ Status SHT3x::readSettings(SettingsSnapshot& out) {
 
 Status SHT3x::writeCommand(uint16_t command) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1150,7 +1177,7 @@ Status SHT3x::writeCommand(uint16_t command) {
 
 Status SHT3x::writeCommandWithData(uint16_t command, uint16_t data) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1164,7 +1191,7 @@ Status SHT3x::writeCommandWithData(uint16_t command, uint16_t data) {
 Status SHT3x::readCommand(uint16_t command, uint8_t* out, size_t len,
                           bool allowNoData) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (out == nullptr || len == 0 || len > MAX_READ_LEN) {
     return Status::Error(Err::INVALID_PARAM, "Invalid read buffer");
@@ -1186,7 +1213,7 @@ Status SHT3x::readCommand(uint16_t command, uint8_t* out, size_t len,
 
 Status SHT3x::setRepeatability(Repeatability rep) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1224,7 +1251,7 @@ Status SHT3x::setRepeatability(Repeatability rep) {
 
 Status SHT3x::getRepeatability(Repeatability& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   out = _config.repeatability;
   return Status::Ok();
@@ -1232,7 +1259,7 @@ Status SHT3x::getRepeatability(Repeatability& out) const {
 
 Status SHT3x::setClockStretching(ClockStretching stretch) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1249,7 +1276,7 @@ Status SHT3x::setClockStretching(ClockStretching stretch) {
 
 Status SHT3x::getClockStretching(ClockStretching& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   out = _config.clockStretching;
   return Status::Ok();
@@ -1257,7 +1284,7 @@ Status SHT3x::getClockStretching(ClockStretching& out) const {
 
 Status SHT3x::setPeriodicRate(PeriodicRate rate) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1295,7 +1322,7 @@ Status SHT3x::setPeriodicRate(PeriodicRate rate) {
 
 Status SHT3x::getPeriodicRate(PeriodicRate& out) const {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   out = _config.periodicRate;
   return Status::Ok();
@@ -1303,7 +1330,7 @@ Status SHT3x::getPeriodicRate(PeriodicRate& out) const {
 
 Status SHT3x::startPeriodic(PeriodicRate rate, Repeatability rep) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1324,7 +1351,7 @@ Status SHT3x::startPeriodic(PeriodicRate rate, Repeatability rep) {
 
 Status SHT3x::startArt() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1342,7 +1369,7 @@ Status SHT3x::startArt() {
 
 Status SHT3x::stopPeriodic() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -1358,7 +1385,7 @@ Status SHT3x::stopPeriodic() {
 
 Status SHT3x::readStatus(uint16_t& raw) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1384,7 +1411,7 @@ Status SHT3x::readStatusWithModeRestore(StatusReadSnapshot& out) {
   out = StatusReadSnapshot{};
 
   if (!_initialized) {
-    Status st = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    Status st = Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
     out.statusReadStatus = st;
     return st;
   }
@@ -1451,7 +1478,7 @@ Status SHT3x::readStatusWithModeRestore(StatusReadSnapshot& out) {
 
 Status SHT3x::clearStatus() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1465,7 +1492,7 @@ Status SHT3x::clearStatus() {
 
 Status SHT3x::setHeater(bool enable) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1494,7 +1521,7 @@ Status SHT3x::readHeaterStatus(bool& enabled) {
 
 Status SHT3x::softReset() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -1546,7 +1573,7 @@ Status SHT3x::softReset() {
 
 Status SHT3x::interfaceReset() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -1556,13 +1583,16 @@ Status SHT3x::interfaceReset() {
   }
 
   Status st = _config.busReset(_config.i2cUser);
+
+  // A callback failure can still mean that some SCL edges reached the bus.
+  // Conservatively invalidate the chip-state model and start tIDLE from the
+  // callback's completion before exposing its precise status to the caller.
+  _lastCommandUs = _nowUs(_config);
+  _lastCommandValid = true;
+  _hardwareStateValid = false;
   if (!st.ok()) {
     return st;
   }
-
-  // Record command timing so the next command respects tIDLE
-  _lastCommandUs = _nowUs(_config);
-  _lastCommandValid = true;
 
   _measurementRequested = false;
   _measurementReady = false;
@@ -1577,7 +1607,6 @@ Status SHT3x::interfaceReset() {
   _notReadyStartMs = 0;
   _notReadyStartValid = false;
   _notReadyCount = 0;
-  _hardwareStateValid = false;
   if (_periodicActive) {
     _periodicStartMs = _nowMs(_config);
   }
@@ -1587,7 +1616,7 @@ Status SHT3x::interfaceReset() {
 
 Status SHT3x::generalCallReset() {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_jobActive()) {
     return Status::Error(Err::BUSY, "Cooperative job in progress");
@@ -1648,7 +1677,7 @@ Status SHT3x::generalCallReset() {
 
 Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1693,7 +1722,7 @@ Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
 
 Status SHT3x::readAlertLimitRaw(AlertLimitKind kind, uint16_t& value) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1741,7 +1770,7 @@ Status SHT3x::readAlertLimit(AlertLimitKind kind, AlertLimit& out) {
 
 Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
   if (!_initialized) {
-    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
   if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
@@ -1767,15 +1796,11 @@ Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
     return st;
   }
 
-  if (statusRaw & cmd::STATUS_WRITE_CRC_ERROR) {
+  st = statusDiagnosticFailure(statusRaw);
+  if (!st.ok()) {
     _recordProtocolFailure();
     _hardwareStateValid = false;
-    return Status::Error(Err::WRITE_CRC_ERROR, "Write checksum error");
-  }
-  if (statusRaw & cmd::STATUS_COMMAND_ERROR) {
-    _recordProtocolFailure();
-    _hardwareStateValid = false;
-    return Status::Error(Err::COMMAND_FAILED, "Command rejected");
+    return st;
   }
 
   const uint8_t idx = static_cast<uint8_t>(kind);
@@ -1965,18 +1990,21 @@ uint32_t SHT3x::_periodicReadyMs(uint32_t nowMs) const {
     return nowMs;
   }
 
-  uint32_t readyMs = 0;
+  uint32_t startMs = 0;
+  uint32_t waitMs = 0;
   if (!_lastFetchValid) {
-    readyMs = _periodicStartMs + estimateMeasurementTimeMs();
+    startMs = _periodicStartMs;
+    waitMs = estimateMeasurementTimeMs();
   } else {
-    readyMs = _lastFetchMs + _periodMs;
+    startMs = _lastFetchMs;
+    waitMs = _periodMs;
   }
-  readyMs += _periodicFetchMarginMs();
+  waitMs += _periodicFetchMarginMs();
 
-  if (_timeElapsed(nowMs, readyMs)) {
+  if (_durationElapsed(nowMs, startMs, waitMs)) {
     return nowMs;
   }
-  return readyMs;
+  return startMs + waitMs;
 }
 
 uint32_t SHT3x::_periodicRetryMs(uint32_t nowMs) const {
@@ -2070,7 +2098,7 @@ Status SHT3x::_performRecoveryLadder() {
   Status result = [&]() -> Status {
   const uint32_t now = _nowMs(_config);
   if (_config.recoverBackoffMs > 0 && _lastRecoverValid &&
-      !_timeElapsed(now, _lastRecoverMs + _config.recoverBackoffMs)) {
+      !_durationElapsed(now, _lastRecoverMs, _config.recoverBackoffMs)) {
     return Status::Error(Err::BUSY, "Recovery backoff active");
   }
   _lastRecoverMs = now;
@@ -2531,7 +2559,9 @@ Status SHT3x::_readStatusRaw(uint16_t& raw, bool tracked) {
   }
 
   if (_crc8(&buf[0], 2) != buf[2]) {
-    _recordProtocolFailure();
+    if (tracked) {
+      _recordProtocolFailure();
+    }
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (status)");
   }
 

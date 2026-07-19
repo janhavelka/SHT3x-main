@@ -31,6 +31,29 @@ enum class Err : uint8_t {
   CANCELLED                ///< Cooperative job cancelled locally without I2C
 };
 
+/// True for errors returned directly by an injected I2C transport callback.
+constexpr bool isTransportError(Err error) {
+  return error == Err::I2C_ERROR || error == Err::I2C_NACK_ADDR ||
+         error == Err::I2C_NACK_DATA || error == Err::I2C_NACK_READ ||
+         error == Err::I2C_TIMEOUT || error == Err::I2C_BUS;
+}
+
+/// True for CRC failures or errors explicitly reported by the sensor protocol.
+constexpr bool isProtocolError(Err error) {
+  return error == Err::CRC_MISMATCH || error == Err::COMMAND_FAILED ||
+         error == Err::WRITE_CRC_ERROR;
+}
+
+/// True only for a proven expected measurement-not-ready condition.
+constexpr bool isExpectedNotReady(Err error) {
+  return error == Err::MEASUREMENT_NOT_READY;
+}
+
+/// True only for a presence probe that proved an address was absent.
+constexpr bool isAbsent(Err error) {
+  return error == Err::DEVICE_NOT_FOUND;
+}
+
 /// Status structure returned by all fallible operations
 struct Status {
   Err code = Err::OK;
