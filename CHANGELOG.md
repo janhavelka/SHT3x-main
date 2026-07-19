@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers using rounded 64-bit integer arithmetic.
 - Separate saturating logical-operation, transport, CRC/protocol, and expected
   not-ready diagnostics, plus explicit hardware-cache verification state.
+- Pure constexpr transport/protocol/not-ready/absence classifiers for
+  phase-aware external-owner error mapping.
 
 ### Changed
 - `pollJob()` now performs at most one transport callback per call, including
@@ -49,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected public transaction-count, blocking, health-policy, cancellation,
   and ownership documentation; superseded the TunnelMonitor suitability audit
   with traceable finding dispositions.
+- Rejected cooperative reconciliation and synchronous initialization when
+  status verification reports command/write-checksum errors, preserved unread
+  samples across zero-I2C cancellation, and closed long-idle, deadline, and
+  reset-callback timing edge cases.
 
 ## [1.6.1] - 2026-06-29
 

@@ -38,6 +38,7 @@ INPUT                  = README.md CHANGELOG.md include \
                          docs/reference/README.md \
                          docs/reference/sht3x-chip-notes.md \
                          docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md \
+                         docs/reports/hil-validation-COM20-20260629.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/*
@@ -60,5 +61,5 @@ GENERATE_MAN           = NO
 WARN_IF_UNDOCUMENTED   = NO
 WARN_NO_PARAMDOC       = YES
 WARN_IF_DOC_ERROR      = YES
-WARN_AS_ERROR          = NO
+WARN_AS_ERROR          = YES
 QUIET                  = YES

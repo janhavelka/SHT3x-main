@@ -2,9 +2,11 @@
 
 Last updated: 2026-07-19
 
-This directory keeps only maintained project documentation and source reference
-material. Historical audit reports, prompt captures, implementation journals,
-and generated PDF text dumps are intentionally not part of the active docs tree.
+This directory keeps maintained project documentation and source reference
+material. Historical prompt captures, implementation journals, and generated
+PDF text dumps are intentionally not part of the active docs tree. The current
+TunnelMonitor suitability audit remains maintained until its external adoption
+and hardware gates close; older audit material is historical evidence only.
 
 ## Guides
 
@@ -15,6 +17,7 @@ and generated PDF text dumps are intentionally not part of the active docs tree.
 | [reference/README.md](reference/README.md) | Vendor source-document inventory and local chip notes. |
 | [hil/](hil/) | Curated hardware evidence summaries only. Generated `hil_logs/` output stays local unless deliberately curated. |
 | [reports/](reports/) | Detailed hardware validation and audit reports. |
+| `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` | Current traceable suitability findings, resolutions, and remaining external gates. |
 
 ## Current Status
 

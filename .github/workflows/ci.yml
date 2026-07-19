@@ -85,6 +85,11 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio==6.1.18
 
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes doxygen
+
       - name: Enforce example CLI contract
         run: python tools/check_cli_contract.py
 
@@ -99,6 +104,9 @@ jobs:
 
       - name: Validate generated version header
         run: python scripts/generate_version.py check
+
+      - name: Validate API documentation
+        run: doxygen Doxyfile
 
       - name: Validate library package
         run: pio pkg pack
