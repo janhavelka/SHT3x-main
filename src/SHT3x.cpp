@@ -251,6 +251,7 @@ Status SHT3x::bind(const Config& config) {
   _jobDeadlineMs = 0;
   _jobHasDeadline = false;
   _jobEffect = JobEffect::NONE;
+  _jobWakeMs = 0;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicStartMs = 0;
@@ -510,7 +511,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
       _mode = Mode::SINGLE_SHOT;
       _config.mode = Mode::SINGLE_SHOT;
       _jobEffect = JobEffect::DEVICE_STATE_CHANGED;
-      _measurementReadyMs = _nowMs(_config) + BREAK_DELAY_MS;
+      _jobWakeMs = _nowMs(_config) + BREAK_DELAY_MS;
       _measurementPhase = JobPhase::ENSURE_BREAK_WAIT;
       if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
         return recordDeadline();
@@ -519,7 +520,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
     }
 
     case JobPhase::ENSURE_BREAK_WAIT:
-      if (!_timeElapsed(nowMs, _measurementReadyMs)) {
+      if (!_timeElapsed(nowMs, _jobWakeMs)) {
         return recordProgress("Break settle pending");
       }
       _measurementPhase = JobPhase::ENSURE_RESET_COMMAND;
@@ -539,7 +540,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
       _hasSample = false;
       _lastMeasurementStatus = initialMeasurementStatus();
       _jobEffect = JobEffect::DEVICE_STATE_CHANGED;
-      _measurementReadyMs = _nowMs(_config) + RESET_DELAY_MS;
+      _jobWakeMs = _nowMs(_config) + RESET_DELAY_MS;
       _measurementPhase = JobPhase::ENSURE_RESET_WAIT;
       if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
         return recordDeadline();
@@ -548,7 +549,7 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
     }
 
     case JobPhase::ENSURE_RESET_WAIT:
-      if (!_timeElapsed(nowMs, _measurementReadyMs)) {
+      if (!_timeElapsed(nowMs, _jobWakeMs)) {
         return recordProgress("Reset settle pending");
       }
       _measurementPhase = JobPhase::ENSURE_STATUS_COMMAND;
@@ -937,6 +938,7 @@ Status SHT3x::requestEnsureIdle(const JobRequest& request) {
   _jobDeadlineMs = request.deadlineMs;
   _jobHasDeadline = request.hasDeadline;
   _jobEffect = JobEffect::NONE;
+  _jobWakeMs = 0;
   return Status::Error(Err::IN_PROGRESS, "Ensure-idle scheduled");
 }
 
@@ -1966,6 +1968,7 @@ void SHT3x::_clearJobState() {
   _jobDeadlineMs = 0;
   _jobHasDeadline = false;
   _jobEffect = JobEffect::NONE;
+  _jobWakeMs = 0;
 }
 
 uint32_t SHT3x::_periodicFetchMarginMs() const {
@@ -2096,64 +2099,109 @@ Status SHT3x::_performRecoveryLadder() {
   const bool startedOffline = (_driverState == DriverState::OFFLINE);
   ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
   Status result = [&]() -> Status {
-  const uint32_t now = _nowMs(_config);
-  if (_config.recoverBackoffMs > 0 && _lastRecoverValid &&
-      !_durationElapsed(now, _lastRecoverMs, _config.recoverBackoffMs)) {
-    return Status::Error(Err::BUSY, "Recovery backoff active");
-  }
-  _lastRecoverMs = now;
-  _lastRecoverValid = true;
+    const uint32_t now = _nowMs(_config);
+    if (_config.recoverBackoffMs > 0 && _lastRecoverValid &&
+        !_durationElapsed(now, _lastRecoverMs, _config.recoverBackoffMs)) {
+      return Status::Error(Err::BUSY, "Recovery backoff active");
+    }
+    _lastRecoverMs = now;
+    _lastRecoverValid = true;
 
-  auto probeTracked = [this]() -> Status {
-    uint16_t statusRaw = 0;
-    return _readStatusRaw(statusRaw, true);
-  };
-  bool acquisitionStopped = !_periodicActive;
-  auto periodicRecoveryRequired = []() -> Status {
-    return Status::Error(Err::BUSY, "Recovery must stop periodic mode");
-  };
-  auto acceptProbe = [this, &acquisitionStopped, &periodicRecoveryRequired](Status st,
-                                                                            Status& last) -> bool {
-    if (!st.ok()) {
-      last = st;
+    auto probeTracked = [this]() -> Status {
+      uint16_t statusRaw = 0;
+      Status st = _readStatusRaw(statusRaw, true);
+      if (!st.ok()) {
+        return st;
+      }
+      st = statusDiagnosticFailure(statusRaw);
+      if (!st.ok()) {
+        _recordProtocolFailure();
+      }
+      return st;
+    };
+    bool acquisitionStopped = _hardwareStateValid && !_periodicActive;
+    auto reconciliationRequired = []() -> Status {
+      return Status::Error(Err::BUSY, "Recovery did not establish idle state");
+    };
+    auto acceptProbe = [&acquisitionStopped,
+                        &reconciliationRequired](Status st,
+                                                 Status& last) -> bool {
+      if (!st.ok()) {
+        last = st;
+        return false;
+      }
+      if (acquisitionStopped) {
+        return true;
+      }
+      last = reconciliationRequired();
       return false;
-    }
-    if (acquisitionStopped || !_periodicActive) {
-      return true;
-    }
-    last = periodicRecoveryRequired();
-    return false;
-  };
+    };
 
-  Status last = probeTracked();
-  if (acceptProbe(last, last)) {
-    return Status::Ok();
-  }
+    Status last = probeTracked();
+    if (acceptProbe(last, last)) {
+      return Status::Ok();
+    }
 
-  if (_config.recoverUseBusReset && _config.busReset != nullptr) {
-    Status st = interfaceReset();
-    if (st.ok()) {
-      st = probeTracked();
-      if (acceptProbe(st, last)) {
-        return Status::Ok();
+    if (_config.recoverUseBusReset && _config.busReset != nullptr) {
+      Status st = interfaceReset();
+      acquisitionStopped = false;
+      if (st.ok()) {
+        st = probeTracked();
+        if (acceptProbe(st, last)) {
+          return Status::Ok();
+        }
+      } else {
+        last = st;
       }
-    } else {
+    }
+
+    if (_config.recoverUseSoftReset) {
+      Status stStop = Status::Ok();
+      if (!acquisitionStopped) {
+        stStop = _writeCommand(cmd::CMD_BREAK, true);
+        if (stStop.ok()) {
+          stStop = _waitMs(BREAK_DELAY_MS);
+        }
+        if (stStop.ok()) {
+          _setSafeBaseline();
+          acquisitionStopped = true;
+        } else {
+          last = stStop;
+        }
+      }
+
+      if (stStop.ok()) {
+        Status st = softReset();
+        if (st.ok()) {
+          acquisitionStopped = true;
+          st = probeTracked();
+          if (acceptProbe(st, last)) {
+            return Status::Ok();
+          }
+        }
+        last = st;
+      }
+    }
+
+    if (_config.recoverUseHardReset && _config.hardReset != nullptr) {
+      Status st = _config.hardReset(_config.i2cUser);
+      if (st.ok()) {
+        st = _waitMs(RESET_DELAY_MS);
+        if (!st.ok()) {
+          return st;
+        }
+        _setSafeBaseline();
+        acquisitionStopped = true;
+        st = probeTracked();
+        if (acceptProbe(st, last)) {
+          return Status::Ok();
+        }
+      }
       last = st;
     }
-  }
 
-  if (_config.recoverUseSoftReset) {
-    Status stStop = Status::Ok();
-    if (_periodicActive) {
-      stStop = _stopPeriodicInternal();
-      if (!stStop.ok()) {
-        last = stStop;
-      }
-    }
-
-    if (stStop.ok()) {
-      acquisitionStopped = true;
-      Status st = softReset();
+    if (_config.allowGeneralCallReset) {
+      Status st = generalCallReset();
       if (st.ok()) {
         acquisitionStopped = true;
         st = probeTracked();
@@ -2163,37 +2211,8 @@ Status SHT3x::_performRecoveryLadder() {
       }
       last = st;
     }
-  }
 
-  if (_config.recoverUseHardReset && _config.hardReset != nullptr) {
-    Status st = _config.hardReset(_config.i2cUser);
-    if (st.ok()) {
-      st = _waitMs(RESET_DELAY_MS);
-      if (!st.ok()) {
-        return st;
-      }
-      acquisitionStopped = true;
-      st = probeTracked();
-      if (acceptProbe(st, last)) {
-        return Status::Ok();
-      }
-    }
-    last = st;
-  }
-
-  if (_config.allowGeneralCallReset) {
-    Status st = generalCallReset();
-    if (st.ok()) {
-      acquisitionStopped = true;
-      st = probeTracked();
-      if (acceptProbe(st, last)) {
-        return Status::Ok();
-      }
-    }
-    last = st;
-  }
-
-  return last;
+    return last;
   }();
   if (startedOffline && !result.ok() && !result.inProgress()) {
     _reassertOfflineLatch();

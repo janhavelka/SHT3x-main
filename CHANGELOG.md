@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status verification reports command/write-checksum errors, preserved unread
   samples across zero-I2C cancellation, and closed long-idle, deadline, and
   reset-callback timing edge cases.
+- Kept ensure-idle settle deadlines separate from preserved sample metadata and
+  required recovery from unverified state to prove idle acquisition with a
+  reset sequence instead of treating a status probe or interface reset as proof.
 
 ## [1.6.1] - 2026-06-29
 

@@ -307,6 +307,10 @@ public:
   /// @note May run multiple bounded transactions through the configured
   ///       recovery ladder and is destructive to pending measurement/acquisition
   ///       state. On success the driver is left in safe SINGLE_SHOT idle mode.
+  ///       When hardware state is unverified, a successful status probe proves
+  ///       communication only; success then requires a Break/reset sequence or
+  ///       a successful hard/general-call reset followed by validated status.
+  ///       Interface reset alone does not prove acquisition stopped.
   ///       General-call reset is used only when explicitly enabled because it
   ///       affects all supporting devices on the bus.
   ///       This is a synchronous maintenance convenience API. External owners
@@ -317,7 +321,8 @@ public:
   /// Recover communication and reset the driver's desired settings to defaults.
   /// @note This calls the recovery ladder, sets a safe single-shot baseline,
   ///       and resets the local restore cache to defaults. The recovery ladder
-  ///       may stop after a successful probe without issuing a sensor reset.
+  ///       may stop after a successful probe without issuing a sensor reset only
+  ///       when the prior hardware state was already verified and nonperiodic.
   Status resetToDefaults();
 
   /// Recover communication and reapply cached settings.
@@ -901,6 +906,7 @@ private:
   uint32_t _jobDeadlineMs = 0;
   bool _jobHasDeadline = false;
   JobEffect _jobEffect = JobEffect::NONE;
+  uint32_t _jobWakeMs = 0;
   Status _lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY,
                                                 "Measurement not ready");
   uint32_t _measurementReadyMs = 0;

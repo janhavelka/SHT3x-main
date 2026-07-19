@@ -955,7 +955,7 @@ static Status runEnsureIdleToStatusResult(SHT3xDevice& device,
   if (!st.inProgress()) {
     return st;
   }
-  ctx.nowMs = device._measurementReadyMs;
+  ctx.nowMs = device._jobWakeMs;
   ctx.nowUs += 1000u;
   st = device.pollJob(ctx.nowMs, 1, result);  // Break wait.
   if (!st.inProgress()) {
@@ -965,7 +965,7 @@ static Status runEnsureIdleToStatusResult(SHT3xDevice& device,
   if (!st.inProgress()) {
     return st;
   }
-  ctx.nowMs = device._measurementReadyMs;
+  ctx.nowMs = device._jobWakeMs;
   ctx.nowUs += 2000u;
   st = device.pollJob(ctx.nowMs, 1, result);  // Reset wait.
   if (!st.inProgress()) {
@@ -1005,6 +1005,10 @@ void test_write_alert_limit_uses_app_note_encoder_vectors() {
 
 static Status frameBusResetFail(void*) {
   return Status::Error(Err::I2C_BUS, "bus reset failed", -88);
+}
+
+static Status frameBusResetOk(void*) {
+  return Status::Ok();
 }
 
 void test_long_idle_duration_gates_do_not_fail_after_half_range() {
@@ -1062,8 +1066,8 @@ void test_long_idle_duration_gates_do_not_fail_after_half_range() {
     device._lastRecoverValid = true;
     st = device.recover();
     TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
-    TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes);
-    TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+    TEST_ASSERT_EQUAL_UINT32(4u, ctx.writes);
+    TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
     TEST_ASSERT_TRUE(device.hardwareStateValid());
   }
 }
@@ -3881,6 +3885,52 @@ void test_ensure_idle_request_cancel_preserves_unread_sample() {
   TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
   TEST_ASSERT_NOT_EQUAL(-999.0f, value.temperatureC);
   TEST_ASSERT_NOT_EQUAL(-999.0f, value.humidityPct);
+
+  measurement.requestId = 410;
+  st = device.requestMeasurement(measurement);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  ctx.nowMs = device._measurementReadyMs;
+  ctx.nowUs += device.estimateMeasurementTimeMs() * 1000u;
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  SettingsSnapshot beforeBreak;
+  st = device.getSettings(beforeBreak);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(beforeBreak.measurementReady);
+  const uint32_t sampleReadyMs = beforeBreak.measurementReadyMs;
+
+  ensure.requestId = 411;
+  st = device.requestEnsureIdle(ensure);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  st = device.pollJob(ctx.nowMs, 1, result);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+  TEST_ASSERT_EQUAL(JobPhase::ENSURE_BREAK_COMMAND, result.phase);
+  TEST_ASSERT_EQUAL(JobEffect::DEVICE_STATE_CHANGED, result.effect);
+
+  SettingsSnapshot afterBreak;
+  st = device.getSettings(afterBreak);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(afterBreak.measurementReady);
+  TEST_ASSERT_EQUAL_UINT32(sampleReadyMs, afterBreak.measurementReadyMs);
+
+  const uint32_t callbacksAfterBreak = ctx.writes + ctx.reads;
+  st = device.cancelJob(CancelReason::REQUESTED, result);
+  TEST_ASSERT_EQUAL(Err::CANCELLED, st.code);
+  TEST_ASSERT_EQUAL(JobEffect::DEVICE_STATE_CHANGED, result.effect);
+  TEST_ASSERT_EQUAL_UINT32(callbacksAfterBreak, ctx.writes + ctx.reads);
+  TEST_ASSERT_TRUE(device.measurementReady());
+  st = device.getSettings(afterBreak);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_EQUAL_UINT32(sampleReadyMs, afterBreak.measurementReadyMs);
+
+  value = Measurement{-999.0f, -999.0f};
+  st = device.getMeasurement(value);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_NOT_EQUAL(-999.0f, value.temperatureC);
+  TEST_ASSERT_NOT_EQUAL(-999.0f, value.humidityPct);
 }
 
 void test_ensure_idle_status_verification_rejects_crc_and_error_flags() {
@@ -4415,6 +4465,55 @@ void test_public_recover_bus_reset_failure_preserves_precise_status() {
   TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
 }
 
+void test_recover_unknown_state_requires_reset_proof() {
+  {
+    FrameScriptTransport ctx;
+    SHT3xDevice device;
+    Config cfg = makeFrameConfig(ctx);
+    cfg.recoverUseBusReset = false;
+    cfg.recoverUseSoftReset = true;
+    cfg.recoverUseHardReset = false;
+    cfg.allowGeneralCallReset = false;
+    Status st = device.bind(cfg);
+    TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+    TEST_ASSERT_FALSE(device.hardwareStateValid());
+    clearFrameLog(ctx);
+
+    st = device.recover();
+    TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+    TEST_ASSERT_TRUE(device.hardwareStateValid());
+    TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
+    TEST_ASSERT_EQUAL(4u, ctx.commandCount);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[1]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_SOFT_RESET, ctx.commands[2]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[3]);
+    TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
+  }
+
+  {
+    FrameScriptTransport ctx;
+    SHT3xDevice device;
+    Config cfg = makeFrameConfig(ctx);
+    cfg.busReset = frameBusResetOk;
+    cfg.recoverUseBusReset = true;
+    cfg.recoverUseSoftReset = false;
+    cfg.recoverUseHardReset = false;
+    cfg.allowGeneralCallReset = false;
+    Status st = device.bind(cfg);
+    TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+    clearFrameLog(ctx);
+
+    st = device.recover();
+    TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+    TEST_ASSERT_FALSE(device.hardwareStateValid());
+    TEST_ASSERT_EQUAL(2u, ctx.commandCount);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
+    TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[1]);
+    TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
+  }
+}
+
 void test_recover_periodic_requires_break_before_success() {
   FrameScriptTransport ctx;
   SHT3xDevice device;
@@ -4801,6 +4900,7 @@ void test_end_clears_runtime_state() {
   device._measurementRequested = true;
   device._measurementReady = true;
   device._measurementReadyMs = 123;
+  device._jobWakeMs = 321;
   device._periodicActive = true;
   device._periodicStartMs = 456;
   device._lastFetchMs = 789;
@@ -4823,6 +4923,7 @@ void test_end_clears_runtime_state() {
   TEST_ASSERT_FALSE(device._measurementReady);
   TEST_ASSERT_FALSE(device._hasSample);
   TEST_ASSERT_EQUAL_UINT32(0u, device._measurementReadyMs);
+  TEST_ASSERT_EQUAL_UINT32(0u, device._jobWakeMs);
   TEST_ASSERT_FALSE(device._periodicActive);
   TEST_ASSERT_EQUAL_UINT32(0u, device._periodicStartMs);
   TEST_ASSERT_EQUAL_UINT32(0u, device._lastFetchMs);
@@ -4946,6 +5047,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_write_alert_limit_uses_app_note_encoder_vectors);
   RUN_TEST(test_disable_alerts_second_write_failure_exposes_partial_cache);
   RUN_TEST(test_public_recover_bus_reset_failure_preserves_precise_status);
+  RUN_TEST(test_recover_unknown_state_requires_reset_proof);
   RUN_TEST(test_recover_periodic_requires_break_before_success);
   RUN_TEST(test_stop_periodic_waits_after_break);
   RUN_TEST(test_reset_and_restore_partial_alert_restore_failure_preserves_desired_cache);

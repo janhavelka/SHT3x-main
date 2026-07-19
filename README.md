@@ -16,7 +16,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 ## Current State
 
 This tree contains the `1.7.0` owner-safe API. Local verification passes the
-115-test native fault/boundary suite, strict framework-neutral core compile,
+116-test native fault/boundary suite, strict framework-neutral core compile,
 repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
 ESP32-S2. Hardware evidence remains the historical v1.6.1 evidence described
 below.
@@ -500,7 +500,7 @@ command or read phase.
 | `softReset()` | Soft-reset command | command spacing + write timeout + 2 ms reset wait | Blocked while periodic/ART is active. Success clears pending measurement/sample state and leaves local mode as single-shot. |
 | `generalCallReset()` | General-call write to address `0x00` | command spacing + write timeout + 2 ms reset wait | Bus-wide, disabled by default, and an application/bus-manager policy. Success clears local measurement state and leaves local mode as single-shot. |
 | `interfaceReset()` | Application callback only | bounded by callback contract | Callback must implement the SCL sequence and return a `Status`; every attempt invalidates verified state and starts tIDLE, even on failure. |
-| `recover()` | 2–15 callbacks maximum when every ladder option is enabled (at most 13 I2C callbacks plus interface/hard-reset callbacks) | Each enabled reset wait is bounded; no retry loop | Probe; optional interface-reset+probe; soft-reset+probe; optional hard-reset+probe; optional general-call-reset+probe. Use `requestEnsureIdle()` for owner-safe startup/reconciliation. |
+| `recover()` | 2–15 callbacks maximum when every ladder option is enabled (at most 13 I2C callbacks plus interface/hard-reset callbacks) | Each enabled reset wait is bounded; no retry loop | A probe can short-circuit only when hardware state was already verified idle. Unknown state requires Break+soft reset or a hard/general-call reset plus validated status; interface reset alone proves only communication. Use `requestEnsureIdle()` for owner-safe startup/reconciliation. |
 | `resetToDefaults()` / `resetAndRestore()` | Recovery bound; restore adds at most 14 I2C callbacks | Same finite ladder plus fixed restore plan (heater + up to four three-callback alert writes + optional acquisition start) | Maintenance convenience APIs; partial restore is reported and invalidates verified hardware state. |
 
 `tick()` returns `void`; use `pollJob()` for exact failure, phase, identity, and
