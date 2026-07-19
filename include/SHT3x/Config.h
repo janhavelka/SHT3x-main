@@ -134,6 +134,12 @@ enum class Mode : uint8_t {
   ART = 2
 };
 
+/// Driver health admission policy.
+enum class HealthPolicy : uint8_t {
+  OBSERVE_ONLY = 0, ///< Record health diagnostics but never suppress caller-authorized I2C
+  LATCH_OFFLINE = 1 ///< Suppress normal I2C after offlineThreshold consecutive failures
+};
+
 /// Configuration for SHT3x driver
 struct Config {
   // === I2C Transport (required) ===
@@ -178,6 +184,7 @@ struct Config {
   uint32_t recoverBackoffMs = 100;                    ///< 0..600000 ms
 
   // === Health Tracking ===
+  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE; ///< Health observation/admission behavior
   uint8_t offlineThreshold = 5;                       ///< Consecutive failures before OFFLINE; 0 normalizes to 1
 
   // === Reset Safety ===

@@ -13,7 +13,7 @@ namespace SHT3x {
 
 /// Driver state for health monitoring
 enum class DriverState : uint8_t {
-  UNINIT,    ///< begin() not called or end() called
+  UNINIT,    ///< bind()/begin() not called or end() called
   READY,     ///< Operational, consecutiveFailures == 0
   DEGRADED,  ///< 1 <= consecutiveFailures < offlineThreshold
   OFFLINE    ///< consecutiveFailures >= offlineThreshold
@@ -37,12 +37,80 @@ struct CompensatedSample {
   uint32_t humidityPct_x100 = 0; ///< Humidity * 100 (e.g., 4234 = 42.34 %RH)
 };
 
+/// Fixed-point measurement in milli-units (no float).
+struct MeasurementMilli {
+  int32_t temperatureMilliCelsius = 0; ///< Temperature in milli-degrees Celsius
+  int32_t humidityMilliPercent = 0;     ///< Relative humidity in milli-percent
+};
+
+/// Cooperative operation kind.
+enum class JobType : uint8_t {
+  NONE = 0,
+  MEASUREMENT,
+  ENSURE_IDLE
+};
+
+/// Public cooperative operation phase for progress and fault provenance.
+enum class JobPhase : uint8_t {
+  IDLE = 0,
+  SINGLE_SHOT_COMMAND,
+  SINGLE_SHOT_CONVERSION,
+  SINGLE_SHOT_READ,
+  PERIODIC_FETCH_COMMAND,
+  PERIODIC_READ,
+  ENSURE_BREAK_COMMAND,
+  ENSURE_BREAK_WAIT,
+  ENSURE_RESET_COMMAND,
+  ENSURE_RESET_WAIT,
+  ENSURE_STATUS_COMMAND,
+  ENSURE_STATUS_READ
+};
+
+/// Terminal or active cooperative operation outcome.
+enum class JobOutcome : uint8_t {
+  NONE = 0,
+  ACTIVE,
+  SUCCEEDED,
+  FAILED,
+  CANCELLED,
+  TIMED_OUT
+};
+
+/// Observable physical effect left by a completed or cancelled job.
+enum class JobEffect : uint8_t {
+  NONE = 0,
+  RESULT_MAY_BE_PENDING,
+  DEVICE_STATE_CHANGED,
+  DEVICE_STATE_INDETERMINATE
+};
+
+/// Caller identity and optional absolute deadline for an owner-safe job.
+/// @note deadlineMs uses the same wrapping millisecond timebase as pollJob().
+///       Keep deadlines within INT32_MAX milliseconds of the request time.
+struct JobRequest {
+  uint32_t requestId = 0; ///< Nonzero caller identity
+  uint32_t deadlineMs = 0; ///< Absolute wrapping deadline when hasDeadline is true
+  bool hasDeadline = false; ///< Enforce deadline before each poll step
+};
+
+/// Local cancellation reason. Cancellation never performs I2C.
+enum class CancelReason : uint8_t {
+  REQUESTED = 0,
+  DEADLINE_EXPIRED
+};
+
 /// Result from one bounded measurement polling step.
 struct PollJobResult {
   Status status = Status::Error(Err::MEASUREMENT_NOT_READY, "No poll job active"); ///< Current job status
   uint8_t instructionsUsed = 0; ///< Number of I2C instructions executed
-  bool active = false;          ///< True while a measurement job remains pending
+  bool active = false;          ///< True while a cooperative job remains pending
   bool completed = false;       ///< True when this step completed a sample
+  bool terminal = false;        ///< True exactly once, on the poll/cancel call that terminates the job
+  uint32_t requestId = 0;       ///< Caller identity, zero when no correlated job result is emitted
+  JobType type = JobType::NONE; ///< Operation kind for this result
+  JobPhase phase = JobPhase::IDLE; ///< Phase that produced this result
+  JobOutcome outcome = JobOutcome::NONE; ///< Active or terminal outcome
+  JobEffect effect = JobEffect::NONE; ///< Possible physical effect at this result
 };
 
 /// Parsed status register
@@ -59,11 +127,12 @@ struct StatusRegister {
 
 /// Snapshot of driver configuration and state
 struct SettingsSnapshot {
-  bool initialized = false;                                   ///< True after begin() succeeds
+  bool initialized = false;                                   ///< True after bind()/begin() succeeds
   DriverState state = DriverState::UNINIT;                   ///< Current driver state
   uint8_t i2cAddress = 0x44;                                 ///< Active 7-bit I2C address
   uint32_t i2cTimeoutMs = 50;                                ///< Active I2C timeout
   uint8_t offlineThreshold = 5;                              ///< Failure threshold for OFFLINE
+  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE;   ///< Health admission policy
   bool hasNowMsHook = false;                                 ///< True when Config::nowMs is provided
   Mode mode = Mode::SINGLE_SHOT;                              ///< Active acquisition mode
   Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Cached repeatability setting
@@ -78,6 +147,7 @@ struct SettingsSnapshot {
   uint32_t measurementReadyMs = 0;                            ///< Deadline/timestamp associated with the pending sample
   uint32_t sampleTimestampMs = 0;                             ///< Timestamp of the last successful sample
   uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
+  bool hardwareStateValid = false;                            ///< True when typed reconciliation verified acquisition state
   StatusRegister status = {};                                 ///< Parsed status-register snapshot when available
   bool statusValid = false;                                   ///< True if status was read successfully for this snapshot
   Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of the status-read attempt
@@ -127,9 +197,11 @@ struct AlertLimit {
 
 /// SHT3x driver class.
 ///
-/// Public APIs are synchronous, not ISR-safe, and not internally thread-safe.
-/// Serialize access externally and use interrupt handlers only to signal work
-/// into normal task/loop context.
+/// APIs are not ISR-safe and the instance is not internally thread-safe.
+/// Serialize access externally. Owner-safe bind/request/poll/cancel operations
+/// do not spin and perform at most one transport callback per poll. Synchronous
+/// convenience, advanced, and maintenance APIs remain bounded but may perform
+/// multiple callbacks and cooperative waits.
 class SHT3x {
 public:
   SHT3x() = default;
@@ -145,44 +217,69 @@ public:
   /// Initialize the driver with configuration.
   /// @note Performs multiple bounded transactions: best-effort Break, soft
   ///       reset, status probe, and optional periodic/ART start from config.
+  ///       This synchronous compatibility API can perform up to five transport
+  ///       callbacks and bounded cooperative waits. External bus-owner tasks
+  ///       should use bind() followed by requestEnsureIdle()/pollJob().
   /// @param config Configuration including transport callbacks
   /// @return Status::Ok() on success, error otherwise
   Status begin(const Config& config);
 
-  /// Process pending measurement work.
-  /// @note This function is bounded, but it may perform one measurement step
-  ///       when a previously requested sample is due. Single-shot completion
-  ///       performs one receive-only read; periodic/ART completion performs a
-  ///       Fetch Data command write plus receive-only read. In OFFLINE it clears
-  ///       pending measurement state and does not touch the bus.
-  /// @note The return type is void. I2C failures are observable through
-  ///       lastError(), consecutiveFailures(), totalFailures(), driverState(),
-  ///       and retry scheduling. Protocol failures after a successful bus
-  ///       transaction, such as CRC mismatch, do not update transport health;
-  ///       they leave no ready sample and are retried through normal scheduling.
-  ///       Use explicit read APIs when the caller must handle a synchronous
-  ///       Status at the call site.
+  /// Validate and store configuration without touching I2C or waiting.
+  /// @note This is the owner-safe lifecycle entry point. The device may be
+  ///       absent. Use requestEnsureIdle() when destructive device-state
+  ///       reconciliation is required. Because no hardware is touched, the
+  ///       normalized active mode is SINGLE_SHOT even when config requested a
+  ///       periodic mode; start that mode explicitly after reconciliation.
+  ///       Returns BUSY rather than discarding an active job; cancel it first.
+  Status bind(const Config& config);
+
+  /// Process one pending cooperative-job step with a one-callback budget.
+  /// @note This compatibility helper discards the detailed PollJobResult. Use
+  ///       pollJob() when identity, provenance, cancellation, or terminal status
+  ///       must be published by an external owner.
   /// @param nowMs Current timestamp from the same wrapping millisecond timebase
   ///              used by Config::nowMs
   void tick(uint32_t nowMs);
 
   /// Advance a pending measurement job with a bounded I2C instruction budget.
   /// One command write or read-only measurement frame counts as one instruction.
+  /// The current implementation deliberately uses at most one instruction per
+  /// call even when maxInstructions is larger; zero performs no I2C. Waiting
+  /// phases also perform no I2C.
   Status pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& result);
+
+  /// Schedule bounded destructive reconciliation into single-shot idle state.
+  /// @note The job performs at most four transport callbacks across polls:
+  ///       Break, soft reset, status command, and status read. Wait phases use
+  ///       zero I2C. request.requestId must be nonzero.
+  Status requestEnsureIdle(const JobRequest& request);
+
+  /// Cancel the active cooperative job locally with zero I2C.
+  /// @note The terminal result is returned exactly once by this call.
+  ///       Measurement-job cancellation preserves previous cached sample data.
+  ///       An ensure-idle job that already completed reset may have cleared it.
+  ///       Inspect effect for possible unread measurement data or
+  ///       partial/indeterminate device state.
+  Status cancelJob(CancelReason reason, PollJobResult& result);
+
+  /// Cancel an active measurement locally with zero I2C.
+  Status cancelMeasurement();
 
   /// End the local driver session.
   /// @note This clears runtime/session state and returns the instance to
   ///       UNINIT. It does not send Break, reset the sensor, or guarantee that
   ///       physical periodic/ART acquisition has stopped. Call stopPeriodic()
-  ///       before end() when hardware acquisition state matters.
+  ///       before end() when hardware acquisition state matters. Call
+  ///       cancelJob() first if the owner must consume an active job's terminal
+  ///       identity; end() is an explicit session teardown and emits no result.
   void end();
 
-  /// Check if begin() completed successfully and end() has not been called
+  /// Check if bind()/begin() completed successfully and end() has not been called
   bool isInitialized() const { return _initialized; }
 
   /// Get the active normalized configuration reference.
   /// @note The returned reference is owned by the driver and remains valid
-  ///       until the next begin() or end().
+  ///       until the next bind(), begin(), or end().
   const Config& getConfig() const { return _config; }
 
   // =========================================================================
@@ -203,6 +300,8 @@ public:
   ///       state. On success the driver is left in safe SINGLE_SHOT idle mode.
   ///       General-call reset is used only when explicitly enabled because it
   ///       affects all supporting devices on the bus.
+  ///       This is a synchronous maintenance convenience API. External owners
+  ///       should normally schedule requestEnsureIdle() instead.
   /// @return Status::Ok() if device now responsive, error otherwise
   Status recover();
 
@@ -238,11 +337,15 @@ public:
   /// Check if periodic acquisition is currently active
   bool isPeriodicActive() const { return _periodicActive; }
 
+  /// True only after typed reconciliation established a known acquisition baseline.
+  /// Raw/advanced command access and ambiguous transport failures invalidate it.
+  bool hardwareStateValid() const { return _hardwareStateValid; }
+
   // =========================================================================
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful tracked transport operation after begin()
+  /// Timestamp of last successful complete logical transport operation after bind()/begin()
   uint32_t lastOkMs() const { return _lastOkMs; }
 
   /// Timestamp of last failed tracked transport operation after begin()
@@ -258,14 +361,26 @@ public:
   ///       unless they occur through a tracked transport wrapper.
   Status lastError() const { return _lastError; }
 
-  /// Consecutive tracked transport failures since last tracked success
+  /// Consecutive logical-operation transport failures since last complete success
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
 
-  /// Total tracked transport failure count for the current driver session
+  /// Total logical-operation transport failure count for the current driver session
   uint32_t totalFailures() const { return _totalFailures; }
 
-  /// Total tracked transport success count for the current driver session
+  /// Total complete logical-operation transport success count for the current driver session
   uint32_t totalSuccess() const { return _totalSuccess; }
+
+  /// Total successful transport callbacks, including intermediate command writes
+  uint32_t transportSuccess() const { return _transportSuccess; }
+
+  /// Total failed transport callbacks
+  uint32_t transportFailures() const { return _transportFailures; }
+
+  /// Total CRC failures observed after successful transport
+  uint32_t protocolFailures() const { return _protocolFailures; }
+
+  /// Total expected periodic read-header NACK/not-ready responses
+  uint32_t totalNotReady() const { return _totalNotReady; }
 
   /// Count of consecutive "not-ready" responses during periodic fetch
   uint32_t notReadyCount() const { return _notReadyCount; }
@@ -275,11 +390,13 @@ public:
   // =========================================================================
 
   /// Request or schedule a measurement.
-  /// @note In SINGLE_SHOT mode this sends one bounded I2C command immediately
-  ///       and schedules the later read for tick(). In PERIODIC/ART mode this
-  ///       schedules the next Fetch Data operation for tick().
+  /// @note Performs zero I2C. pollJob() sends the command and later read as
+  ///       distinct owner-budgeted steps.
   /// @return IN_PROGRESS if measurement started/scheduled, BUSY if already pending, or an error.
   Status requestMeasurement();
+
+  /// Schedule a measurement correlated with caller identity and optional deadline.
+  Status requestMeasurement(const JobRequest& request);
 
   /// Check if measurement is ready to read
   bool measurementReady() const { return _measurementReady; }
@@ -324,6 +441,12 @@ public:
   /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
   Status getCompensatedSample(CompensatedSample& out) const;
 
+  /// Get the last captured measurement in signed milli-units.
+  /// @param[out] out Last cached temperature in milli-degrees Celsius and
+  ///                 humidity in milli-percent relative humidity
+  /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
+  Status getMeasurementMilli(MeasurementMilli& out) const;
+
   // =========================================================================
   // Configuration
   // =========================================================================
@@ -353,8 +476,8 @@ public:
   ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
   ///       The same OK snapshot behavior applies while a single-shot
   ///       measurement is pending.
-  ///       In OFFLINE state, readSettings() returns BUSY like other normal
-  ///       public I2C APIs.
+  ///       In OFFLINE state under LATCH_OFFLINE, readSettings() returns BUSY.
+  ///       OBSERVE_ONLY records the state but still authorizes the attempt.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
@@ -368,6 +491,7 @@ public:
   ///       hardware desynchronization risk, local cache coherence, and any
   ///       status side effects. Stop periodic/ART before raw commands unless
   ///       the datasheet explicitly permits the command in the active mode.
+  ///       Any attempted raw command invalidates hardwareStateValid().
   /// @return Status::Ok() on success, error otherwise
   Status writeCommand(uint16_t command);
 
@@ -380,11 +504,14 @@ public:
   ///       hardware desynchronization risk, local cache coherence,
   ///       write-payload meaning, and status side effects. Stop periodic/ART before raw commands unless the
   ///       datasheet explicitly permits the command in the active mode.
+  ///       Any attempted raw command invalidates hardwareStateValid().
   /// @return Status::Ok() on success, error otherwise
   Status writeCommandWithData(uint16_t command, uint16_t data);
 
   /// Issue a 16-bit command and read a raw response frame.
   /// The command spacing gate and health tracking still apply.
+  /// @note Any attempted raw command invalidates hardwareStateValid(), even
+  ///       when the returned frame is valid.
   /// @param command 16-bit SHT3x command constant from CommandTable.h
   /// @param out Read buffer
   /// @param len Number of bytes to read; SHT3x responses are limited to 6 bytes
@@ -608,6 +735,14 @@ public:
   /// @return Relative humidity in centi-percent
   static uint32_t convertHumidityPct_x100(uint16_t raw);
 
+  /// Convert raw temperature to signed milli-degrees Celsius.
+  /// @note Uses a 64-bit intermediate and rounds to the nearest milli-degree.
+  static int32_t convertTemperatureMilliCelsius(uint16_t raw);
+
+  /// Convert raw humidity to signed milli-percent relative humidity.
+  /// @note Uses a 64-bit intermediate and rounds to the nearest milli-percent.
+  static int32_t convertHumidityMilliPercent(uint16_t raw);
+
   // =========================================================================
   // Timing
   // =========================================================================
@@ -618,15 +753,6 @@ public:
   uint32_t estimateMeasurementTimeMs() const;
 
 private:
-  enum class MeasurementPhase : uint8_t {
-    IDLE,
-    SINGLE_SHOT_COMMAND,
-    SINGLE_SHOT_CONVERSION,
-    SINGLE_SHOT_READ,
-    PERIODIC_FETCH_COMMAND,
-    PERIODIC_READ
-  };
-
   // =========================================================================
   // Transport Wrappers
   // =========================================================================
@@ -646,15 +772,18 @@ private:
 
   /// Tracked I2C write-read (updates health)
   Status _i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
-                              uint8_t* rxBuf, size_t rxLen);
+                              uint8_t* rxBuf, size_t rxLen,
+                              bool logicalComplete = true);
 
   /// Tracked I2C write-read with optional no-data handling (updates health)
   Status _i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen,
                                          uint8_t* rxBuf, size_t rxLen,
-                                         bool allowNoData);
+                                         bool allowNoData,
+                                         bool logicalComplete = true);
 
   /// Tracked I2C write (updates health)
-  Status _i2cWriteTracked(const uint8_t* buf, size_t len);
+  Status _i2cWriteTracked(const uint8_t* buf, size_t len,
+                          bool logicalComplete = true);
 
   /// Return BUSY when normal operations try I2C while OFFLINE.
   Status _offlineStatus() const;
@@ -663,13 +792,14 @@ private:
   // Command Access
   // =========================================================================
 
-  Status _writeCommand(uint16_t cmd, bool tracked);
-  Status _writeCommandNoDelay(uint16_t cmd, bool tracked);
-  Status _writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked);
+  Status _writeCommand(uint16_t cmd, bool tracked, bool logicalComplete = true);
+  Status _writeCommandNoDelay(uint16_t cmd, bool tracked, bool logicalComplete = true);
+  Status _writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked,
+                               bool logicalComplete = true);
   Status _readAfterCommand(uint8_t* buf, size_t len, bool tracked,
-                           bool allowNoData = false);
+                           bool allowNoData = false, bool logicalComplete = true);
   Status _readOnly(uint8_t* buf, size_t len, bool tracked,
-                   bool allowNoData = false);
+                   bool allowNoData = false, bool logicalComplete = true);
 
   // =========================================================================
   // Health Management
@@ -677,8 +807,9 @@ private:
 
   /// Update health counters and state based on operation result
   /// Called ONLY from tracked transport wrappers
-  Status _updateHealth(const Status& st);
+  Status _updateHealth(const Status& st, bool logicalComplete = true);
   void _reassertOfflineLatch();
+  void _recordProtocolFailure();
 
   /// Record any bus activity (including expected NACK)
   void _recordBusActivity(uint32_t nowMs);
@@ -691,6 +822,10 @@ private:
   uint32_t _periodicReadyMs(uint32_t nowMs) const;
   uint32_t _periodicRetryMs(uint32_t nowMs) const;
   bool _singleShotMeasurementPending() const;
+  bool _jobActive() const { return _jobType != JobType::NONE; }
+  uint32_t _allocateJobId();
+  JobEffect _effectForPhase(JobPhase phase, bool ambiguous) const;
+  void _clearJobState();
   Status _ensureCommandDelay();
   Status _waitMs(uint32_t delayMs);
   Status _readStatusRaw(uint16_t& raw, bool tracked);
@@ -732,6 +867,10 @@ private:
   uint8_t _consecutiveFailures = 0;
   uint32_t _totalFailures = 0;
   uint32_t _totalSuccess = 0;
+  uint32_t _transportFailures = 0;
+  uint32_t _transportSuccess = 0;
+  uint32_t _protocolFailures = 0;
+  uint32_t _totalNotReady = 0;
   bool _allowOfflineI2c = false;
 
   // Command timing
@@ -742,7 +881,13 @@ private:
   bool _measurementRequested = false;
   bool _measurementReady = false;
   bool _hasSample = false;
-  MeasurementPhase _measurementPhase = MeasurementPhase::IDLE;
+  JobPhase _measurementPhase = JobPhase::IDLE;
+  JobType _jobType = JobType::NONE;
+  uint32_t _jobRequestId = 0;
+  uint32_t _nextJobId = 1;
+  uint32_t _jobDeadlineMs = 0;
+  bool _jobHasDeadline = false;
+  JobEffect _jobEffect = JobEffect::NONE;
   Status _lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY,
                                                 "Measurement not ready");
   uint32_t _measurementReadyMs = 0;
@@ -761,8 +906,10 @@ private:
 
   RawSample _rawSample;
   CompensatedSample _compSample;
+  MeasurementMilli _milliSample;
   Mode _mode = Mode::SINGLE_SHOT;
   bool _periodicActive = false;
+  bool _hardwareStateValid = false;
 };
 
 } // namespace SHT3x

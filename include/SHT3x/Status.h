@@ -9,7 +9,7 @@ namespace SHT3x {
 /// Error codes for all SHT3x operations
 enum class Err : uint8_t {
   OK = 0,                 ///< Operation successful
-  NOT_INITIALIZED,        ///< begin() not called
+  NOT_INITIALIZED,        ///< bind()/begin() not called or end() called
   INVALID_CONFIG,         ///< Invalid configuration parameter
   I2C_ERROR,              ///< I2C communication failure (unspecified)
   TIMEOUT,                ///< Driver-side timeout (internal wait/guard)
@@ -27,7 +27,8 @@ enum class Err : uint8_t {
   I2C_NACK_DATA,           ///< I2C NACK on data
   I2C_NACK_READ,           ///< I2C NACK on read header / no data
   I2C_TIMEOUT,             ///< I2C transaction timeout
-  I2C_BUS                  ///< I2C bus error (SDA stuck, arbitration, etc.)
+  I2C_BUS,                 ///< I2C bus error (SDA stuck, arbitration, etc.)
+  CANCELLED                ///< Cooperative job cancelled locally without I2C
 };
 
 /// Status structure returned by all fallible operations

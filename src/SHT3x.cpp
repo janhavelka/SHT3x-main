@@ -116,6 +116,10 @@ static bool isValidMode(Mode mode) {
   return mode == Mode::SINGLE_SHOT || mode == Mode::PERIODIC || mode == Mode::ART;
 }
 
+static bool isValidHealthPolicy(HealthPolicy policy) {
+  return policy == HealthPolicy::OBSERVE_ONLY || policy == HealthPolicy::LATCH_OFFLINE;
+}
+
 static Status initialMeasurementStatus() {
   return Status::Error(Err::MEASUREMENT_NOT_READY, "Measurement not ready");
 }
@@ -125,6 +129,31 @@ static Status mapPresenceProbeFailure(const Status& st) {
     return Status::Error(Err::DEVICE_NOT_FOUND, "Device address not acknowledged", st.detail);
   }
   return st;
+}
+
+static Status stableStatus(const Status& st) {
+  if (st.ok()) {
+    return Status::Ok();
+  }
+
+  const char* message = "Transport error";
+  switch (st.code) {
+    case Err::I2C_ERROR: message = "I2C error"; break;
+    case Err::I2C_NACK_ADDR: message = "I2C address NACK"; break;
+    case Err::I2C_NACK_DATA: message = "I2C data NACK"; break;
+    case Err::I2C_NACK_READ: message = "I2C read-header NACK"; break;
+    case Err::I2C_TIMEOUT: message = "I2C timeout"; break;
+    case Err::I2C_BUS: message = "I2C bus error"; break;
+    case Err::TIMEOUT: message = "Operation timeout"; break;
+    default: break;
+  }
+  return Status::Error(st.code, message, st.detail);
+}
+
+static bool isTransportStatus(const Status& st) {
+  return st.code == Err::I2C_ERROR || st.code == Err::I2C_NACK_ADDR ||
+         st.code == Err::I2C_NACK_DATA || st.code == Err::I2C_NACK_READ ||
+         st.code == Err::I2C_TIMEOUT || st.code == Err::I2C_BUS;
 }
 
 static uint32_t baseMeasurementMs(Repeatability rep, bool lowVdd) {
@@ -147,7 +176,11 @@ static uint32_t baseMeasurementMs(Repeatability rep, bool lowVdd) {
 
 }  // namespace
 
-Status SHT3x::begin(const Config& config) {
+Status SHT3x::bind(const Config& config) {
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cancel active job before rebinding");
+  }
+
   _config = Config{};
   _initialized = false;
   _driverState = DriverState::UNINIT;
@@ -159,12 +192,22 @@ Status SHT3x::begin(const Config& config) {
   _consecutiveFailures = 0;
   _totalFailures = 0;
   _totalSuccess = 0;
+  _transportFailures = 0;
+  _transportSuccess = 0;
+  _protocolFailures = 0;
+  _totalNotReady = 0;
   _allowOfflineI2c = false;
 
   _measurementRequested = false;
   _measurementReady = false;
   _hasSample = false;
-  _measurementPhase = MeasurementPhase::IDLE;
+  _measurementPhase = JobPhase::IDLE;
+  _jobType = JobType::NONE;
+  _jobRequestId = 0;
+  _nextJobId = 1;
+  _jobDeadlineMs = 0;
+  _jobHasDeadline = false;
+  _jobEffect = JobEffect::NONE;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicStartMs = 0;
@@ -178,8 +221,10 @@ Status SHT3x::begin(const Config& config) {
   _lastRecoverValid = false;
   _rawSample = RawSample{};
   _compSample = CompensatedSample{};
+  _milliSample = MeasurementMilli{};
   _mode = Mode::SINGLE_SHOT;
   _periodicActive = false;
+  _hardwareStateValid = false;
   _lastCommandUs = 0;
   _lastCommandValid = false;
   _cachedSettings = defaultCachedSettings();
@@ -201,7 +246,8 @@ Status SHT3x::begin(const Config& config) {
   if (!isValidRepeatability(config.repeatability) ||
       !isValidClockStretching(config.clockStretching) ||
       !isValidPeriodicRate(config.periodicRate) ||
-      !isValidMode(config.mode)) {
+      !isValidMode(config.mode) ||
+      !isValidHealthPolicy(config.healthPolicy)) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid configuration value");
   }
   if (config.commandDelayMs > MAX_COMMAND_DELAY_MS) {
@@ -229,6 +275,23 @@ Status SHT3x::begin(const Config& config) {
     _config.commandDelayMs = MIN_COMMAND_DELAY_MS;
   }
 
+  // Passive binding cannot claim or create a periodic/ART hardware state.
+  _config.mode = Mode::SINGLE_SHOT;
+  _mode = Mode::SINGLE_SHOT;
+  _initialized = true;
+  _driverState = DriverState::READY;
+  _syncCacheFromConfig();
+  _hasCachedSettings = true;
+  return Status::Ok();
+}
+
+Status SHT3x::begin(const Config& config) {
+  const Mode requestedMode = config.mode;
+  Status st = bind(config);
+  if (!st.ok()) {
+    return st;
+  }
+
   // Best-effort: stop any stale periodic mode and reset sensor.
   // If the MCU rebooted but the sensor did not, the sensor may still be in
   // periodic mode, which rejects most commands.  BREAK exits periodic mode;
@@ -241,29 +304,32 @@ Status SHT3x::begin(const Config& config) {
   _lastCommandValid = false;
 
   uint16_t statusRaw = 0;
-  Status st = _readStatusRaw(statusRaw, true);
+  st = _readStatusRaw(statusRaw, false);
   if (!st.ok()) {
-    return mapPresenceProbeFailure(st);
+    const Status failure = mapPresenceProbeFailure(st);
+    end();
+    return failure;
   }
 
-  _mode = _config.mode;
+  _mode = requestedMode;
+  _config.mode = requestedMode;
   if (_mode == Mode::PERIODIC) {
     st = _enterPeriodic(_config.periodicRate, _config.repeatability, false);
     if (!st.ok()) {
+      end();
       return st;
     }
   } else if (_mode == Mode::ART) {
     st = _enterPeriodic(_config.periodicRate, _config.repeatability, true);
     if (!st.ok()) {
+      end();
       return st;
     }
   }
 
-  _initialized = true;
-  _driverState = DriverState::READY;
+  _hardwareStateValid = true;
   _syncCacheFromConfig();
   _hasCachedSettings = true;
-  _lastCommandValid = false;
 
   return Status::Ok();
 }
@@ -280,163 +346,313 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
     result.status = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
     return result.status;
   }
-  if (_measurementReady) {
-    result.status = Status::Ok();
-    return result.status;
-  }
-  if (!_measurementRequested) {
-    result.status = measurementStatus();
+  if (!_jobActive()) {
+    result.status = _measurementReady ? Status::Ok() : measurementStatus();
     return result.status;
   }
 
   result.active = true;
-  if (_driverState == DriverState::OFFLINE) {
-    _lastMeasurementStatus = _offlineStatus();
-    _measurementRequested = false;
-    _measurementReady = false;
-    _measurementPhase = MeasurementPhase::IDLE;
-    result.active = false;
-    result.status = _lastMeasurementStatus;
-    return result.status;
-  }
-  if (maxInstructions == 0) {
-    _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Poll budget exhausted");
-    result.status = _lastMeasurementStatus;
-    return result.status;
-  }
+  result.requestId = _jobRequestId;
+  result.type = _jobType;
+  result.phase = _measurementPhase;
+  result.outcome = JobOutcome::ACTIVE;
+  result.effect = _jobEffect;
 
-  auto recordFailure = [this, &result](Status st, bool clearPending) -> Status {
-    _lastMeasurementStatus = st;
-    _measurementReady = false;
-    if (clearPending) {
-      _measurementRequested = false;
-      _measurementPhase = MeasurementPhase::IDLE;
-    }
-    result.status = st;
-    result.active = _measurementRequested && !_measurementReady;
+  auto recordDeadline = [this, &result]() -> Status {
+    const uint8_t instructionsUsed = result.instructionsUsed;
+    Status st = cancelJob(CancelReason::DEADLINE_EXPIRED, result);
+    result.instructionsUsed = instructionsUsed;
     return st;
   };
 
-  auto recordSample = [this, nowMs, &result]() -> Status {
+  if (_jobHasDeadline && _timeElapsed(nowMs, _jobDeadlineMs)) {
+    return recordDeadline();
+  }
+
+  auto recordFailure = [this, &result](Status st) -> Status {
+    const JobType type = _jobType;
+    const JobPhase phase = _measurementPhase;
+    const bool timedOut = st.code == Err::TIMEOUT || st.code == Err::I2C_TIMEOUT;
+    const bool ambiguous = timedOut || st.code == Err::I2C_ERROR || st.code == Err::I2C_BUS;
+    const JobEffect effect = _effectForPhase(phase, ambiguous);
+
+    if (type == JobType::MEASUREMENT) {
+      _lastMeasurementStatus = isTransportStatus(st) ? stableStatus(st) : st;
+      _measurementReady = false;
+      _measurementRequested = false;
+    }
+
+    result.status = st;
+    result.active = false;
+    result.terminal = true;
+    result.requestId = _jobRequestId;
+    result.type = type;
+    result.phase = phase;
+    result.outcome = timedOut ? JobOutcome::TIMED_OUT : JobOutcome::FAILED;
+    result.effect = effect;
+    _hardwareStateValid = false;
+    _clearJobState();
+    return st;
+  };
+
+  auto recordProgress = [this, &result](const char* message) -> Status {
+    const Status st = Status::Error(Err::IN_PROGRESS, message);
+    if (_jobType == JobType::MEASUREMENT) {
+      _lastMeasurementStatus = st;
+    }
+    result.status = st;
+    result.active = true;
+    result.outcome = JobOutcome::ACTIVE;
+    result.effect = _jobEffect;
+    return st;
+  };
+
+  auto recordSample = [this, &result](const RawSample& sample,
+                                      uint32_t completedMs) -> Status {
+    const uint32_t requestId = _jobRequestId;
+    const JobPhase phase = _measurementPhase;
+    _rawSample = sample;
     _compSample.tempC_x100 = convertTemperatureC_x100(_rawSample.rawTemperature);
     _compSample.humidityPct_x100 = convertHumidityPct_x100(_rawSample.rawHumidity);
-    _sampleTimestampMs = nowMs;
+    _milliSample.temperatureMilliCelsius =
+        convertTemperatureMilliCelsius(_rawSample.rawTemperature);
+    _milliSample.humidityMilliPercent =
+        convertHumidityMilliPercent(_rawSample.rawHumidity);
+    _sampleTimestampMs = completedMs;
     _measurementReady = true;
     _hasSample = true;
     _measurementRequested = false;
-    _measurementPhase = MeasurementPhase::IDLE;
     _lastMeasurementStatus = Status::Ok();
+
     result.completed = true;
     result.active = false;
+    result.terminal = true;
+    result.requestId = requestId;
+    result.type = JobType::MEASUREMENT;
+    result.phase = phase;
+    result.outcome = JobOutcome::SUCCEEDED;
+    result.effect = JobEffect::NONE;
     result.status = Status::Ok();
+    _clearJobState();
     return result.status;
   };
 
-  auto commandDelayOpen = [this, nowMs]() -> bool {
+  auto recordEnsureSuccess = [this, &result]() -> Status {
+    const uint32_t requestId = _jobRequestId;
+    const JobPhase phase = _measurementPhase;
+    _setSafeBaseline();
+    _hardwareStateValid = true;
+    result.status = Status::Ok();
+    result.active = false;
+    result.terminal = true;
+    result.requestId = requestId;
+    result.type = JobType::ENSURE_IDLE;
+    result.phase = phase;
+    result.outcome = JobOutcome::SUCCEEDED;
+    result.effect = JobEffect::DEVICE_STATE_CHANGED;
+    _clearJobState();
+    return result.status;
+  };
+
+  if (_jobType == JobType::MEASUREMENT &&
+      _config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+      _driverState == DriverState::OFFLINE) {
+    return recordFailure(_offlineStatus());
+  }
+  if (maxInstructions == 0) {
+    return recordProgress("Poll budget exhausted");
+  }
+
+  auto commandDelayOpen = [this]() -> bool {
     if (!_lastCommandValid) {
       return true;
     }
     const uint32_t delayUs = static_cast<uint32_t>(_config.commandDelayMs) * 1000U;
-    return _durationElapsed(nowMs * 1000U, _lastCommandUs, delayUs);
+    return _durationElapsed(_nowUs(_config), _lastCommandUs, delayUs);
   };
 
   switch (_measurementPhase) {
-    case MeasurementPhase::SINGLE_SHOT_COMMAND: {
+    case JobPhase::ENSURE_BREAK_COMMAND: {
       if (!commandDelayOpen()) {
-        _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Command delay pending");
-        result.status = _lastMeasurementStatus;
-        return result.status;
+        return recordProgress("Command delay pending");
+      }
+      Status st = _writeCommandNoDelay(cmd::CMD_BREAK, true, false);
+      result.instructionsUsed = 1;
+      if (!st.ok()) {
+        return recordFailure(st);
+      }
+      _periodicActive = false;
+      _mode = Mode::SINGLE_SHOT;
+      _config.mode = Mode::SINGLE_SHOT;
+      _jobEffect = JobEffect::DEVICE_STATE_CHANGED;
+      _measurementReadyMs = _nowMs(_config) + BREAK_DELAY_MS;
+      _measurementPhase = JobPhase::ENSURE_BREAK_WAIT;
+      if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
+        return recordDeadline();
+      }
+      return recordProgress("Break settle pending");
+    }
+
+    case JobPhase::ENSURE_BREAK_WAIT:
+      if (!_timeElapsed(nowMs, _measurementReadyMs)) {
+        return recordProgress("Break settle pending");
+      }
+      _measurementPhase = JobPhase::ENSURE_RESET_COMMAND;
+      return recordProgress("Soft reset pending");
+
+    case JobPhase::ENSURE_RESET_COMMAND: {
+      if (!commandDelayOpen()) {
+        return recordProgress("Command delay pending");
+      }
+      Status st = _writeCommandNoDelay(cmd::CMD_SOFT_RESET, true, false);
+      result.instructionsUsed = 1;
+      if (!st.ok()) {
+        return recordFailure(st);
+      }
+      _measurementRequested = false;
+      _measurementReady = false;
+      _hasSample = false;
+      _lastMeasurementStatus = initialMeasurementStatus();
+      _jobEffect = JobEffect::DEVICE_STATE_CHANGED;
+      _measurementReadyMs = _nowMs(_config) + RESET_DELAY_MS;
+      _measurementPhase = JobPhase::ENSURE_RESET_WAIT;
+      if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
+        return recordDeadline();
+      }
+      return recordProgress("Reset settle pending");
+    }
+
+    case JobPhase::ENSURE_RESET_WAIT:
+      if (!_timeElapsed(nowMs, _measurementReadyMs)) {
+        return recordProgress("Reset settle pending");
+      }
+      _measurementPhase = JobPhase::ENSURE_STATUS_COMMAND;
+      return recordProgress("Status verification pending");
+
+    case JobPhase::ENSURE_STATUS_COMMAND: {
+      if (!commandDelayOpen()) {
+        return recordProgress("Command delay pending");
+      }
+      Status st = _writeCommandNoDelay(cmd::CMD_READ_STATUS, true, false);
+      result.instructionsUsed = 1;
+      if (!st.ok()) {
+        return recordFailure(st);
+      }
+      _measurementPhase = JobPhase::ENSURE_STATUS_READ;
+      if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
+        return recordDeadline();
+      }
+      return recordProgress("Status read pending");
+    }
+
+    case JobPhase::ENSURE_STATUS_READ: {
+      if (!commandDelayOpen()) {
+        return recordProgress("Command delay pending");
+      }
+      uint8_t buf[cmd::STATUS_DATA_LEN] = {};
+      Status st = _readOnly(buf, sizeof(buf), true, false, true);
+      result.instructionsUsed = 1;
+      if (!st.ok()) {
+        return recordFailure(st);
+      }
+      if (_crc8(buf, 2) != buf[2]) {
+        _recordProtocolFailure();
+        return recordFailure(Status::Error(Err::CRC_MISMATCH,
+                                           "CRC mismatch (status)"));
+      }
+      if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
+        return recordDeadline();
+      }
+      return recordEnsureSuccess();
+    }
+
+    case JobPhase::SINGLE_SHOT_COMMAND: {
+      if (!commandDelayOpen()) {
+        return recordProgress("Command delay pending");
       }
       if (_periodicActive) {
-        return recordFailure(Status::Error(Err::BUSY, "Periodic mode active"), true);
+        return recordFailure(Status::Error(Err::BUSY, "Periodic mode active"));
       }
       const uint16_t command = _commandForSingleShot(_config.repeatability,
                                                      _config.clockStretching);
       if (command == 0) {
         return recordFailure(Status::Error(Err::INVALID_PARAM,
-                                           "Invalid single-shot configuration"),
-                             true);
+                                           "Invalid single-shot configuration"));
       }
-      Status st = _writeCommandNoDelay(command, true);
-      result.instructionsUsed++;
+      Status st = _writeCommandNoDelay(command, true, false);
+      result.instructionsUsed = 1;
       if (!st.ok()) {
-        const bool keepPending = st.inProgress() || st.code == Err::TIMEOUT;
-        return recordFailure(st, !keepPending);
+        return recordFailure(st);
       }
-      _measurementPhase = MeasurementPhase::SINGLE_SHOT_CONVERSION;
-      _measurementReadyMs = nowMs + estimateMeasurementTimeMs();
-      _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Conversion pending");
-      result.status = _lastMeasurementStatus;
-      return result.status;
+      _jobEffect = JobEffect::RESULT_MAY_BE_PENDING;
+      _measurementPhase = JobPhase::SINGLE_SHOT_CONVERSION;
+      _measurementReadyMs = _nowMs(_config) + estimateMeasurementTimeMs();
+      if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
+        return recordDeadline();
+      }
+      return recordProgress("Conversion pending");
     }
 
-    case MeasurementPhase::SINGLE_SHOT_CONVERSION:
+    case JobPhase::SINGLE_SHOT_CONVERSION:
       if (!_timeElapsed(nowMs, _measurementReadyMs)) {
-        _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Conversion pending");
-        result.status = _lastMeasurementStatus;
-        return result.status;
+        return recordProgress("Conversion pending");
       }
-      _measurementPhase = MeasurementPhase::SINGLE_SHOT_READ;
+      _measurementPhase = JobPhase::SINGLE_SHOT_READ;
       break;
 
-    case MeasurementPhase::PERIODIC_FETCH_COMMAND:
+    case JobPhase::PERIODIC_FETCH_COMMAND:
       if (!_periodicActive) {
-        return recordFailure(Status::Error(Err::INVALID_PARAM, "Periodic mode not active"), true);
+        return recordFailure(Status::Error(Err::INVALID_PARAM,
+                                           "Periodic mode not active"));
       }
       if (!_timeElapsed(nowMs, _measurementReadyMs)) {
-        _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Periodic fetch pending");
-        result.status = _lastMeasurementStatus;
-        return result.status;
+        return recordProgress("Periodic fetch pending");
       }
       if (!commandDelayOpen()) {
-        _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Command delay pending");
-        result.status = _lastMeasurementStatus;
-        return result.status;
+        return recordProgress("Command delay pending");
       }
       {
-        Status st = _writeCommandNoDelay(cmd::CMD_FETCH_DATA, true);
-        result.instructionsUsed++;
+        Status st = _writeCommandNoDelay(cmd::CMD_FETCH_DATA, true, false);
+        result.instructionsUsed = 1;
         if (!st.ok()) {
-          const bool keepPending = st.inProgress() || st.code == Err::TIMEOUT;
-          return recordFailure(st, !keepPending);
+          return recordFailure(st);
         }
       }
-      _measurementPhase = MeasurementPhase::PERIODIC_READ;
-      _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Periodic read pending");
-      result.status = _lastMeasurementStatus;
-      return result.status;
+      _measurementPhase = JobPhase::PERIODIC_READ;
+      if (_jobHasDeadline && _timeElapsed(_nowMs(_config), _jobDeadlineMs)) {
+        return recordDeadline();
+      }
+      return recordProgress("Periodic read pending");
 
-    case MeasurementPhase::SINGLE_SHOT_READ:
-    case MeasurementPhase::PERIODIC_READ:
+    case JobPhase::SINGLE_SHOT_READ:
+    case JobPhase::PERIODIC_READ:
       break;
 
-    case MeasurementPhase::IDLE:
+    case JobPhase::IDLE:
     default:
-      _lastMeasurementStatus = Status::Error(Err::MEASUREMENT_NOT_READY, "No poll job active");
-      result.active = false;
-      result.status = _lastMeasurementStatus;
-      return result.status;
+      return recordFailure(Status::Error(Err::INVALID_PARAM,
+                                         "Invalid poll job phase"));
   }
 
   if (result.instructionsUsed >= maxInstructions) {
-    _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Poll budget exhausted");
-    result.status = _lastMeasurementStatus;
-    return result.status;
+    return recordProgress("Poll budget exhausted");
   }
   if (!commandDelayOpen()) {
-    _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Command delay pending");
-    result.status = _lastMeasurementStatus;
-    return result.status;
+    return recordProgress("Command delay pending");
   }
 
-  if (_measurementPhase == MeasurementPhase::SINGLE_SHOT_READ) {
-    Status st = _readMeasurementRawNoDelay(_rawSample, true, false);
+  if (_measurementPhase == JobPhase::SINGLE_SHOT_READ) {
+    RawSample sample;
+    Status st = _readMeasurementRawNoDelay(sample, true, false);
     result.instructionsUsed++;
     if (!st.ok()) {
-      const bool keepPending = st.inProgress() || st.code == Err::TIMEOUT;
-      return recordFailure(st, !keepPending);
+      return recordFailure(st);
     }
-    return recordSample();
+    const uint32_t completedMs = _nowMs(_config);
+    if (_jobHasDeadline && _timeElapsed(completedMs, _jobDeadlineMs)) {
+      return recordDeadline();
+    }
+    return recordSample(sample, completedMs);
   }
 
   bool allowNoData = hasCapability(_config.transportCapabilities,
@@ -448,28 +664,33 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
     }
   }
 
-  Status st = _readMeasurementRawNoDelay(_rawSample, true, allowNoData);
+  RawSample sample;
+  Status st = _readMeasurementRawNoDelay(sample, true, allowNoData);
   result.instructionsUsed++;
+  const uint32_t readCompletedMs = _nowMs(_config);
   if (!st.ok()) {
     if (st.code == Err::MEASUREMENT_NOT_READY) {
       if (_notReadyStartMs == 0) {
-        _notReadyStartMs = nowMs;
+        _notReadyStartMs = readCompletedMs;
       }
       if (_notReadyCount < std::numeric_limits<uint32_t>::max()) {
         _notReadyCount++;
       }
-      _measurementPhase = MeasurementPhase::PERIODIC_FETCH_COMMAND;
-      _measurementReadyMs = _periodicRetryMs(nowMs);
-      return recordFailure(st, false);
+      _measurementPhase = JobPhase::PERIODIC_FETCH_COMMAND;
+      _measurementReadyMs = _periodicRetryMs(readCompletedMs);
+      return recordProgress("Periodic sample not ready");
     }
-    const bool keepPending = st.inProgress() || st.code == Err::TIMEOUT;
-    return recordFailure(st, !keepPending);
+    return recordFailure(st);
+  }
+
+  if (_jobHasDeadline && _timeElapsed(readCompletedMs, _jobDeadlineMs)) {
+    return recordDeadline();
   }
 
   _notReadyStartMs = 0;
   _notReadyCount = 0;
   if (_lastFetchMs != 0 && _periodMs > 0) {
-    const uint32_t elapsed = nowMs - _lastFetchMs;
+    const uint32_t elapsed = readCompletedMs - _lastFetchMs;
     if (elapsed > _periodMs) {
       uint32_t missed = elapsed / _periodMs;
       if (missed > 0) {
@@ -478,15 +699,16 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
       }
     }
   }
-  _lastFetchMs = nowMs;
-  return recordSample();
+  _lastFetchMs = readCompletedMs;
+  return recordSample(sample, readCompletedMs);
 }
 
 void SHT3x::end() {
+  _clearJobState();
   _measurementRequested = false;
   _measurementReady = false;
   _hasSample = false;
-  _measurementPhase = MeasurementPhase::IDLE;
+  _measurementPhase = JobPhase::IDLE;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicActive = false;
@@ -502,6 +724,7 @@ void SHT3x::end() {
   _initialized = false;
   _driverState = DriverState::UNINIT;
   _lastCommandValid = false;
+  _hardwareStateValid = false;
 }
 
 Status SHT3x::probe() {
@@ -509,7 +732,7 @@ Status SHT3x::probe() {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
   if (_singleShotMeasurementPending()) {
-    return Status::Error(Err::BUSY, "Measurement in progress");
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
   }
 
   uint16_t statusRaw = 0;
@@ -525,11 +748,16 @@ Status SHT3x::recover() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
+  }
   Status st = _performRecoveryLadder();
   if (!st.ok()) {
+    _hardwareStateValid = false;
     return st;
   }
   _setSafeBaseline();
+  _hardwareStateValid = true;
   return Status::Ok();
 }
 
@@ -537,12 +765,17 @@ Status SHT3x::resetToDefaults() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
+  }
   Status st = _performRecoveryLadder();
   if (!st.ok()) {
+    _hardwareStateValid = false;
     return st;
   }
   _setSafeBaseline();
   _setDefaultsToConfigAndCache();
+  _hardwareStateValid = true;
   return Status::Ok();
 }
 
@@ -550,18 +783,24 @@ Status SHT3x::resetAndRestore() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
+  }
   if (!_hasCachedSettings) {
     return Status::Error(Err::INVALID_PARAM, "No cached settings");
   }
   Status st = _performRecoveryLadder();
   if (!st.ok()) {
+    _hardwareStateValid = false;
     return st;
   }
   _setSafeBaseline();
   st = _applyCachedSettingsAfterReset();
   if (!st.ok()) {
+    _hardwareStateValid = false;
     return st;
   }
+  _hardwareStateValid = true;
   return Status::Ok();
 }
 
@@ -569,12 +808,25 @@ Status SHT3x::requestMeasurement() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-  if (_driverState == DriverState::OFFLINE) {
+  JobRequest request;
+  request.requestId = _allocateJobId();
+  return requestMeasurement(request);
+}
+
+Status SHT3x::requestMeasurement(const JobRequest& request) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (request.requestId == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Job request ID must be nonzero");
+  }
+  if (_config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+      _driverState == DriverState::OFFLINE) {
     _lastMeasurementStatus = _offlineStatus();
     return _lastMeasurementStatus;
   }
-  if (_measurementRequested && !_measurementReady) {
-    _lastMeasurementStatus = Status::Error(Err::BUSY, "Measurement in progress");
+  if (_jobActive()) {
+    _lastMeasurementStatus = Status::Error(Err::BUSY, "Cooperative job in progress");
     return _lastMeasurementStatus;
   }
 
@@ -590,8 +842,13 @@ Status SHT3x::requestMeasurement() {
     }
 
     _measurementRequested = true;
-    _measurementPhase = MeasurementPhase::SINGLE_SHOT_COMMAND;
+    _measurementPhase = JobPhase::SINGLE_SHOT_COMMAND;
     _measurementReadyMs = _nowMs(_config);
+    _jobType = JobType::MEASUREMENT;
+    _jobRequestId = request.requestId;
+    _jobDeadlineMs = request.deadlineMs;
+    _jobHasDeadline = request.hasDeadline;
+    _jobEffect = JobEffect::NONE;
     _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Measurement scheduled");
 
     return _lastMeasurementStatus;
@@ -607,8 +864,13 @@ Status SHT3x::requestMeasurement() {
     uint32_t readyMs = _periodicReadyMs(now);
 
     _measurementRequested = true;
-    _measurementPhase = MeasurementPhase::PERIODIC_FETCH_COMMAND;
+    _measurementPhase = JobPhase::PERIODIC_FETCH_COMMAND;
     _measurementReadyMs = readyMs;
+    _jobType = JobType::MEASUREMENT;
+    _jobRequestId = request.requestId;
+    _jobDeadlineMs = request.deadlineMs;
+    _jobHasDeadline = request.hasDeadline;
+    _jobEffect = JobEffect::NONE;
     _lastMeasurementStatus = Status::Error(Err::IN_PROGRESS, "Measurement scheduled");
 
     return _lastMeasurementStatus;
@@ -616,6 +878,80 @@ Status SHT3x::requestMeasurement() {
 
   _lastMeasurementStatus = Status::Error(Err::INVALID_PARAM, "Invalid mode");
   return _lastMeasurementStatus;
+}
+
+Status SHT3x::requestEnsureIdle(const JobRequest& request) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (request.requestId == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Job request ID must be nonzero");
+  }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
+  }
+
+  _measurementRequested = false;
+  _measurementReady = false;
+  _measurementPhase = JobPhase::ENSURE_BREAK_COMMAND;
+  _measurementReadyMs = 0;
+  _jobType = JobType::ENSURE_IDLE;
+  _jobRequestId = request.requestId;
+  _jobDeadlineMs = request.deadlineMs;
+  _jobHasDeadline = request.hasDeadline;
+  _jobEffect = JobEffect::NONE;
+  return Status::Error(Err::IN_PROGRESS, "Ensure-idle scheduled");
+}
+
+Status SHT3x::cancelJob(CancelReason reason, PollJobResult& result) {
+  result = PollJobResult{};
+  if (!_initialized) {
+    result.status = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    return result.status;
+  }
+  if (!_jobActive()) {
+    result.status = Status::Error(Err::MEASUREMENT_NOT_READY, "No poll job active");
+    return result.status;
+  }
+
+  const JobType type = _jobType;
+  const JobPhase phase = _measurementPhase;
+  const JobEffect effect = _effectForPhase(phase, false);
+  const bool timedOut = reason == CancelReason::DEADLINE_EXPIRED;
+  const Status st = timedOut
+      ? Status::Error(Err::TIMEOUT, "Job deadline expired")
+      : Status::Error(Err::CANCELLED, "Job cancelled");
+
+  if (type == JobType::MEASUREMENT) {
+    _measurementRequested = false;
+    _measurementReady = false;
+    _lastMeasurementStatus = st;
+  }
+  if (effect != JobEffect::NONE) {
+    _hardwareStateValid = false;
+  }
+
+  result.status = st;
+  result.active = false;
+  result.terminal = true;
+  result.requestId = _jobRequestId;
+  result.type = type;
+  result.phase = phase;
+  result.outcome = timedOut ? JobOutcome::TIMED_OUT : JobOutcome::CANCELLED;
+  result.effect = effect;
+  _clearJobState();
+  return st;
+}
+
+Status SHT3x::cancelMeasurement() {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_jobType != JobType::MEASUREMENT) {
+    return Status::Error(Err::MEASUREMENT_NOT_READY, "No measurement job active");
+  }
+  PollJobResult result;
+  return cancelJob(CancelReason::REQUESTED, result);
 }
 
 Status SHT3x::measurementStatus() const {
@@ -636,8 +972,8 @@ Status SHT3x::getMeasurement(Measurement& out) {
     return measurementStatus();
   }
 
-  out.temperatureC = static_cast<float>(_compSample.tempC_x100) / 100.0f;
-  out.humidityPct = static_cast<float>(_compSample.humidityPct_x100) / 100.0f;
+  out.temperatureC = convertTemperatureC(_rawSample.rawTemperature);
+  out.humidityPct = convertHumidityPct(_rawSample.rawHumidity);
 
   _measurementReady = false;
   _lastMeasurementStatus = initialMeasurementStatus();
@@ -668,11 +1004,23 @@ Status SHT3x::getCompensatedSample(CompensatedSample& out) const {
   return Status::Ok();
 }
 
+Status SHT3x::getMeasurementMilli(MeasurementMilli& out) const {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (!_hasSample) {
+    return measurementStatus();
+  }
+
+  out = _milliSample;
+  return Status::Ok();
+}
+
 Status SHT3x::setMode(Mode mode) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-  if (_measurementRequested && !_measurementReady) {
+  if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (!isValidMode(mode)) {
@@ -720,6 +1068,7 @@ Status SHT3x::getSettings(SettingsSnapshot& out) const {
   out.i2cAddress = _config.i2cAddress;
   out.i2cTimeoutMs = _config.i2cTimeoutMs;
   out.offlineThreshold = _config.offlineThreshold;
+  out.healthPolicy = _config.healthPolicy;
   out.hasNowMsHook = (_config.nowMs != nullptr);
   out.mode = _mode;
   out.repeatability = _config.repeatability;
@@ -733,6 +1082,7 @@ Status SHT3x::getSettings(SettingsSnapshot& out) const {
   out.measurementReadyMs = _measurementReadyMs;
   out.sampleTimestampMs = _sampleTimestampMs;
   out.missedSamples = _missedSamples;
+  out.hardwareStateValid = _hardwareStateValid;
   out.status = StatusRegister{};
   out.statusValid = false;
   out.statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read");
@@ -752,7 +1102,8 @@ Status SHT3x::readSettings(SettingsSnapshot& out) {
     return stStatus;
   }
   if (stStatus.code == Err::BUSY) {
-    if (_driverState == DriverState::OFFLINE) {
+    if (_config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+        _driverState == DriverState::OFFLINE) {
       return stStatus;
     }
     out.statusValid = false;
@@ -769,7 +1120,9 @@ Status SHT3x::writeCommand(uint16_t command) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
 
-  return _writeCommand(command, true);
+  Status st = _writeCommand(command, true);
+  _hardwareStateValid = false;
+  return st;
 }
 
 Status SHT3x::writeCommandWithData(uint16_t command, uint16_t data) {
@@ -780,7 +1133,9 @@ Status SHT3x::writeCommandWithData(uint16_t command, uint16_t data) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
 
-  return _writeCommandWithData(command, data, true);
+  Status st = _writeCommandWithData(command, data, true);
+  _hardwareStateValid = false;
+  return st;
 }
 
 Status SHT3x::readCommand(uint16_t command, uint8_t* out, size_t len,
@@ -795,19 +1150,22 @@ Status SHT3x::readCommand(uint16_t command, uint8_t* out, size_t len,
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
 
-  Status st = _writeCommand(command, true);
+  Status st = _writeCommand(command, true, false);
   if (!st.ok()) {
+    _hardwareStateValid = false;
     return st;
   }
 
-  return _readAfterCommand(out, len, true, allowNoData);
+  st = _readAfterCommand(out, len, true, allowNoData);
+  _hardwareStateValid = false;
+  return st;
 }
 
 Status SHT3x::setRepeatability(Repeatability rep) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-  if (_measurementRequested && !_measurementReady) {
+  if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (!isValidRepeatability(rep)) {
@@ -853,7 +1211,7 @@ Status SHT3x::setClockStretching(ClockStretching stretch) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
-  if (_measurementRequested && !_measurementReady) {
+  if (_singleShotMeasurementPending()) {
     return Status::Error(Err::BUSY, "Measurement in progress");
   }
   if (!isValidClockStretching(stretch)) {
@@ -963,6 +1321,9 @@ Status SHT3x::stopPeriodic() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
+  }
 
   Status st = _stopPeriodicInternal();
   if (st.ok()) {
@@ -992,7 +1353,6 @@ Status SHT3x::readStatus(StatusRegister& out) {
   if (!st.ok()) {
     return st;
   }
-
   _parseStatusRegister(raw, out);
   return Status::Ok();
 }
@@ -1002,6 +1362,11 @@ Status SHT3x::readStatusWithModeRestore(StatusReadSnapshot& out) {
 
   if (!_initialized) {
     Status st = Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+    out.statusReadStatus = st;
+    return st;
+  }
+  if (_jobActive()) {
+    Status st = Status::Error(Err::BUSY, "Cooperative job in progress");
     out.statusReadStatus = st;
     return st;
   }
@@ -1108,6 +1473,9 @@ Status SHT3x::softReset() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
   }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
+  }
   if (_periodicActive) {
     return Status::Error(Err::BUSY, "Stop periodic mode before reset");
   }
@@ -1122,13 +1490,14 @@ Status SHT3x::softReset() {
 
     st = _waitMs(RESET_DELAY_MS);
     if (!st.ok()) {
+      _hardwareStateValid = false;
       return st;
     }
 
     _measurementRequested = false;
     _measurementReady = false;
     _hasSample = false;
-    _measurementPhase = MeasurementPhase::IDLE;
+    _measurementPhase = JobPhase::IDLE;
     _lastMeasurementStatus = initialMeasurementStatus();
     _mode = Mode::SINGLE_SHOT;
     _config.mode = Mode::SINGLE_SHOT;
@@ -1140,6 +1509,7 @@ Status SHT3x::softReset() {
     _missedSamples = 0;
     _notReadyStartMs = 0;
     _notReadyCount = 0;
+    _hardwareStateValid = true;
 
     return Status::Ok();
   }();
@@ -1152,6 +1522,9 @@ Status SHT3x::softReset() {
 Status SHT3x::interfaceReset() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
   }
   if (_config.busReset == nullptr) {
     return Status::Error(Err::UNSUPPORTED, "Bus reset callback not set");
@@ -1169,7 +1542,7 @@ Status SHT3x::interfaceReset() {
   _measurementRequested = false;
   _measurementReady = false;
   _hasSample = false;
-  _measurementPhase = MeasurementPhase::IDLE;
+  _measurementPhase = JobPhase::IDLE;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _lastFetchMs = 0;
@@ -1177,6 +1550,7 @@ Status SHT3x::interfaceReset() {
   _missedSamples = 0;
   _notReadyStartMs = 0;
   _notReadyCount = 0;
+  _hardwareStateValid = false;
   if (_periodicActive) {
     _periodicStartMs = _nowMs(_config);
   }
@@ -1187,6 +1561,9 @@ Status SHT3x::interfaceReset() {
 Status SHT3x::generalCallReset() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+  if (_jobActive()) {
+    return Status::Error(Err::BUSY, "Cooperative job in progress");
   }
   if (!_config.allowGeneralCallReset) {
     return Status::Error(Err::INVALID_CONFIG, "General call reset disabled");
@@ -1210,13 +1587,14 @@ Status SHT3x::generalCallReset() {
     _lastCommandValid = true;
     st = _waitMs(RESET_DELAY_MS);
     if (!st.ok()) {
+      _hardwareStateValid = false;
       return st;
     }
 
     _measurementRequested = false;
     _measurementReady = false;
     _hasSample = false;
-    _measurementPhase = MeasurementPhase::IDLE;
+    _measurementPhase = JobPhase::IDLE;
     _lastMeasurementStatus = initialMeasurementStatus();
     _measurementReadyMs = 0;
     _mode = Mode::SINGLE_SHOT;
@@ -1229,6 +1607,7 @@ Status SHT3x::generalCallReset() {
     _missedSamples = 0;
     _notReadyStartMs = 0;
     _notReadyCount = 0;
+    _hardwareStateValid = true;
 
     return Status::Ok();
   }();
@@ -1256,7 +1635,7 @@ Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
       ? cmd::CMD_SERIAL_STRETCH
       : cmd::CMD_SERIAL_NO_STRETCH;
 
-  Status st = _writeCommand(cmd, true);
+  Status st = _writeCommand(cmd, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -1268,9 +1647,11 @@ Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
   }
 
   if (_crc8(&buf[0], 2) != buf[2]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (serial word1)");
   }
   if (_crc8(&buf[3], 2) != buf[5]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (serial word2)");
   }
 
@@ -1297,7 +1678,7 @@ Status SHT3x::readAlertLimitRaw(AlertLimitKind kind, uint16_t& value) {
     return Status::Error(Err::INVALID_PARAM, "Invalid alert limit kind");
   }
 
-  Status st = _writeCommand(cmd, true);
+  Status st = _writeCommand(cmd, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -1309,6 +1690,7 @@ Status SHT3x::readAlertLimitRaw(AlertLimitKind kind, uint16_t& value) {
   }
 
   if (_crc8(&buf[0], 2) != buf[2]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (alert limit)");
   }
 
@@ -1344,7 +1726,7 @@ Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
     return Status::Error(Err::INVALID_PARAM, "Invalid alert limit kind");
   }
 
-  Status st = _writeCommandWithData(cmd, value, true);
+  Status st = _writeCommandWithData(cmd, value, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -1352,13 +1734,16 @@ Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
   uint16_t statusRaw = 0;
   st = _readStatusRaw(statusRaw, true);
   if (!st.ok()) {
+    _hardwareStateValid = false;
     return st;
   }
 
   if (statusRaw & cmd::STATUS_WRITE_CRC_ERROR) {
+    _hardwareStateValid = false;
     return Status::Error(Err::WRITE_CRC_ERROR, "Write checksum error");
   }
   if (statusRaw & cmd::STATUS_COMMAND_ERROR) {
+    _hardwareStateValid = false;
     return Status::Error(Err::COMMAND_FAILED, "Command rejected");
   }
 
@@ -1460,13 +1845,71 @@ uint32_t SHT3x::convertHumidityPct_x100(uint16_t raw) {
   return (numerator + 32767U) / 65535U;
 }
 
+int32_t SHT3x::convertTemperatureMilliCelsius(uint16_t raw) {
+  const int64_t numerator = 175000LL * static_cast<int64_t>(raw);
+  const int32_t scaled = static_cast<int32_t>((numerator + 32767LL) / 65535LL);
+  return scaled - 45000;
+}
+
+int32_t SHT3x::convertHumidityMilliPercent(uint16_t raw) {
+  const int64_t numerator = 100000LL * static_cast<int64_t>(raw);
+  return static_cast<int32_t>((numerator + 32767LL) / 65535LL);
+}
+
 uint32_t SHT3x::estimateMeasurementTimeMs() const {
   const uint32_t baseMs = baseMeasurementMs(_config.repeatability, _config.lowVdd);
   return baseMs + MEASUREMENT_MARGIN_MS;
 }
 
 bool SHT3x::_singleShotMeasurementPending() const {
-  return _mode == Mode::SINGLE_SHOT && _measurementRequested && !_measurementReady;
+  return _jobActive() ||
+         (_mode == Mode::SINGLE_SHOT && _measurementRequested && !_measurementReady);
+}
+
+uint32_t SHT3x::_allocateJobId() {
+  uint32_t id = _nextJobId++;
+  if (id == 0) {
+    id = _nextJobId++;
+  }
+  if (_nextJobId == 0) {
+    _nextJobId = 1;
+  }
+  return id;
+}
+
+JobEffect SHT3x::_effectForPhase(JobPhase phase, bool ambiguous) const {
+  switch (phase) {
+    case JobPhase::SINGLE_SHOT_COMMAND:
+    case JobPhase::PERIODIC_FETCH_COMMAND:
+    case JobPhase::ENSURE_BREAK_COMMAND:
+    case JobPhase::ENSURE_RESET_COMMAND:
+    case JobPhase::ENSURE_STATUS_COMMAND:
+      return ambiguous ? JobEffect::DEVICE_STATE_INDETERMINATE : _jobEffect;
+
+    case JobPhase::SINGLE_SHOT_CONVERSION:
+    case JobPhase::SINGLE_SHOT_READ:
+    case JobPhase::PERIODIC_READ:
+      return JobEffect::RESULT_MAY_BE_PENDING;
+
+    case JobPhase::ENSURE_BREAK_WAIT:
+    case JobPhase::ENSURE_RESET_WAIT:
+    case JobPhase::ENSURE_STATUS_READ:
+      return JobEffect::DEVICE_STATE_CHANGED;
+
+    case JobPhase::IDLE:
+    default:
+      return _jobEffect;
+  }
+}
+
+void SHT3x::_clearJobState() {
+  _measurementRequested = false;
+  _measurementPhase = JobPhase::IDLE;
+  _jobType = JobType::NONE;
+  _jobRequestId = 0;
+  _jobDeadlineMs = 0;
+  _jobHasDeadline = false;
+  _jobEffect = JobEffect::NONE;
 }
 
 uint32_t SHT3x::_periodicFetchMarginMs() const {
@@ -1516,7 +1959,7 @@ void SHT3x::_setSafeBaseline() {
   _measurementRequested = false;
   _measurementReady = false;
   _hasSample = false;
-  _measurementPhase = MeasurementPhase::IDLE;
+  _measurementPhase = JobPhase::IDLE;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicActive = false;
@@ -1749,7 +2192,9 @@ Status SHT3x::_i2cWriteRawAddrTracked(uint8_t addr, const uint8_t* buf, size_t l
   if (buf == nullptr || len == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
-  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+  if (!_allowOfflineI2c && _initialized &&
+      _config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+      _driverState == DriverState::OFFLINE && _jobType != JobType::ENSURE_IDLE) {
     return _offlineStatus();
   }
 
@@ -1761,11 +2206,14 @@ Status SHT3x::_i2cWriteRawAddrTracked(uint8_t addr, const uint8_t* buf, size_t l
 }
 
 Status SHT3x::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
-                                   uint8_t* rxBuf, size_t rxLen) {
+                                   uint8_t* rxBuf, size_t rxLen,
+                                   bool logicalComplete) {
   if ((txLen > 0 && txBuf == nullptr) || (rxLen > 0 && rxBuf == nullptr)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
-  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+  if (!_allowOfflineI2c && _initialized &&
+      _config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+      _driverState == DriverState::OFFLINE && _jobType != JobType::ENSURE_IDLE) {
     return _offlineStatus();
   }
 
@@ -1773,12 +2221,13 @@ Status SHT3x::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
     return st;
   }
-  return _updateHealth(st);
+  return _updateHealth(st, logicalComplete);
 }
 
 Status SHT3x::_i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen,
                                               uint8_t* rxBuf, size_t rxLen,
-                                              bool allowNoData) {
+                                              bool allowNoData,
+                                              bool logicalComplete) {
   if ((txLen > 0 && txBuf == nullptr) || (rxLen > 0 && rxBuf == nullptr)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
@@ -1786,7 +2235,9 @@ Status SHT3x::_i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen
   const bool canReportNack = hasCapability(_config.transportCapabilities,
                                            TransportCapability::READ_HEADER_NACK);
   const bool allow = allowNoData && canReportNack;
-  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+  if (!_allowOfflineI2c && _initialized &&
+      _config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+      _driverState == DriverState::OFFLINE && _jobType != JobType::ENSURE_IDLE) {
     return _offlineStatus();
   }
 
@@ -1796,16 +2247,22 @@ Status SHT3x::_i2cWriteReadTrackedAllowNoData(const uint8_t* txBuf, size_t txLen
   }
   if (allow && st.code == Err::I2C_NACK_READ && txLen == 0 && rxLen > 0) {
     _recordBusActivity(_nowMs(_config));
+    if (_totalNotReady < std::numeric_limits<uint32_t>::max()) {
+      _totalNotReady++;
+    }
     return Status::Error(Err::MEASUREMENT_NOT_READY, "No new data", st.detail);
   }
-  return _updateHealth(st);
+  return _updateHealth(st, logicalComplete);
 }
 
-Status SHT3x::_i2cWriteTracked(const uint8_t* buf, size_t len) {
+Status SHT3x::_i2cWriteTracked(const uint8_t* buf, size_t len,
+                               bool logicalComplete) {
   if (buf == nullptr || len == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
   }
-  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+  if (!_allowOfflineI2c && _initialized &&
+      _config.healthPolicy == HealthPolicy::LATCH_OFFLINE &&
+      _driverState == DriverState::OFFLINE && _jobType != JobType::ENSURE_IDLE) {
     return _offlineStatus();
   }
 
@@ -1813,25 +2270,27 @@ Status SHT3x::_i2cWriteTracked(const uint8_t* buf, size_t len) {
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
     return st;
   }
-  return _updateHealth(st);
+  return _updateHealth(st, logicalComplete);
 }
 
 Status SHT3x::_offlineStatus() const {
   return Status::Error(Err::BUSY, "Driver is offline; call recover()");
 }
 
-Status SHT3x::_writeCommand(uint16_t cmd, bool tracked) {
+Status SHT3x::_writeCommand(uint16_t cmd, bool tracked, bool logicalComplete) {
   Status st = _ensureCommandDelay();
   if (!st.ok()) {
     return st;
   }
 
-  return _writeCommandNoDelay(cmd, tracked);
+  return _writeCommandNoDelay(cmd, tracked, logicalComplete);
 }
 
-Status SHT3x::_writeCommandNoDelay(uint16_t cmd, bool tracked) {
+Status SHT3x::_writeCommandNoDelay(uint16_t cmd, bool tracked,
+                                   bool logicalComplete) {
   uint8_t buf[2] = {static_cast<uint8_t>(cmd >> 8), static_cast<uint8_t>(cmd & 0xFF)};
-  Status st = tracked ? _i2cWriteTracked(buf, sizeof(buf)) : _i2cWriteRaw(buf, sizeof(buf));
+  Status st = tracked ? _i2cWriteTracked(buf, sizeof(buf), logicalComplete)
+                      : _i2cWriteRaw(buf, sizeof(buf));
   if (!st.ok()) {
     return st;
   }
@@ -1841,7 +2300,8 @@ Status SHT3x::_writeCommandNoDelay(uint16_t cmd, bool tracked) {
   return Status::Ok();
 }
 
-Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked) {
+Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked,
+                                    bool logicalComplete) {
   Status st = _ensureCommandDelay();
   if (!st.ok()) {
     return st;
@@ -1854,7 +2314,7 @@ Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked) {
   payload[3] = static_cast<uint8_t>(data & 0xFF);
   payload[4] = _crc8(&payload[2], 2);
 
-  st = tracked ? _i2cWriteTracked(payload, sizeof(payload))
+  st = tracked ? _i2cWriteTracked(payload, sizeof(payload), logicalComplete)
                : _i2cWriteRaw(payload, sizeof(payload));
   if (!st.ok()) {
     return st;
@@ -1866,7 +2326,7 @@ Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked) {
 }
 
 Status SHT3x::_readAfterCommand(uint8_t* buf, size_t len, bool tracked,
-                                bool allowNoData) {
+                                bool allowNoData, bool logicalComplete) {
   if (buf == nullptr || len == 0 || len > MAX_READ_LEN) {
     return Status::Error(Err::INVALID_PARAM, "Invalid read buffer");
   }
@@ -1876,24 +2336,25 @@ Status SHT3x::_readAfterCommand(uint8_t* buf, size_t len, bool tracked,
     return st;
   }
 
-  return _readOnly(buf, len, tracked, allowNoData);
+  return _readOnly(buf, len, tracked, allowNoData, logicalComplete);
 }
 
 Status SHT3x::_readOnly(uint8_t* buf, size_t len, bool tracked,
-                        bool allowNoData) {
+                        bool allowNoData, bool logicalComplete) {
   if (buf == nullptr || len == 0 || len > MAX_READ_LEN) {
     return Status::Error(Err::INVALID_PARAM, "Invalid read buffer");
   }
 
   if (tracked) {
     return allowNoData
-        ? _i2cWriteReadTrackedAllowNoData(nullptr, 0, buf, len, true)
-        : _i2cWriteReadTracked(nullptr, 0, buf, len);
+        ? _i2cWriteReadTrackedAllowNoData(nullptr, 0, buf, len, true,
+                                          logicalComplete)
+        : _i2cWriteReadTracked(nullptr, 0, buf, len, logicalComplete);
   }
   return _i2cWriteReadRaw(nullptr, 0, buf, len);
 }
 
-Status SHT3x::_updateHealth(const Status& st) {
+Status SHT3x::_updateHealth(const Status& st, bool logicalComplete) {
   if (!_initialized || st.inProgress()) {
     return st;
   }
@@ -1905,6 +2366,12 @@ Status SHT3x::_updateHealth(const Status& st) {
   _recordBusActivity(now);
 
   if (st.ok()) {
+    if (_transportSuccess < maxU32) {
+      _transportSuccess++;
+    }
+    if (!logicalComplete) {
+      return st;
+    }
     _lastOkMs = now;
     if (_totalSuccess < maxU32) {
       _totalSuccess++;
@@ -1914,7 +2381,11 @@ Status SHT3x::_updateHealth(const Status& st) {
     return st;
   }
 
-  _lastError = st;
+  if (_transportFailures < maxU32) {
+    _transportFailures++;
+  }
+  _hardwareStateValid = false;
+  _lastError = stableStatus(st);
   _lastErrorMs = now;
   if (_totalFailures < maxU32) {
     _totalFailures++;
@@ -1930,6 +2401,12 @@ Status SHT3x::_updateHealth(const Status& st) {
   }
 
   return st;
+}
+
+void SHT3x::_recordProtocolFailure() {
+  if (_protocolFailures < std::numeric_limits<uint32_t>::max()) {
+    _protocolFailures++;
+  }
 }
 
 void SHT3x::_reassertOfflineLatch() {
@@ -2013,7 +2490,7 @@ Status SHT3x::_waitMs(uint32_t delayMs) {
 }
 
 Status SHT3x::_readStatusRaw(uint16_t& raw, bool tracked) {
-  Status st = _writeCommand(cmd::CMD_READ_STATUS, tracked);
+  Status st = _writeCommand(cmd::CMD_READ_STATUS, tracked, false);
   if (!st.ok()) {
     return st;
   }
@@ -2025,6 +2502,7 @@ Status SHT3x::_readStatusRaw(uint16_t& raw, bool tracked) {
   }
 
   if (_crc8(&buf[0], 2) != buf[2]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (status)");
   }
 
@@ -2040,9 +2518,11 @@ Status SHT3x::_readMeasurementRaw(RawSample& out, bool tracked, bool allowNoData
   }
 
   if (_crc8(&buf[0], 2) != buf[2]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (temperature)");
   }
   if (_crc8(&buf[3], 2) != buf[5]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (humidity)");
   }
 
@@ -2059,9 +2539,11 @@ Status SHT3x::_readMeasurementRawNoDelay(RawSample& out, bool tracked, bool allo
   }
 
   if (_crc8(&buf[0], 2) != buf[2]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (temperature)");
   }
   if (_crc8(&buf[3], 2) != buf[5]) {
+    _recordProtocolFailure();
     return Status::Error(Err::CRC_MISMATCH, "CRC mismatch (humidity)");
   }
 
@@ -2075,7 +2557,7 @@ Status SHT3x::_fetchPeriodic() {
     return Status::Error(Err::INVALID_PARAM, "Periodic mode not active");
   }
 
-  Status st = _writeCommand(cmd::CMD_FETCH_DATA, true);
+  Status st = _writeCommand(cmd::CMD_FETCH_DATA, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -2122,7 +2604,7 @@ Status SHT3x::_startSingleShot() {
     return Status::Error(Err::INVALID_PARAM, "Invalid single-shot configuration");
   }
 
-  return _writeCommand(cmd, true);
+  return _writeCommand(cmd, true, false);
 }
 
 Status SHT3x::_enterPeriodic(PeriodicRate rate, Repeatability rep, bool art) {
@@ -2154,7 +2636,7 @@ Status SHT3x::_enterPeriodic(PeriodicRate rate, Repeatability rep, bool art) {
 
   _measurementRequested = false;
   _measurementReady = false;
-  _measurementPhase = MeasurementPhase::IDLE;
+  _measurementPhase = JobPhase::IDLE;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicActive = true;
@@ -2180,7 +2662,7 @@ Status SHT3x::_stopPeriodicInternal() {
   if (!_periodicActive) {
     _measurementRequested = false;
     _measurementReady = false;
-    _measurementPhase = MeasurementPhase::IDLE;
+    _measurementPhase = JobPhase::IDLE;
     _lastMeasurementStatus = initialMeasurementStatus();
     _measurementReadyMs = 0;
     _mode = Mode::SINGLE_SHOT;
@@ -2204,7 +2686,7 @@ Status SHT3x::_stopPeriodicInternal() {
   // so that state remains consistent even if _waitMs() fails.
   _measurementRequested = false;
   _measurementReady = false;
-  _measurementPhase = MeasurementPhase::IDLE;
+  _measurementPhase = JobPhase::IDLE;
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicActive = false;
@@ -2217,7 +2699,11 @@ Status SHT3x::_stopPeriodicInternal() {
   _notReadyCount = 0;
   _missedSamples = 0;
 
-  return _waitMs(BREAK_DELAY_MS);
+  st = _waitMs(BREAK_DELAY_MS);
+  if (!st.ok()) {
+    _hardwareStateValid = false;
+  }
+  return st;
 }
 
 uint8_t SHT3x::_crc8(const uint8_t* data, size_t len) {
