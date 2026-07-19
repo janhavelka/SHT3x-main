@@ -238,6 +238,9 @@ uses at most one callback even if a larger budget is supplied. `maxInstructions
 == 0` and all conversion/settle/command-spacing wait phases are bus-silent.
 The caller-provided `nowMs` and `Config::nowMs` must be the same wrapping timebase;
 absolute deadlines must be within `INT32_MAX` milliseconds of the request.
+Both injected clocks are monotonic unsigned scheduler clocks that may wrap modulo
+2^32: `nowMs` supplies milliseconds and `nowUs` independently supplies
+microseconds for command spacing.
 
 Terminal identity is emitted on exactly one `pollJob()` or `cancelJob()` call.
 The caller must consume that returned `PollJobResult` immediately; it is not an
@@ -246,6 +249,9 @@ a stale completion from being attributed to a new request. Cancellation is
 local and always performs zero I2C. `JobEffect` distinguishes no known effect,
 an unread measurement that may still be pending, a changed device state, and an
 indeterminate state after an ambiguous command transfer.
+
+While any cooperative job is active, synchronous/advanced I/O and configuration
+mutation APIs return `BUSY`; finish or cancel the job before calling them.
 
 The operation classes are intentionally small:
 
@@ -340,7 +346,7 @@ the cached configuration is updated only after that restart succeeds.
 - `Err::CONVERSION_NOT_READY` is provided as an alias of `Err::MEASUREMENT_NOT_READY` for cross-library CLI/reporting uniformity.
 - `Err::CANCELLED` is a local terminal result and never implies an I2C attempt.
 - Expected periodic not-ready handling does not count as a failure. Validation errors and pre-bind setup problems do not transition the driver into `DEGRADED` or `OFFLINE`.
-- `totalSuccess()`/`totalFailures()` and `consecutiveFailures()` describe complete logical transport operations. `transportSuccess()`/`transportFailures()`, `protocolFailures()`, and `totalNotReady()` keep physical transfer, CRC, and expected-not-ready diagnostics separate; all counters saturate.
+- `totalSuccess()`/`totalFailures()` and `consecutiveFailures()` describe complete logical transport operations. `transportSuccess()`/`transportFailures()`, `protocolFailures()`, and `totalNotReady()` keep physical transfer, CRC/checksum or sensor command-rejection, and expected-not-ready diagnostics separate; all counters saturate.
 
 ### ALERT and Status Register
 
@@ -351,7 +357,7 @@ power-up/reset until the measured value and programmed limits settle; validate
 this on your hardware before relying on ALERT as a production interrupt source.
 
 `readStatus()` is non-destructive and does not clear status flags. It returns
-`BUSY` while a single-shot measurement is pending. Local Sensirion docs only
+`BUSY` while any cooperative job is active. Local Sensirion docs only
 explicitly allow Fetch Data while periodic/ART acquisition is active, so
 `readStatus()` also returns `BUSY` in active periodic/ART mode instead of
 issuing an undocumented command sequence.
@@ -371,7 +377,7 @@ failure; inspect `statusReadStatus` for the earlier status-read failure.
 `readSettings()` remains non-disruptive. If it cannot read status, it sets
 `statusValid=false` and records the exact reason in
 `SettingsSnapshot::statusReadStatus`. That OK snapshot behavior covers active
-periodic/ART and pending single-shot status unavailability. Under
+periodic/ART and any active cooperative job. Under
 `LATCH_OFFLINE`, OFFLINE is the exception: `readSettings()` returns `BUSY` and
 does not issue a bus transaction. Under `OBSERVE_ONLY`, health remains visible
 but never suppresses an owner-authorized attempt.
@@ -475,7 +481,7 @@ command or read phase.
 | `startPeriodic()` / `startArt()` | Optional Break, then start command | command spacing + write timeout, plus break wait if needed | Updates cached desired settings only after success. |
 | `setRepeatability()` / `setPeriodicRate()` | 0 when idle; restart sequence when active | bounded by `startPeriodic()` / `startArt()` when active | Active restart failures leave the last fully applied cache intact. |
 | `setClockStretching()` | 0 transactions | none | Applies to single-shot and serial-number command selection only. |
-| `readStatus()` / `readHeaterStatus()` | Status command + receive-only read | command spacing + write/read timeout | Returns `BUSY` during active periodic/ART. |
+| `readStatus()` / `readHeaterStatus()` | Status command + receive-only read | command spacing + write/read timeout | Returns `BUSY` during any cooperative job or active periodic/ART. |
 | `readStatusWithModeRestore()` | Break, status read, periodic/ART restart | bounded multi-step sequence | Interrupts cadence; inspect step statuses on failure. |
 | `clearStatus()` | Clear-status command | command spacing + write timeout | Destructive for status flags 15, 11, 10, and 4. |
 | `setHeater()` | Heater command | command spacing + write timeout | Blocked while periodic/ART is active. Heater can affect measurements by self-heating. |

@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed fractional-millisecond and microsecond-wrap tIDLE enforcement.
 - Fixed stale-result risk by preserving the previous sample until a complete,
   CRC-valid, in-deadline replacement frame succeeds.
+- Preserved v1.6 positional aggregate initialization by keeping new `Config`
+  and `SettingsSnapshot` fields append-only; made self-rebind and invalid rebind
+  transactional and zero-I2C.
+- Corrected cooperative terminal effects, post-callback deadline handling,
+  ambiguous-write command spacing, and long-runtime periodic timestamp validity
+  across the uint32 millisecond wrap.
+- Prevented active ensure-idle work from leaking settle timestamps or accepting
+  concurrent configuration mutation, and separated completed late/CRC-invalid
+  frames from genuinely pending or indeterminate hardware effects.
 - Corrected public transaction-count, blocking, health-policy, cancellation,
   and ownership documentation; superseded the TunnelMonitor suitability audit
   with traceable finding dispositions.

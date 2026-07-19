@@ -99,7 +99,7 @@ enum class CancelReason : uint8_t {
   DEADLINE_EXPIRED
 };
 
-/// Result from one bounded measurement polling step.
+/// Result from one bounded cooperative-job polling step.
 struct PollJobResult {
   Status status = Status::Error(Err::MEASUREMENT_NOT_READY, "No poll job active"); ///< Current job status
   uint8_t instructionsUsed = 0; ///< Number of I2C instructions executed
@@ -132,7 +132,6 @@ struct SettingsSnapshot {
   uint8_t i2cAddress = 0x44;                                 ///< Active 7-bit I2C address
   uint32_t i2cTimeoutMs = 50;                                ///< Active I2C timeout
   uint8_t offlineThreshold = 5;                              ///< Failure threshold for OFFLINE
-  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE;   ///< Health admission policy
   bool hasNowMsHook = false;                                 ///< True when Config::nowMs is provided
   Mode mode = Mode::SINGLE_SHOT;                              ///< Active acquisition mode
   Repeatability repeatability = Repeatability::HIGH_REPEATABILITY; ///< Cached repeatability setting
@@ -147,10 +146,13 @@ struct SettingsSnapshot {
   uint32_t measurementReadyMs = 0;                            ///< Deadline/timestamp associated with the pending sample
   uint32_t sampleTimestampMs = 0;                             ///< Timestamp of the last successful sample
   uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
-  bool hardwareStateValid = false;                            ///< True when typed reconciliation verified acquisition state
   StatusRegister status = {};                                 ///< Parsed status-register snapshot when available
   bool statusValid = false;                                   ///< True if status was read successfully for this snapshot
   Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of the status-read attempt
+
+  // v1.7 additions stay append-only for aggregate initialization compatibility.
+  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE;   ///< Health admission policy
+  bool hardwareStateValid = false;                            ///< True when typed reconciliation verified acquisition state
 };
 
 /// Result for status reads that may temporarily stop periodic/ART acquisition
@@ -201,7 +203,9 @@ struct AlertLimit {
 /// Serialize access externally. Owner-safe bind/request/poll/cancel operations
 /// do not spin and perform at most one transport callback per poll. Synchronous
 /// convenience, advanced, and maintenance APIs remain bounded but may perform
-/// multiple callbacks and cooperative waits.
+/// multiple callbacks and cooperative waits. While any cooperative job is
+/// active, synchronous/advanced I/O and configuration mutation APIs return BUSY;
+/// finish or cancel the job before calling them.
 class SHT3x {
 public:
   SHT3x() = default;
@@ -231,6 +235,7 @@ public:
   ///       normalized active mode is SINGLE_SHOT even when config requested a
   ///       periodic mode; start that mode explicitly after reconciliation.
   ///       Returns BUSY rather than discarding an active job; cancel it first.
+  ///       Invalid configuration leaves an existing idle binding unchanged.
   Status bind(const Config& config);
 
   /// Process one pending cooperative-job step with a one-callback budget.
@@ -241,7 +246,7 @@ public:
   ///              used by Config::nowMs
   void tick(uint32_t nowMs);
 
-  /// Advance a pending measurement job with a bounded I2C instruction budget.
+  /// Advance a pending cooperative job with a bounded I2C instruction budget.
   /// One command write or read-only measurement frame counts as one instruction.
   /// The current implementation deliberately uses at most one instruction per
   /// call even when maxInstructions is larger; zero performs no I2C. Waiting
@@ -376,7 +381,7 @@ public:
   /// Total failed transport callbacks
   uint32_t transportFailures() const { return _transportFailures; }
 
-  /// Total CRC failures observed after successful transport
+  /// Total CRC/checksum failures and sensor-reported command rejections
   uint32_t protocolFailures() const { return _protocolFailures; }
 
   /// Total expected periodic read-header NACK/not-ready responses
@@ -472,10 +477,9 @@ public:
   /// Get a snapshot of settings/state and attempt a non-disruptive status read.
   /// statusValid is true only if the status read succeeds; statusReadStatus
   /// records the exact status-read result when it does not.
-  /// @note In active periodic/ART mode the status read is not issued; the
+  /// @note During any active cooperative job, or in active periodic/ART mode,
+  ///       the status read is not issued; the
   ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
-  ///       The same OK snapshot behavior applies while a single-shot
-  ///       measurement is pending.
   ///       In OFFLINE state under LATCH_OFFLINE, readSettings() returns BUSY.
   ///       OBSERVE_ONLY records the state but still authorizes the attempt.
   Status readSettings(SettingsSnapshot& out);
@@ -574,14 +578,14 @@ public:
   // =========================================================================
 
   /// Read raw status register without clearing flags.
-  /// @note Returns BUSY while a single-shot measurement is pending or
-  ///       periodic/ART acquisition is active. Use readStatusWithModeRestore()
+  /// @note Returns BUSY while any cooperative job or periodic/ART acquisition
+  ///       is active. Use readStatusWithModeRestore()
   ///       when ALERT diagnosis is needed in periodic/ART modes.
   Status readStatus(uint16_t& raw);
 
   /// Read and parse status register without clearing flags.
-  /// @note Returns BUSY while a single-shot measurement is pending or
-  ///       periodic/ART acquisition is active. Use readStatusWithModeRestore()
+  /// @note Returns BUSY while any cooperative job or periodic/ART acquisition
+  ///       is active. Use readStatusWithModeRestore()
   ///       when ALERT diagnosis is needed in periodic/ART modes.
   Status readStatus(StatusRegister& out);
 
@@ -829,10 +833,7 @@ private:
   Status _ensureCommandDelay();
   Status _waitMs(uint32_t delayMs);
   Status _readStatusRaw(uint16_t& raw, bool tracked);
-  Status _readMeasurementRaw(RawSample& out, bool tracked, bool allowNoData);
   Status _readMeasurementRawNoDelay(RawSample& out, bool tracked, bool allowNoData);
-  Status _fetchPeriodic();
-  Status _startSingleShot();
   Status _enterPeriodic(PeriodicRate rate, Repeatability rep, bool art);
   Status _stopPeriodicInternal();
   Status _applyCachedSettingsAfterReset();
@@ -893,10 +894,12 @@ private:
   uint32_t _measurementReadyMs = 0;
   uint32_t _periodicStartMs = 0;
   uint32_t _lastFetchMs = 0;
+  bool _lastFetchValid = false;
   uint32_t _periodMs = 0;
   uint32_t _sampleTimestampMs = 0;
   uint32_t _missedSamples = 0;
   uint32_t _notReadyStartMs = 0;
+  bool _notReadyStartValid = false;
   uint32_t _notReadyCount = 0;
   uint32_t _lastRecoverMs = 0;
   bool _lastRecoverValid = false;

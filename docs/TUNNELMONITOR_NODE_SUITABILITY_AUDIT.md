@@ -11,15 +11,16 @@ current hardening branch. The remainder of this document is intentionally
 preserved as the historical v1.6.1 audit, including its original evidence,
 recommended design, and validation gaps. A finding marked implemented here is
 not a hardware-validation claim. The core implementation is committed as
-`be2c18a` on the branch named below; release/documentation metadata and final
-review are subsequent focused chunks. The physical gates listed below remain
-open.
+`be2c18a` and release/documentation metadata as `ae61b9e` on the branch named
+below. An independent final review then drove focused compatibility, wrap,
+deadline-provenance, and simplification fixes and completed with no remaining
+actionable code finding. The physical gates listed below remain open.
 
 ### Re-audit baselines and scope
 
 | Repository | Re-audit baseline | Working-tree note |
 | --- | --- | --- |
-| SHT3x | Branch `hardening/tunnelmonitor-suitability-reaudit`, baseline `cf2ffad8eee28341edce74b05f06c12c8d71f7b6`; released v1.6.1 source/tag commit `113ecc67a082c844d062a402412b91eb7980202f`; core hardening commit `be2c18a` | `cf2ffad8` added this audit only. The owner-safe implementation and focused tests are committed separately from the release/documentation chunk. |
+| SHT3x | Branch `hardening/tunnelmonitor-suitability-reaudit`, baseline `cf2ffad8eee28341edce74b05f06c12c8d71f7b6`; released v1.6.1 source/tag commit `113ecc67a082c844d062a402412b91eb7980202f`; core hardening commit `be2c18a`; release/documentation commit `ae61b9e` | `cf2ffad8` added this audit only. The owner-safe implementation, release metadata, and final-review fixes are separated into focused commits. |
 | TunnelMonitor-node | Initially inspected clean `develop` at `0897f12c1a1369367747d1063936906005391580`, equal to the then-known `origin/develop` | During the read-only integration review, another process externally switched the shared TunnelMonitor worktree to `docs/mb85rc-suitability-contract-facts` and left unrelated documentation changes. No TunnelMonitor file was edited, committed, or reverted by this SHT3x work. |
 
 The current TunnelMonitor authority still keeps non-RV3032 I2C chip-library
@@ -52,7 +53,7 @@ TunnelMonitor dependency or adapter.
 | S-01: budget broader than behavior | The API deliberately retains `maxInstructions`, but public Doxygen and README say the current implementation uses at most one instruction even when a larger value is supplied; zero and wait-only polls perform no I2C. No loop was added merely to consume budget. | **Resolved in API contract and tests.** |
 | S-02: transport/protocol diagnostics | Added fixed saturating counters for physical transport success/failure, logical operation success/failure, CRC/protocol failures, and expected not-ready outcomes. No log, queue, allocator, or history framework was added. | **Resolved; saturation and separation tests pass.** |
 | S-03: cached caller message lifetime | Cached transport errors now pass through `stableStatus()`, retaining enum/detail while replacing callback-owned text with a library static literal before storing `_lastError`. | **Resolved; transient-buffer regression passes.** |
-| S-04: unchecked raw command access | Raw command helpers remain an explicitly documented expert/diagnostic escape hatch; typed operations remain the production surface. No TunnelMonitor adapter may use the raw path. A breaking rename is deferred to a future major version. | **Accepted restricted surface; no current code change required.** |
+| S-04: unchecked raw command access | Raw command helpers remain an explicitly documented expert/diagnostic escape hatch; typed operations remain the production surface. Attempted raw commands now invalidate `hardwareStateValid()`. No TunnelMonitor adapter may use the raw path. A breaking rename is deferred to a future major version. | **Accepted restricted surface with explicit validity invalidation.** |
 | S-05: reproducible release builds | The release metadata pins PlatformIO `6.1.18`, the PlatformIO Espressif32 platform archive `54.03.20`, and the ESP-IDF build container `v5.4.2`. Version generation now also synchronizes `idf_component.yml` and Doxyfile from `library.json`. | **Primary toolchain drift gates resolved; local pinned PlatformIO builds pass, live CI/pure-IDF execution remains an external gate.** |
 | S-06: monolithic native test file | The single native file remains large and still uses private-access test techniques. The focused hardening tests should land without a broad framework rewrite; later mechanical splitting may preserve the same test behavior. | **Accepted maintenance debt; not an integration gate.** |
 
@@ -85,10 +86,12 @@ repository guards. After implementation, the complete native suite passes
 101/101; strict framework-neutral core compilation passes with C++17,
 `-Wall -Wextra -Wpedantic -Werror`; pinned PlatformIO Arduino builds pass for
 ESP32-S3 and ESP32-S2; and the core timing, Arduino/IDF CLI, IDF-example, HIL,
-HIL-parser, version-metadata, and diff guards pass. Package inspection and the
-independent final review are recorded after their final run. `idf.py` and `gh`
-were unavailable in the inspected shell, so no new pure ESP-IDF or live-CI
-result is claimed.
+HIL-parser, version-metadata, and diff guards pass. The independent final review
+re-ran native tests, strict compilation, all six guards/version checks, and diff
+validation, and reported no remaining actionable code finding. Final package
+inspection is performed from the committed branch state. `idf.py` and `gh` were
+unavailable in the inspected shell, so no new pure ESP-IDF or live-CI result is
+claimed.
 
 No new physical HIL was run. Native tests now cover address forwarding for
 `0x45`, hot-return behavior, and forced phase-specific NACK/timeout/CRC faults;

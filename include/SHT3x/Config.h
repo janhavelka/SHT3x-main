@@ -92,12 +92,12 @@ using HardResetFn = Status (*)(void* user);
 
 /// Millisecond timestamp callback.
 /// @param user User context pointer passed through from Config
-/// @return Current monotonic milliseconds
+/// @return Current monotonic milliseconds modulo 2^32
 using NowMsFn = uint32_t (*)(void* user);
 
 /// Microsecond timestamp callback.
 /// @param user User context pointer passed through from Config
-/// @return Current monotonic microseconds
+/// @return Current monotonic microseconds modulo 2^32
 using NowUsFn = uint32_t (*)(void* user);
 
 /// Cooperative yield callback.
@@ -150,8 +150,8 @@ struct Config {
   HardResetFn hardReset = nullptr;       ///< Optional hard reset (nRESET pulse)
 
   // === Timing Hooks (required by begin/runtime) ===
-  NowMsFn nowMs = nullptr;               ///< Monotonic millisecond source; required for begin/runtime timing
-  NowUsFn nowUs = nullptr;               ///< Monotonic microsecond source; required for command spacing
+  NowMsFn nowMs = nullptr;               ///< Monotonic uint32 scheduler milliseconds; wraps modulo 2^32
+  NowUsFn nowUs = nullptr;               ///< Monotonic uint32 scheduler microseconds; wraps modulo 2^32
   YieldFn cooperativeYield = nullptr;    ///< Cooperative scheduler hint used while waiting for bounded deadlines
   void* timeUser = nullptr;              ///< User context for timing hooks
 
@@ -184,7 +184,6 @@ struct Config {
   uint32_t recoverBackoffMs = 100;                    ///< 0..600000 ms
 
   // === Health Tracking ===
-  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE; ///< Health observation/admission behavior
   uint8_t offlineThreshold = 5;                       ///< Consecutive failures before OFFLINE; 0 normalizes to 1
 
   // === Reset Safety ===
@@ -192,6 +191,9 @@ struct Config {
   bool recoverUseBusReset = true;                     ///< Use bus reset in recover() if callback provided
   bool recoverUseSoftReset = true;                    ///< Use soft reset in recover()
   bool recoverUseHardReset = true;                    ///< Use hard reset in recover() if callback provided
+
+  // === v1.7 Additions (append-only for aggregate initialization compatibility) ===
+  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE; ///< Health observation/admission behavior
 };
 
 } // namespace SHT3x
