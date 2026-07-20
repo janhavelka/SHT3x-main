@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the completed TunnelMonitor suitability audit from the maintained
+  documentation set; its release evidence remains available in Git history.
+
 ## [1.7.0] - 2026-07-19
 
 ### Added
