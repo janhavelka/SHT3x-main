@@ -64,7 +64,6 @@
       "docs/esp-idf.md",
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
-      "docs/hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md",
       "docs/reports/hil-validation-COM20-20260629.md",
       "tools/run_sht3x_hil.py",
       "tools/run_i2c_hil.py"

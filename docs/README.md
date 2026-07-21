@@ -15,7 +15,6 @@ and hardware gates close; older audit material is historical evidence only.
 | [hardware.md](hardware.md) | Hardware validation status, serial HIL runner procedure, evidence checklist, and claim boundary. |
 | [esp-idf.md](esp-idf.md) | ESP-IDF component/example boundary, adapter contract, and validation commands. |
 | [reference/README.md](reference/README.md) | Vendor source-document inventory and local chip notes. |
-| [hil/](hil/) | Curated hardware evidence summaries only. Generated `hil_logs/` output stays local unless deliberately curated. |
 | [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md) | Final maintained COM20 ESP32-S3 hardware report; superseded blocked-attempt reports were removed. |
 | `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` | Repository-only traceable suitability findings, resolutions, and remaining external gates. |
 | `../Doxyfile` | Repository-only strict public API and maintained-documentation reference build. |

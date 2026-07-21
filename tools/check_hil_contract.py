@@ -142,7 +142,7 @@ def main() -> int:
 
     for token in (
         "Target Record Checklist",
-        "Latest curated default serial HIL evidence",
+        "Latest maintained serial HIL evidence",
         "does not validate physical ALERT pin behavior",
         "Final runner verdict values",
     ):

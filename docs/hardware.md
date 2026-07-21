@@ -50,17 +50,6 @@ Latest maintained serial HIL evidence:
 - Long soak: not completed; last health before timeout was `READY`,
   `consecutive_failures=0`, `total_success=862912`, `total_failures=0`
 
-Latest curated default serial HIL evidence from the older COM17 run:
-
-- Summary: [hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md](hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md)
-- Source run: `hil_logs/i2c_20260601T183017Z/summary.md`
-- Branch recorded by runner: `hardening/sht3x-release-readiness-gaps`
-- Code commit recorded by runner: `7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`
-- Firmware metadata: `1.5.0 (7847ed0eb83f, Jun  1 2026 20:13:07, clean)`
-- Port/target: COM17, ESP32-S3, Arduino PlatformIO `esp32s3dev`
-- Expected SHT3x address: `0x44`
-- Final runner verdict: `PASS`
-
 The COM20 evidence covers default serial diagnostics, destructive/reset paths,
 clock-stretch read/serial paths, alert-limit write/readback, all periodic rates,
 ART mode, and a short smoke run. It also captured 862,912 successful driver

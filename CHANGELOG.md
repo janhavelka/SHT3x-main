@@ -14,12 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the restored suitability audit to Doxygen input, enabled undocumented
   public-symbol warnings as errors, moved generated HTML to ignored
   `.doxygen/`, and clarified cooperative progress/timing-hook API comments.
+- Updated the HIL documentation guard to require the maintained COM20 evidence
+  boundary after removing the superseded COM17 summary.
 
 ### Removed
 - Removed three completed prompt-capture files that remained under
   `docs/prompts/` despite the maintained-documentation boundary.
 - Removed two superseded COM20 reports that only recorded blocked pre-validation
   attempts; the final maintained COM20 validation report remains.
+- Removed the older v1.5.0 COM17 summary after the broader v1.6.1 COM20 report
+  superseded its successful default-run evidence.
+- Compacted the maintained suitability audit to current dispositions and open
+  gates; the full pre-implementation assessment remains available at its
+  immutable baseline commit.
 
 ## [1.7.0] - 2026-07-19
 
