@@ -19,7 +19,7 @@ enum class Err : uint8_t {
   MEASUREMENT_NOT_READY,  ///< Sample not yet available
   CONVERSION_NOT_READY = MEASUREMENT_NOT_READY, ///< Alias for cross-library uniformity
   BUSY,                   ///< Device or driver busy
-  IN_PROGRESS,            ///< Operation scheduled; call tick() to complete
+  IN_PROGRESS,            ///< Operation scheduled; advance with pollJob() or compatibility tick()
   COMMAND_FAILED,         ///< Sensor reported last command failed
   WRITE_CRC_ERROR,        ///< Sensor reported write checksum error
   UNSUPPORTED,            ///< Operation not supported (missing callback)

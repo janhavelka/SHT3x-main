@@ -90,6 +90,7 @@
       "*.zip",
       "docs/**/*.pdf",
       "docs/**/*.xlsx",
+      ".doxygen/**",
       "docs/doxygen/**",
       "docs/reference/vendor/**"
     ]

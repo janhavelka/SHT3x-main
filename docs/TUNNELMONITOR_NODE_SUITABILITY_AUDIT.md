@@ -263,9 +263,9 @@ The integration target is narrower than the complete SHT3x feature set.
   recovery loop.
 
 Sources: TunnelMonitor
-[I2C owner policy](../../TunnelMonitor-node/docs/guidelines/i2c_peripherals.md#owner-work-bounds),
-[dependency policy](../../TunnelMonitor-node/docs/guidelines/dependency_policy.md),
-and [I2C configuration](../../TunnelMonitor-node/include/TunnelMonitor/i2c/I2cConfig.h).
+[I2C owner policy](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/docs/guidelines/i2c_peripherals.md#owner-work-bounds),
+[dependency policy](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/docs/guidelines/dependency_policy.md),
+and [I2C configuration](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/include/TunnelMonitor/i2c/I2cConfig.h).
 
 ### Runtime sensor selection and hotplug
 
@@ -289,7 +289,7 @@ aggregate system health. A returned device must be usable without rebooting or
 recreating the whole I2C owner.
 
 Source: TunnelMonitor
-[runtime ENV policy](../../TunnelMonitor-node/docs/guidelines/i2c_peripherals.md#L427).
+[runtime ENV policy](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/docs/guidelines/i2c_peripherals.md#L427).
 
 ### Measurement contract
 
@@ -627,7 +627,7 @@ Severity: **required API improvement for clean integration**
 TunnelMonitor requires milli-degrees Celsius and milli-percent humidity.
 
 Evidence: [SHT3x.h:34-38](../include/SHT3x/SHT3x.h#L34) and TunnelMonitor
-[EnvPowerDisplay.h](../../TunnelMonitor-node/include/TunnelMonitor/contracts/EnvPowerDisplay.h).
+[EnvPowerDisplay.h](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/include/TunnelMonitor/contracts/EnvPowerDisplay.h).
 
 The firmware can currently get raw words and repeat the datasheet formula, but
 that leaves conversion policy in two places. Multiplying the centi result by
@@ -772,10 +772,10 @@ the six-byte measurement read.
 
 Evidence:
 
-- [I2cTask.cpp:2209-2220](../../TunnelMonitor-node/src/i2c/I2cTask.cpp#L2209);
-- [command failure path](../../TunnelMonitor-node/src/i2c/I2cTask.cpp#L2395);
+- [I2cTask.cpp:2209-2220](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/src/i2c/I2cTask.cpp#L2209);
+- [command failure path](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/src/i2c/I2cTask.cpp#L2395);
   and
-- [read failure path](../../TunnelMonitor-node/src/i2c/I2cTask.cpp#L2418).
+- [read failure path](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/src/i2c/I2cTask.cpp#L2418).
 
 This can turn a device that ACKed discovery and then disappeared, timed out, or
 NACKed the measurement read into optional disabled health instead of a real
@@ -801,8 +801,8 @@ Current firmware owns:
 - CRC-8 implementation; and
 - raw-to-milli conversion.
 
-Evidence: [I2cTask.cpp:472-510](../../TunnelMonitor-node/src/i2c/I2cTask.cpp#L472)
-and [I2cTask.cpp:2395-2451](../../TunnelMonitor-node/src/i2c/I2cTask.cpp#L2395).
+Evidence: [I2cTask.cpp:472-510](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/src/i2c/I2cTask.cpp#L472)
+and [I2cTask.cpp:2395-2451](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/src/i2c/I2cTask.cpp#L2395).
 
 Once the library adapter passes parity tests, delete these helpers and phases.
 Keeping both paths would create two sources of chip truth.
@@ -1040,8 +1040,8 @@ RTC/ENV/power/display/FRAM stress also stayed live and bounded.
 
 Sources:
 
-- [400 kHz experiment](../../TunnelMonitor-node/docs/reports/hil-testing/condensed/i2c_400khz_experiment_hil_20260705.md);
-- [400 kHz intensive stress](../../TunnelMonitor-node/docs/reports/hil-testing/condensed/i2c_400khz_payload128_fram124_display64_intensive_stress_20260705.md).
+- [400 kHz experiment](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/docs/reports/hil-testing/condensed/i2c_400khz_experiment_hil_20260705.md);
+- [400 kHz intensive stress](https://github.com/janhavelka/TunnelMonitor-node/blob/fff99fe17e60b9287ec4d8d3eca5b3230ae44223/docs/reports/hil-testing/condensed/i2c_400khz_payload128_fram124_display64_intensive_stress_20260705.md).
 
 The library adapter should match or improve this baseline.
 

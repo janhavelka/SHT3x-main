@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Aligned README, hardware, ESP-IDF, and documentation-index status with the
+  audited v1.7.0 software results while preserving the v1.6.1-only physical
+  hardware claim boundary.
+- Added the restored suitability audit to Doxygen input, enabled undocumented
+  public-symbol warnings as errors, moved generated HTML to ignored
+  `.doxygen/`, and clarified cooperative progress/timing-hook API comments.
+
 ### Removed
 - Removed three completed prompt-capture files that remained under
   `docs/prompts/` despite the maintained-documentation boundary.
+- Removed two superseded COM20 reports that only recorded blocked pre-validation
+  attempts; the final maintained COM20 validation report remains.
 
 ## [1.7.0] - 2026-07-19
 

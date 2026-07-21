@@ -19,7 +19,7 @@ This tree contains the `1.7.0` owner-safe API. Local verification passes the
 116-test native fault/boundary suite, strict framework-neutral core compile,
 repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
 ESP32-S2. Hardware evidence remains the historical v1.6.1 evidence described
-below.
+in the [hardware validation guide](docs/hardware.md).
 
 Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
 in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
@@ -27,9 +27,10 @@ or local ESP-IDF build log.
 
 Hardware validation has explicit boundaries. No new physical-hardware run was
 performed for 1.7.0. The latest maintained COM20 report
-is `docs/reports/hil-validation-COM20-20260629.md`: destructive/all-round
-ESP32-S3 serial HIL passed all executable commands at SHT3x address `0x44`, and
-a post-reboot smoke run passed. The best long attempt reached 862,912
+is [the 2026-06-30 COM20 report](docs/reports/hil-validation-COM20-20260629.md):
+destructive/all-round ESP32-S3 serial HIL passed all executable commands at
+SHT3x address `0x44`, and a post-reboot smoke run passed. The best long attempt
+reached 862,912
 successful driver operations with zero recorded driver failures before a
 host/USB diagnostic CLI timeout. Under the v1.6.1 release criterion, that
 timeout is treated as host diagnostic liveness evidence, not a SHT3x core/I2C
@@ -42,6 +43,12 @@ and generated `include/SHT3x/Version.h`.
 
 Next long HIL run should use the low-USB `i2c_soak <seconds>` firmware command
 through `tools/run_i2c_hil.py --include-soak --soak-duration-s <seconds>`.
+
+A full repository checkout also keeps the repository-only
+`docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`. It records the owner-safe
+design rationale, completed v1.7.0 findings, and remaining external
+integration/hardware gates. It is audit evidence, not a consumer-package
+dependency or a claim that TunnelMonitor was modified.
 
 ## Installation
 
@@ -591,13 +598,13 @@ The driver is **not** thread-safe and must be externally serialized. Do not call
 
 Host tests (requires a native compiler like `g++`):
 
-```
+```bash
 pio test -e native
 ```
 
 Host HIL parser/contract checks (stdlib Python; no pytest required):
 
-```
+```bash
 python tools/test_run_i2c_hil_parser.py
 python tools/run_i2c_hil.py --parser-self-test
 python tools/check_cli_contract.py
@@ -606,9 +613,9 @@ python tools/check_core_timing_guard.py
 python tools/check_idf_example_contract.py
 ```
 
-Firmware build (ESP32-S3 example):
+Arduino firmware builds and package validation:
 
-```
+```bash
 pio run -e esp32s3dev
 pio run -e esp32s2dev
 pio pkg pack
@@ -616,7 +623,7 @@ pio pkg pack
 
 Native ESP-IDF example build (requires an ESP-IDF 5.4+ shell):
 
-```
+```bash
 python tools/check_idf_example_contract.py
 idf.py -C examples/idf/basic set-target esp32s3 build
 idf.py -C examples/idf/basic set-target esp32s2 build
@@ -732,13 +739,24 @@ those rows have real logs and fixture evidence.
 
 ## Documentation
 
-- `CHANGELOG.md` - full release history
-- `docs/README.md` - documentation index
-- `docs/hardware.md` - hardware evidence status and HIL procedure
-- `docs/esp-idf.md` - ESP-IDF component/example notes
-- `docs/reference/sht3x-chip-notes.md` - compact SHT3x source-document notes
+- [CHANGELOG.md](CHANGELOG.md) - full release history
+- [docs/README.md](docs/README.md) - maintained documentation index and claim boundary
+- [docs/hardware.md](docs/hardware.md) - hardware evidence status and HIL procedure
+- [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component/example notes
+- [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - compact SHT3x source-document notes
+- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - repository-only integration suitability evidence
 - Repository-only reference material includes vendor PDFs and the alert
   bit-conversion spreadsheet.
+
+Public API Doxygen comments live in `include/SHT3x/`. In a full repository
+checkout, generate the strict HTML reference from the root with:
+
+```bash
+doxygen Doxyfile
+```
+
+Output is written to ignored `.doxygen/html/`. CI treats malformed references,
+missing parameter documentation, and undocumented public symbols as errors.
 
 ## License
 

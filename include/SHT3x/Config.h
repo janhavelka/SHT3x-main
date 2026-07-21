@@ -156,7 +156,7 @@ struct Config {
   BusResetFn busReset = nullptr;         ///< Optional interface reset callback
   HardResetFn hardReset = nullptr;       ///< Optional hard reset (nRESET pulse)
 
-  // === Timing Hooks (required by begin/runtime) ===
+  // === Timing Hooks (required by bind/begin/runtime) ===
   NowMsFn nowMs = nullptr;               ///< Monotonic uint32 scheduler milliseconds; wraps modulo 2^32
   NowUsFn nowUs = nullptr;               ///< Monotonic uint32 scheduler microseconds; wraps modulo 2^32
   YieldFn cooperativeYield = nullptr;    ///< Cooperative scheduler hint used while waiting for bounded deadlines

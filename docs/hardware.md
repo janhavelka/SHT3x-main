@@ -1,6 +1,6 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-07-01
+Last updated: 2026-07-21
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
@@ -19,10 +19,16 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | Passed locally during `v1.6.1` release preparation. | Test log from the target commit. |
-| Arduino PlatformIO ESP32-S3/S2 builds | Passed locally during `v1.6.1` release preparation. | Build logs from the target commit. |
+| Native tests | PASS, 116/116 on the audited v1.7.0 release state. | Passing live-CI log or a retained local log from the exact publication commit. |
+| Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror` on the audited v1.7.0 release state. | Passing live-CI log from the exact publication commit. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally with the pinned PlatformIO/Espressif32 inputs for v1.7.0. | Build logs from the exact publication commit. |
 | Pure ESP-IDF ESP32-S3/S2 builds | CI configured; local `idf.py` availability depends on the shell. | Passing GitHub CI log or local ESP-IDF 5.4+ build log. |
-| Package validation | `platformio pkg pack` passed locally during `v1.6.1` release preparation. | Package command log and content inspection from the final target commit. |
+| Documentation/package validation | Strict Doxygen and package content inspection passed for the audited v1.7.0 state. | Passing live-CI/package log from the exact publication commit. |
+
+These software results do not upgrade the physical evidence below: all current
+hardware transcripts still exercise v1.6.1 firmware, not v1.7.0. Exact v1.7.0
+software commands, commits, and package scope are recorded in the
+repository-only `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
 
 ## Current Curated Evidence
 
