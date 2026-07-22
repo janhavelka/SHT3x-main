@@ -1,6 +1,6 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-07-01
+Last updated: 2026-07-21
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
@@ -19,10 +19,16 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | Passed locally during `v1.6.1` release preparation. | Test log from the target commit. |
-| Arduino PlatformIO ESP32-S3/S2 builds | Passed locally during `v1.6.1` release preparation. | Build logs from the target commit. |
+| Native tests | PASS, 116/116 on the audited v1.7.0 release state. | Passing live-CI log or a retained local log from the exact publication commit. |
+| Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror` on the audited v1.7.0 release state. | Passing live-CI log from the exact publication commit. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally with the pinned PlatformIO/Espressif32 inputs for v1.7.0. | Build logs from the exact publication commit. |
 | Pure ESP-IDF ESP32-S3/S2 builds | CI configured; local `idf.py` availability depends on the shell. | Passing GitHub CI log or local ESP-IDF 5.4+ build log. |
-| Package validation | `platformio pkg pack` passed locally during `v1.6.1` release preparation. | Package command log and content inspection from the final target commit. |
+| Documentation/package validation | Strict Doxygen and package content inspection passed for the audited v1.7.0 state. | Passing live-CI/package log from the exact publication commit. |
+
+These software results do not upgrade the physical evidence below: all current
+hardware transcripts still exercise v1.6.1 firmware, not v1.7.0. Exact v1.7.0
+software commands, commits, and package scope are recorded in the
+repository-only `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
 
 ## Current Curated Evidence
 
@@ -43,17 +49,6 @@ Latest maintained serial HIL evidence:
   `duration-cycle=670` on diagnostic `stress 500`
 - Long soak: not completed; last health before timeout was `READY`,
   `consecutive_failures=0`, `total_success=862912`, `total_failures=0`
-
-Latest curated default serial HIL evidence from the older COM17 run:
-
-- Summary: [hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md](hil/20260601_arduino_esp32s3_com17_7847ed0_default_hil.md)
-- Source run: `hil_logs/i2c_20260601T183017Z/summary.md`
-- Branch recorded by runner: `hardening/sht3x-release-readiness-gaps`
-- Code commit recorded by runner: `7847ed0eb83fbeeb9f08c4f5ea14c8a8b24756c9`
-- Firmware metadata: `1.5.0 (7847ed0eb83f, Jun  1 2026 20:13:07, clean)`
-- Port/target: COM17, ESP32-S3, Arduino PlatformIO `esp32s3dev`
-- Expected SHT3x address: `0x44`
-- Final runner verdict: `PASS`
 
 The COM20 evidence covers default serial diagnostics, destructive/reset paths,
 clock-stretch read/serial paths, alert-limit write/readback, all periodic rates,

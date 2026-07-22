@@ -14,7 +14,7 @@
 /// @def SHT3X_VERSION_STRING
 /// @brief Semantic version string from library.json.
 #ifndef SHT3X_VERSION_STRING
-#define SHT3X_VERSION_STRING "1.6.1"
+#define SHT3X_VERSION_STRING "1.7.0"
 #endif
 
 /// @def SHT3X_BUILD_DATE
@@ -59,19 +59,19 @@ namespace SHT3x {
 static constexpr uint16_t VERSION_MAJOR = 1;
 
 /// @brief Minor version (backward-compatible features).
-static constexpr uint16_t VERSION_MINOR = 6;
+static constexpr uint16_t VERSION_MINOR = 7;
 
 /// @brief Patch version (backward-compatible fixes).
-static constexpr uint16_t VERSION_PATCH = 1;
+static constexpr uint16_t VERSION_PATCH = 0;
 
 /// @brief Full semantic version string.
 static constexpr const char* VERSION = SHT3X_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 10601;
+static constexpr uint32_t VERSION_CODE = 10700;
 
 /// @brief Backward-compatible alias used by older repositories.
-static constexpr int VERSION_INT = 10601;
+static constexpr int VERSION_INT = 10700;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = SHT3X_BUILD_DATE;

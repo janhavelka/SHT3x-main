@@ -81,23 +81,30 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
 /// Optional bus reset callback (SCL pulse sequence)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
-/// @note Must not recursively call public APIs on the same SHT3x instance.
+/// @note Application-owned shared-bus policy. It must be externally serialized,
+///       bounded by the application, return only after the attempted SCL
+///       sequence completes, and must not recursively call public APIs on the
+///       same SHT3x instance. Synchronous recovery latency includes this bound.
 using BusResetFn = Status (*)(void* user);
 
 /// Optional hard reset callback (nRESET pulse)
 /// @param user User context pointer (Config::i2cUser)
 /// @return Status indicating success or failure
-/// @note Must not recursively call public APIs on the same SHT3x instance.
+/// @note Application-owned reset-pin policy. It must be externally serialized,
+///       bounded by the application, return only after the attempted pulse and
+///       settle procedure completes, and must not recursively call public APIs
+///       on the same SHT3x instance. Synchronous recovery latency includes this
+///       bound.
 using HardResetFn = Status (*)(void* user);
 
 /// Millisecond timestamp callback.
 /// @param user User context pointer passed through from Config
-/// @return Current monotonic milliseconds
+/// @return Current monotonic milliseconds modulo 2^32
 using NowMsFn = uint32_t (*)(void* user);
 
 /// Microsecond timestamp callback.
 /// @param user User context pointer passed through from Config
-/// @return Current monotonic microseconds
+/// @return Current monotonic microseconds modulo 2^32
 using NowUsFn = uint32_t (*)(void* user);
 
 /// Cooperative yield callback.
@@ -134,6 +141,12 @@ enum class Mode : uint8_t {
   ART = 2
 };
 
+/// Driver health admission policy.
+enum class HealthPolicy : uint8_t {
+  OBSERVE_ONLY = 0, ///< Record health diagnostics but never suppress caller-authorized I2C
+  LATCH_OFFLINE = 1 ///< Suppress normal I2C after offlineThreshold consecutive failures
+};
+
 /// Configuration for SHT3x driver
 struct Config {
   // === I2C Transport (required) ===
@@ -143,9 +156,9 @@ struct Config {
   BusResetFn busReset = nullptr;         ///< Optional interface reset callback
   HardResetFn hardReset = nullptr;       ///< Optional hard reset (nRESET pulse)
 
-  // === Timing Hooks (required by begin/runtime) ===
-  NowMsFn nowMs = nullptr;               ///< Monotonic millisecond source; required for begin/runtime timing
-  NowUsFn nowUs = nullptr;               ///< Monotonic microsecond source; required for command spacing
+  // === Timing Hooks (required by bind/begin/runtime) ===
+  NowMsFn nowMs = nullptr;               ///< Monotonic uint32 scheduler milliseconds; wraps modulo 2^32
+  NowUsFn nowUs = nullptr;               ///< Monotonic uint32 scheduler microseconds; wraps modulo 2^32
   YieldFn cooperativeYield = nullptr;    ///< Cooperative scheduler hint used while waiting for bounded deadlines
   void* timeUser = nullptr;              ///< User context for timing hooks
 
@@ -185,6 +198,9 @@ struct Config {
   bool recoverUseBusReset = true;                     ///< Use bus reset in recover() if callback provided
   bool recoverUseSoftReset = true;                    ///< Use soft reset in recover()
   bool recoverUseHardReset = true;                    ///< Use hard reset in recover() if callback provided
+
+  // === v1.7 Additions (append-only for aggregate initialization compatibility) ===
+  HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE; ///< Health observation/admission behavior
 };
 
 } // namespace SHT3x

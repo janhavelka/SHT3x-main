@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Aligned README, hardware, ESP-IDF, and documentation-index status with the
+  audited v1.7.0 software results while preserving the v1.6.1-only physical
+  hardware claim boundary.
+- Added the restored suitability audit to Doxygen input, enabled undocumented
+  public-symbol warnings as errors, moved generated HTML to ignored
+  `.doxygen/`, and clarified cooperative progress/timing-hook API comments.
+- Updated the HIL documentation guard to require the maintained COM20 evidence
+  boundary after removing the superseded COM17 summary.
+
+### Removed
+- Removed three completed prompt-capture files that remained under
+  `docs/prompts/` despite the maintained-documentation boundary.
+- Removed two superseded COM20 reports that only recorded blocked pre-validation
+  attempts; the final maintained COM20 validation report remains.
+- Removed the older v1.5.0 COM17 summary after the broader v1.6.1 COM20 report
+  superseded its successful default-run evidence.
+- Compacted the maintained suitability audit to current dispositions and open
+  gates; the full pre-implementation assessment remains available at its
+  immutable baseline commit.
+
+## [1.7.0] - 2026-07-19
+
+### Added
+- Passive zero-I2C `bind()` lifecycle plus the bounded `requestEnsureIdle()`
+  reconciliation job for external bus-owner tasks.
+- Correlated `JobRequest` and phase-aware `PollJobResult` identity, outcome,
+  deadline, exactly-once terminal, and partial/indeterminate-effect semantics.
+- Zero-I2C `cancelJob()`/`cancelMeasurement()` and `HealthPolicy::OBSERVE_ONLY`.
+- Signed milli-degree Celsius/milli-percent measurement output and conversion
+  helpers using rounded 64-bit integer arithmetic.
+- Separate saturating logical-operation, transport, CRC/protocol, and expected
+  not-ready diagnostics, plus explicit hardware-cache verification state.
+- Pure constexpr transport/protocol/not-ready/absence classifiers for
+  phase-aware external-owner error mapping.
+
+### Changed
+- `pollJob()` now performs at most one transport callback per call, including
+  periodic Fetch Data command/read flows, and bus-silent waits consume no work.
+- Logical health is completed only after the final transfer; intermediate
+  command success no longer erases a preceding failed-read streak.
+- Conversion readiness and sample timestamps are captured after their transport
+  callbacks complete, using wrap-safe microsecond command spacing.
+- Raw command escape hatches explicitly invalidate verified hardware state, and
+  cached transport errors use library-owned static messages.
+- PlatformIO, the ESP32 platform package, and the ESP-IDF CI container are
+  version-pinned. The version generator now synchronizes ESP-IDF and Doxygen
+  metadata in addition to `Version.h`.
+
+### Fixed
+- Fixed fractional-millisecond and microsecond-wrap tIDLE enforcement.
+- Fixed stale-result risk by preserving the previous sample until a complete,
+  CRC-valid, in-deadline replacement frame succeeds.
+- Preserved v1.6 positional aggregate initialization by keeping new `Config`
+  and `SettingsSnapshot` fields append-only; made self-rebind and invalid rebind
+  transactional and zero-I2C.
+- Corrected cooperative terminal effects, post-callback deadline handling,
+  ambiguous-write command spacing, and long-runtime periodic timestamp validity
+  across the uint32 millisecond wrap.
+- Prevented active ensure-idle work from leaking settle timestamps or accepting
+  concurrent configuration mutation, and separated completed late/CRC-invalid
+  frames from genuinely pending or indeterminate hardware effects.
+- Corrected public transaction-count, blocking, health-policy, cancellation,
+  and ownership documentation; superseded the TunnelMonitor suitability audit
+  with traceable finding dispositions.
+- Rejected cooperative reconciliation and synchronous initialization when
+  status verification reports command/write-checksum errors, preserved unread
+  samples across zero-I2C cancellation, and closed long-idle, deadline, and
+  reset-callback timing edge cases.
+- Kept ensure-idle settle deadlines separate from preserved sample metadata and
+  required recovery from unverified state to prove idle acquisition with a
+  reset sequence instead of treating a status probe or interface reset as proof.
+
 ## [1.6.1] - 2026-06-29
 
 ### Added
@@ -263,7 +336,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.4.2...v1.5.0

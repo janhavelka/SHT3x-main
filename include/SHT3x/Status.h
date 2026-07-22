@@ -9,7 +9,7 @@ namespace SHT3x {
 /// Error codes for all SHT3x operations
 enum class Err : uint8_t {
   OK = 0,                 ///< Operation successful
-  NOT_INITIALIZED,        ///< begin() not called
+  NOT_INITIALIZED,        ///< bind()/begin() not called or end() called
   INVALID_CONFIG,         ///< Invalid configuration parameter
   I2C_ERROR,              ///< I2C communication failure (unspecified)
   TIMEOUT,                ///< Driver-side timeout (internal wait/guard)
@@ -19,7 +19,7 @@ enum class Err : uint8_t {
   MEASUREMENT_NOT_READY,  ///< Sample not yet available
   CONVERSION_NOT_READY = MEASUREMENT_NOT_READY, ///< Alias for cross-library uniformity
   BUSY,                   ///< Device or driver busy
-  IN_PROGRESS,            ///< Operation scheduled; call tick() to complete
+  IN_PROGRESS,            ///< Operation scheduled; advance with pollJob() or compatibility tick()
   COMMAND_FAILED,         ///< Sensor reported last command failed
   WRITE_CRC_ERROR,        ///< Sensor reported write checksum error
   UNSUPPORTED,            ///< Operation not supported (missing callback)
@@ -27,8 +27,32 @@ enum class Err : uint8_t {
   I2C_NACK_DATA,           ///< I2C NACK on data
   I2C_NACK_READ,           ///< I2C NACK on read header / no data
   I2C_TIMEOUT,             ///< I2C transaction timeout
-  I2C_BUS                  ///< I2C bus error (SDA stuck, arbitration, etc.)
+  I2C_BUS,                 ///< I2C bus error (SDA stuck, arbitration, etc.)
+  CANCELLED                ///< Cooperative job cancelled locally without I2C
 };
+
+/// True for errors returned directly by an injected I2C transport callback.
+constexpr bool isTransportError(Err error) {
+  return error == Err::I2C_ERROR || error == Err::I2C_NACK_ADDR ||
+         error == Err::I2C_NACK_DATA || error == Err::I2C_NACK_READ ||
+         error == Err::I2C_TIMEOUT || error == Err::I2C_BUS;
+}
+
+/// True for CRC failures or errors explicitly reported by the sensor protocol.
+constexpr bool isProtocolError(Err error) {
+  return error == Err::CRC_MISMATCH || error == Err::COMMAND_FAILED ||
+         error == Err::WRITE_CRC_ERROR;
+}
+
+/// True only for a proven expected measurement-not-ready condition.
+constexpr bool isExpectedNotReady(Err error) {
+  return error == Err::MEASUREMENT_NOT_READY;
+}
+
+/// True only for a presence probe that proved an address was absent.
+constexpr bool isAbsent(Err error) {
+  return error == Err::DEVICE_NOT_FOUND;
+}
 
 /// Status structure returned by all fallible operations
 struct Status {
