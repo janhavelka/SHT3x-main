@@ -645,20 +645,24 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
                 parsed["total_success"] = int(match.group(1))
                 parsed["total_failures"] = int(match.group(2))
     if command.startswith("i2c_soak"):
-        match = re.search(
-            r"\bi2c_soak:\s*ok=(\d+)\s+fail=(\d+)\s+duration_ms=(\d+)"
-            r".*?\bhealth_ok_delta=(\d+)\s+health_fail_delta=(\d+)"
-            r".*?\bstate=([A-Za-z_]+)\s+consec=(\d+)",
-            plain,
-        )
-        if match:
-            parsed["total_success"] = int(match.group(1))
-            parsed["total_failures"] = int(match.group(2))
-            parsed["duration_ms"] = int(match.group(3))
-            parsed["health_ok_delta"] = int(match.group(4))
-            parsed["health_fail_delta"] = int(match.group(5))
-            parsed["state"] = match.group(6).upper()
-            parsed["consecutive_failures"] = int(match.group(7))
+        for key, token in (
+            ("total_success", "ok"),
+            ("total_failures", "fail"),
+            ("duration_ms", "duration_ms"),
+            ("health_ok_delta", "health_ok_delta"),
+            ("health_fail_delta", "health_fail_delta"),
+            ("transport_ok_delta", "transport_ok_delta"),
+            ("transport_fail_delta", "transport_fail_delta"),
+            ("protocol_fail_delta", "protocol_fail_delta"),
+            ("not_ready_delta", "not_ready_delta"),
+            ("consecutive_failures", "consec"),
+        ):
+            value = re.search(rf"\b{token}=(\d+)", plain)
+            if value:
+                parsed[key] = int(value.group(1))
+        state = re.search(r"\bstate=([A-Za-z_]+)", plain)
+        if state:
+            parsed["state"] = state.group(1).upper()
         for key, pattern in (
             ("temperature_min_c", r"\btemp_min=(-?\d+(?:\.\d+)?)"),
             ("temperature_max_c", r"\btemp_max=(-?\d+(?:\.\d+)?)"),
@@ -668,15 +672,6 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
             value = re.search(pattern, plain)
             if value:
                 parsed[key] = float(value.group(1))
-        for key, token in (
-            ("transport_ok_delta", "transport_ok_delta"),
-            ("transport_fail_delta", "transport_fail_delta"),
-            ("protocol_fail_delta", "protocol_fail_delta"),
-            ("not_ready_delta", "not_ready_delta"),
-        ):
-            value = re.search(rf"\b{token}=(\d+)", plain)
-            if value:
-                parsed[key] = int(value.group(1))
         owner = re.search(r"\bowner_api=([^\s]+)", plain)
         if owner:
             parsed["owner_api"] = owner.group(1)

@@ -972,23 +972,30 @@ void runI2cSoak(uint32_t durationS) {
   const uint32_t protocolFailDelta =
       deviceInstance.protocolFailures() - protocolFailBefore;
   const uint32_t notReadyDelta = deviceInstance.totalNotReady() - notReadyBefore;
+  // Keep every record below OutputProxy's fixed formatting buffer. Splitting
+  // the evidence also makes truncation fail visibly at the host token checks.
   Serial.printf(
-      "i2c_soak: ok=%lu fail=%lu duration_ms=%lu temp_min=%.2f temp_max=%.2f "
-      "humidity_min=%.2f humidity_max=%.2f health_ok_delta=%lu "
-      "health_fail_delta=%lu transport_ok_delta=%lu transport_fail_delta=%lu "
-      "protocol_fail_delta=%lu not_ready_delta=%lu state=%s consec=%u "
-      "owner_api=pollJob milli=1\n",
+      "i2c_soak: ok=%lu fail=%lu duration_ms=%lu\n",
       static_cast<unsigned long>(okCount),
       static_cast<unsigned long>(failCount),
-      static_cast<unsigned long>(elapsedMs),
+      static_cast<unsigned long>(elapsedMs));
+  Serial.printf(
+      "i2c_soak: temp_min=%.2f temp_max=%.2f humidity_min=%.2f "
+      "humidity_max=%.2f\n",
       static_cast<double>(hasSample ? minTemp : 0.0f),
       static_cast<double>(hasSample ? maxTemp : 0.0f),
       static_cast<double>(hasSample ? minHumidity : 0.0f),
-      static_cast<double>(hasSample ? maxHumidity : 0.0f),
+      static_cast<double>(hasSample ? maxHumidity : 0.0f));
+  Serial.printf(
+      "i2c_soak: health_ok_delta=%lu health_fail_delta=%lu "
+      "transport_ok_delta=%lu transport_fail_delta=%lu\n",
       static_cast<unsigned long>(successDelta),
       static_cast<unsigned long>(failDelta),
       static_cast<unsigned long>(transportSuccessDelta),
-      static_cast<unsigned long>(transportFailDelta),
+      static_cast<unsigned long>(transportFailDelta));
+  Serial.printf(
+      "i2c_soak: protocol_fail_delta=%lu not_ready_delta=%lu state=%s "
+      "consec=%u owner_api=pollJob milli=1\n",
       static_cast<unsigned long>(protocolFailDelta),
       static_cast<unsigned long>(notReadyDelta),
       stateToStr(deviceInstance.state()),

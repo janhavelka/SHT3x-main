@@ -135,6 +135,8 @@ def main() -> int:
         require_text(shared_cli, text, token)
     if "deviceInstance.tick(" in text:
         fail("Arduino CLI must retain PollJobResult instead of discarding it through tick()")
+    if text.count('"i2c_soak:') < 4:
+        fail("duration-soak evidence must use bounded multi-record output")
 
     for item in MANDATORY_HELP_ITEMS:
         if item not in text:

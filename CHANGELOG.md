@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented false HIL passes for stale firmware, short duration soaks, wrong
   alert readbacks, implausible soak extrema, missing counter evidence, and
   incomplete final restoration; corrected parsing of the 10 mps rate.
+- Split duration-soak evidence into fixed-buffer-safe records and parse each
+  required token independently, preventing long successful runs from losing
+  their final diagnostics to example serial-output truncation.
 - Removed unused duration-soak chunk/recovery options and their dead planner so
   reported settings now correspond to behavior that actually runs.
 

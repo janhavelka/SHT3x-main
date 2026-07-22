@@ -828,6 +828,25 @@ def test_i2c_soak_parser_accepts_zero_failure_summary() -> None:
     assert parsed["owner_api"] == "pollJob"
 
 
+def test_i2c_soak_parser_accepts_bounded_multiline_summary() -> None:
+    spec = hil.i2c_soak_command(3600.0)
+    result, notes, parsed = classify(
+        spec,
+        "i2c_soak: ok=514286 fail=0 duration_ms=3600003\n"
+        "i2c_soak: temp_min=26.79 temp_max=27.16 humidity_min=32.57 "
+        "humidity_max=33.44\n"
+        "i2c_soak: health_ok_delta=514286 health_fail_delta=0 "
+        "transport_ok_delta=1028572 transport_fail_delta=0\n"
+        "i2c_soak: protocol_fail_delta=0 not_ready_delta=0 state=READY "
+        "consec=0 owner_api=pollJob milli=1\n",
+    )
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["duration_ms"] == 3600003
+    assert parsed["health_ok_delta"] == 514286
+    assert parsed["transport_fail_delta"] == 0
+    assert parsed["state"] == "READY"
+
+
 def test_i2c_soak_parser_rejects_health_failure() -> None:
     spec = hil.i2c_soak_command(1.0)
     result, notes, parsed = classify(
