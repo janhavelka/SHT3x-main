@@ -2,7 +2,7 @@
 # Generated and maintained for unified API documentation.
 
 PROJECT_NAME           = "SHT3x"
-PROJECT_NUMBER         = "1.7.0"
+PROJECT_NUMBER         = "1.7.1"
 PROJECT_BRIEF          = "Framework-neutral SHT3x driver API documentation"
 OUTPUT_DIRECTORY       = .doxygen
 CREATE_SUBDIRS         = NO
@@ -32,11 +32,9 @@ REFERENCES_RELATION    = YES
 STRIP_CODE_COMMENTS    = NO
 
 INPUT                  = README.md CHANGELOG.md include \
-                         docs/README.md \
                          docs/hardware.md \
                          docs/esp-idf.md \
                          docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md \
-                         docs/reference/README.md \
                          docs/reference/sht3x-chip-notes.md \
                          docs/reports/hil-validation-COM20-20260629.md
 FILE_PATTERNS          = *.h *.md

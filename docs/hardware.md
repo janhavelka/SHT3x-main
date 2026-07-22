@@ -1,6 +1,6 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-07-21
+Last updated: 2026-07-22
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
@@ -26,7 +26,8 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 | Documentation/package validation | Strict Doxygen and package content inspection passed for the audited v1.7.0 state. | Passing live-CI/package log from the exact publication commit. |
 
 These software results do not upgrade the physical evidence below: all current
-hardware transcripts still exercise v1.6.1 firmware, not v1.7.0. Exact v1.7.0
+hardware transcripts still exercise v1.6.1 firmware, not v1.7.x. Version 1.7.1
+is a documentation and CI patch over the audited v1.7.0 code baseline. Exact
 software commands, commits, and package scope are recorded in the
 repository-only `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
 
@@ -295,4 +296,6 @@ Key constraints:
 - If measurement-system analysis shows both temperature and RH problems, fix
   temperature first because better temperature agreement improves RH agreement.
 
-Source material is listed in [reference/README.md](reference/README.md).
+Source material relevant to the driver is summarized in
+[the maintained chip notes](reference/sht3x-chip-notes.md). The documentation
+index lists the retained vendor source files separately.
