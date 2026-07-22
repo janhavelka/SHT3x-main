@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Excluded nested documentation index files from the Doxygen content input so
   Doxygen 1.9.8 no longer mistakes them for additional main pages.
+- Installed Graphviz alongside Doxygen in CI so the configured API diagrams can
+  be generated on clean Ubuntu runners.
 
 ### Removed
 - Removed three completed prompt-capture files that remained under
