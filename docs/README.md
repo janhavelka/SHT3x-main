@@ -21,10 +21,10 @@ and hardware gates close; older audit material is historical evidence only.
 
 ## Current Status
 
-- Version metadata is `1.7.1` in `library.json`, `idf_component.yml`, Doxyfile,
+- Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
   and generated `include/SHT3x/Version.h`.
-- Version 1.7.1 is a documentation and CI portability patch over the audited
-  v1.7.0 owner-safe code baseline, which passed 116/116 native tests, strict
+- Version 1.7.0 is the owner-safe feature release. Its audited code baseline
+  passed 116/116 native tests, strict
   framework-neutral compilation, repository guards, pinned ESP32-S2/S3 Arduino
   builds, Doxygen-as-error validation, and package inspection. The
   repository-only `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` records exact scope.
@@ -71,10 +71,9 @@ TunnelMonitor suitability audit.
 
 ## Claim Boundary
 
-Safe wording today: v1.7.1 packages the software-hardened and locally
-software-tested v1.7.0 code baseline with documentation and CI fixes. The
-historical v1.6.1 COM20 ESP32-S3 destructive serial HIL plus post-reboot smoke
-passed at address `0x44`. No v1.7.x physical-hardware run was performed.
+Safe wording today: v1.7.0 is software-hardened and locally software-tested.
+The historical v1.6.1 COM20 ESP32-S3 destructive serial HIL plus post-reboot
+smoke passed at address `0x44`. No v1.7.0 physical-hardware run was performed.
 
 Do not claim full hardware validation, physical ALERT pin validation, humidity
 accuracy validation, pure ESP-IDF validation,

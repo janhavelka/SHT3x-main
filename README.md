@@ -15,7 +15,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-This tree contains the `1.7.1` owner-safe API. Local verification passes the
+This tree contains the `1.7.0` owner-safe API. Local verification passes the
 116-test native fault/boundary suite, strict framework-neutral core compile,
 repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
 ESP32-S2. Hardware evidence remains the historical v1.6.1 evidence described
@@ -26,7 +26,7 @@ in this shell. Do not claim pure ESP-IDF validation without a real passing CI lo
 or local ESP-IDF build log.
 
 Hardware validation has explicit boundaries. No new physical-hardware run was
-performed for the v1.7.x code line. The latest maintained COM20 report
+performed for v1.7.0. The latest maintained COM20 report
 is [the 2026-06-30 COM20 report](docs/reports/hil-validation-COM20-20260629.md):
 destructive/all-round ESP32-S3 serial HIL passed all executable commands at
 SHT3x address `0x44`, and a post-reboot smoke run passed. The best long attempt
@@ -38,7 +38,7 @@ failure. ALERT pin behavior, humidity accuracy, fault injection, ESP32-S2
 hardware, address `0x45`, and an uninterrupted 16-hour transcript remain
 pending. Every unexecuted hardware row stays `Not run`.
 
-Version metadata is `1.7.1` in `library.json`, `idf_component.yml`, Doxyfile,
+Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
 
 Next long HIL run should use the low-USB `i2c_soak <seconds>` firmware command

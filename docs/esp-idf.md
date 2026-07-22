@@ -114,7 +114,7 @@ ESP-IDF targets.
 
 ## Validation
 
-Current v1.7.x evidence: the repository-local IDF example/CLI contract guards
+Current v1.7.0 evidence: the repository-local IDF example/CLI contract guards
 pass, and CI defines pinned ESP-IDF 5.4.2 builds for ESP32-S2 and ESP32-S3.
 Pure ESP-IDF software validation requires passing jobs for the exact release
 commit; pure ESP-IDF hardware validation remains open.

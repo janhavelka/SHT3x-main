@@ -7,37 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.7.1] - 2026-07-22
-
-### Changed
-- Aligned README, hardware, ESP-IDF, and documentation-index status with the
-  audited v1.7.0 software results while preserving the v1.6.1-only physical
-  hardware claim boundary.
-- Added the restored suitability audit to Doxygen input, enabled undocumented
-  public-symbol warnings as errors, moved generated HTML to ignored
-  `.doxygen/`, and clarified cooperative progress/timing-hook API comments.
-- Updated the HIL documentation guard to require the maintained COM20 evidence
-  boundary after removing the superseded COM17 summary.
-- Updated GitHub Actions to their Node.js 24-based major versions.
-
-### Fixed
-- Excluded nested documentation index files from the Doxygen content input so
-  Doxygen 1.9.8 no longer mistakes them for additional main pages.
-- Installed Graphviz alongside Doxygen in CI so the configured API diagrams can
-  be generated on clean Ubuntu runners.
-
-### Removed
-- Removed three completed prompt-capture files that remained under
-  `docs/prompts/` despite the maintained-documentation boundary.
-- Removed two superseded COM20 reports that only recorded blocked pre-validation
-  attempts; the final maintained COM20 validation report remains.
-- Removed the older v1.5.0 COM17 summary after the broader v1.6.1 COM20 report
-  superseded its successful default-run evidence.
-- Compacted the maintained suitability audit to current dispositions and open
-  gates; the full pre-implementation assessment remains available at its
-  immutable baseline commit.
-
-## [1.7.0] - 2026-07-19
+## [1.7.0] - 2026-07-22
 
 ### Added
 - Passive zero-I2C `bind()` lifecycle plus the bounded `requestEnsureIdle()`
@@ -64,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PlatformIO, the ESP32 platform package, and the ESP-IDF CI container are
   version-pinned. The version generator now synchronizes ESP-IDF and Doxygen
   metadata in addition to `Version.h`.
+- Aligned README, hardware, ESP-IDF, and documentation-index status with the
+  audited software results while preserving the v1.6.1-only physical hardware
+  claim boundary.
+- Added the restored suitability audit to Doxygen input, enabled undocumented
+  public-symbol warnings as errors, moved generated HTML to ignored
+  `.doxygen/`, and clarified cooperative progress/timing-hook API comments.
+- Updated the HIL documentation guard to require the maintained COM20 evidence
+  boundary after removing the superseded COM17 summary.
+- Updated GitHub Actions to their Node.js 24-based major versions.
 
 ### Fixed
 - Fixed fractional-millisecond and microsecond-wrap tIDLE enforcement.
@@ -88,6 +67,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Kept ensure-idle settle deadlines separate from preserved sample metadata and
   required recovery from unverified state to prove idle acquisition with a
   reset sequence instead of treating a status probe or interface reset as proof.
+- Excluded nested documentation index files from the Doxygen content input so
+  Doxygen 1.9.8 no longer mistakes them for additional main pages.
+- Installed Graphviz alongside Doxygen in CI so the configured API diagrams can
+  be generated on clean Ubuntu runners.
+
+### Removed
+- Removed three completed prompt-capture files that remained under
+  `docs/prompts/` despite the maintained-documentation boundary.
+- Removed two superseded COM20 reports that only recorded blocked pre-validation
+  attempts; the final maintained COM20 validation report remains.
+- Removed the older v1.5.0 COM17 summary after the broader v1.6.1 COM20 report
+  superseded its successful default-run evidence.
+- Compacted the maintained suitability audit to current dispositions and open
+  gates; the full pre-implementation assessment remains available at its
+  immutable baseline commit.
 
 ## [1.6.1] - 2026-06-29
 
@@ -345,8 +339,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.1...HEAD
-[1.7.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...v1.7.1
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...HEAD
 [1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0

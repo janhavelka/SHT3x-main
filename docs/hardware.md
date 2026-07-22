@@ -26,10 +26,11 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 | Documentation/package validation | Strict Doxygen and package content inspection passed for the audited v1.7.0 state. | Passing live-CI/package log from the exact publication commit. |
 
 These software results do not upgrade the physical evidence below: all current
-hardware transcripts still exercise v1.6.1 firmware, not v1.7.x. Version 1.7.1
-is a documentation and CI patch over the audited v1.7.0 code baseline. Exact
-software commands, commits, and package scope are recorded in the
-repository-only `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
+hardware transcripts still exercise v1.6.1 firmware, not v1.7.0. The v1.7.0
+release combines the audited owner-safe code baseline with its final
+documentation and CI corrections. Exact software commands, commits, and
+package scope are recorded in the repository-only
+`TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
 
 ## Current Curated Evidence
 
