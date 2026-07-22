@@ -3,18 +3,19 @@
 ## SHT3x environmental sensor library
 
 - Original audit: 2026-07-18
-- Last updated: 2026-07-21
+- Last updated: 2026-07-22
 
 ## Maintained implementation disposition
 
-This document records the current disposition for the hardening branch. The
+This document records the maintained implementation disposition. The
 full pre-implementation v1.6.1 assessment remains available at its immutable
 baseline commit, linked under **Historical source** below. A finding marked
 implemented here is not a hardware-validation claim. The owner-safe
 implementation and follow-up self-audit fixes are committed as `be2c18a`,
 `000fbd9`, `d79b485`, `5c7af7e`, and `e25046b`; release metadata and primary
-documentation are in `ae61b9e` and `7fe1fca`, with the audited v1.7.0 release
-state closed at `5e478af`.
+documentation are in `ae61b9e` and `7fe1fca`. The published annotated v1.7.0
+tag and `main` are at `5409793f9f6e69f4dcd3b106621653e2a31caf4e`; changes
+between the earlier `5e478af` audit state and that tag were documentation-only.
 Independent core, validation, and traceability reviews drove the follow-up
 fixes. The physical gates listed below remain open.
 
@@ -22,8 +23,8 @@ fixes. The physical gates listed below remain open.
 
 | Repository | Re-audit baseline | Working-tree note |
 | --- | --- | --- |
-| SHT3x | Branch `hardening/tunnelmonitor-suitability-reaudit`, historical audit baseline `cf2ffad8eee28341edce74b05f06c12c8d71f7b6`; v1.6.1 source/tag commit `113ecc67a082c844d062a402412b91eb7980202f`; audited v1.7.0 release/tag commit `5e478afaea5fd1fc525f742e72fc15ca788d1549` | The implementation, release metadata, and independent-review fixes are separated into focused commits on the named branch. |
-| TunnelMonitor-node | Read-only integration baseline `develop` at `0897f12c1a1369367747d1063936906005391580` | No TunnelMonitor change or extra worktree is retained. A short-lived C-01 experiment at `4db59a6` was never merged into `develop`; its local and remote branch were removed on 2026-07-20 at the user's request. |
+| SHT3x | Historical audit baseline `cf2ffad8eee28341edce74b05f06c12c8d71f7b6`; v1.6.1 source/tag commit `113ecc67a082c844d062a402412b91eb7980202f`; published annotated v1.7.0 tag commit `5409793f9f6e69f4dcd3b106621653e2a31caf4e` | The release is on `main`; no separate hardening branch is required for consumption. |
+| TunnelMonitor-node | Read-only planning baseline observed on 2026-07-22: `prompt-45-platformization` at `b9cf56d164e86ed94ca2924f835173236f42638d` | The worktree contained an unrelated active edit in `src/measurement/ProfileSampleBuilder.cpp` and was not modified, built, committed, branched, or reset by this audit. The earlier read-only `develop` baseline and discarded C-01 experiment remain historical evidence only. |
 
 The current TunnelMonitor authority still keeps non-RV3032 I2C chip-library
 dependencies deferred in
@@ -101,6 +102,21 @@ review chunks, not padded into ten artificial commits:
   `cancelJob()` on owner expiry, and milli-unit output. TunnelMonitor remains
   sole owner of discovery, candidate selection, fixed request/result capacity,
   64-bit completion time, retry, health projection, and bus recovery.
+- Initial use and first use after owner recovery must run staged
+  `requestEnsureIdle()` reconciliation; zero-I2C `bind()` alone does not prove
+  physical acquisition state. The binding must supply the required
+  `cooperativeYield` callback even though the owner-safe path does not invoke it.
+- Preserve the owner's 64-bit deadline/completion values while passing the low
+  32 bits into the library's wrap-safe deadline. Validate exact callback byte
+  counts, never retry or recover inside callbacks, and do not advertise
+  `READ_HEADER_NACK` unless the backend can actually distinguish that phase.
+- Only the discovery probe may classify NACK as absence. A NACK after probe
+  success is a transfer failure. Library `READY` is local health/admission
+  state, not presence or application-health proof.
+- The v1.7.0 milli conversion rounds to nearest; the current TunnelMonitor
+  direct codec truncates and can differ by one milli-unit. Integration should
+  adopt `getMeasurementMilli()` and record that intentional precision fix
+  instead of duplicating the legacy conversion.
 
 ### Verification and physical gates
 
@@ -113,7 +129,7 @@ HIL-parser, version-metadata, Doxygen, and diff guards pass. The discarded
 TunnelMonitor C-01 experiment passed its full 1052/1052 native suite and the
 pinned `tunnelmonitor_wifi` production build before removal; that result is
 historical design evidence, not a claim about retained TunnelMonitor code.
-TunnelMonitor `develop` remains unchanged at the baseline above. Independent
+The TunnelMonitor worktree remains outside this library change. Independent
 reviews re-ran focused tests and documentation validation. Final package
 inspection is performed from the committed branch
 state at `5c7af7e`: the archive contains 42 files, is 122,513 bytes, has no

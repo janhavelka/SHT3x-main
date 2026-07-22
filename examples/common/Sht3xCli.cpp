@@ -13,6 +13,7 @@ namespace {
 static constexpr size_t MAX_STRING_LEN = 160U;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 static constexpr uint32_t I2C_SOAK_MAX_SECONDS = 24UL * 60UL * 60UL;
+static constexpr uint32_t MEASUREMENT_JOB_TIMEOUT_MS = 500U;
 
 static constexpr const char* LOG_COLOR_RESET = "\033[0m";
 static constexpr const char* LOG_COLOR_RED = "\033[31m";
@@ -192,6 +193,8 @@ bool configIsReady = false;
 bool verboseMode = false;
 bool pendingRead = false;
 uint32_t pendingStartMs = 0;
+uint32_t pendingRequestId = 0;
+uint32_t nextRequestId = 1;
 int stressRemaining = 0;
 StressStats stressStats;
 
@@ -245,6 +248,7 @@ const char* errToStr(SHT3x::Err err) {
     case Err::I2C_NACK_READ: return "I2C_NACK_READ";
     case Err::I2C_TIMEOUT: return "I2C_TIMEOUT";
     case Err::I2C_BUS: return "I2C_BUS";
+    case Err::CANCELLED: return "CANCELLED";
     default: return "UNKNOWN";
   }
 }
@@ -775,24 +779,88 @@ void finishStressStats() {
   }
 }
 
-SHT3x::Status performMeasurementBlocking(SHT3x::Measurement& out, uint32_t timeoutMs = 500) {
-  SHT3x::Status st = deviceInstance.requestMeasurement();
-  if (st.code == SHT3x::Err::BUSY && !deviceInstance.measurementPending()) {
-    return st;
+uint32_t allocateRequestId() {
+  const uint32_t requestId = nextRequestId++;
+  if (nextRequestId == 0U) {
+    nextRequestId = 1U;
   }
-  if (st.code != SHT3x::Err::IN_PROGRESS && st.code != SHT3x::Err::BUSY) {
+  return requestId;
+}
+
+bool isExpectedMeasurementTerminal(const SHT3x::PollJobResult& result,
+                                   uint32_t requestId) {
+  return result.terminal && result.requestId == requestId &&
+         result.type == SHT3x::JobType::MEASUREMENT;
+}
+
+SHT3x::Status readTerminalMeasurementMilli(const SHT3x::PollJobResult& result,
+                                           uint32_t requestId,
+                                           SHT3x::MeasurementMilli& out) {
+  if (!isExpectedMeasurementTerminal(result, requestId)) {
+    return SHT3x::Status::Error(SHT3x::Err::BUSY,
+                                "Unexpected measurement job identity");
+  }
+  if (result.outcome != SHT3x::JobOutcome::SUCCEEDED || !result.completed ||
+      result.effect != SHT3x::JobEffect::NONE || !result.status.ok()) {
+    return result.status.ok()
+               ? SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                      "Invalid measurement terminal result")
+               : result.status;
+  }
+  return deviceInstance.getMeasurementMilli(out);
+}
+
+SHT3x::Status performMeasurementMilliBlocking(SHT3x::MeasurementMilli& out,
+                                               uint32_t timeoutMs =
+                                                   MEASUREMENT_JOB_TIMEOUT_MS) {
+  const uint32_t startMs = millis();
+  const uint32_t requestId = allocateRequestId();
+  SHT3x::JobRequest request;
+  request.requestId = requestId;
+  request.deadlineMs = startMs + timeoutMs;
+  request.hasDeadline = true;
+
+  SHT3x::Status st = deviceInstance.requestMeasurement(request);
+  if (st.code != SHT3x::Err::IN_PROGRESS) {
     return st;
   }
 
-  const uint32_t start = millis();
-  while ((millis() - start) < timeoutMs) {
-    deviceInstance.tick(millis());
-    if (deviceInstance.measurementReady()) {
-      return deviceInstance.getMeasurement(out);
+  while (true) {
+    const uint32_t nowMs = millis();
+    SHT3x::PollJobResult result;
+    st = deviceInstance.pollJob(nowMs, 1, result);
+    if (result.terminal) {
+      return readTerminalMeasurementMilli(result, requestId, out);
+    }
+    if (st.code != SHT3x::Err::IN_PROGRESS) {
+      return st;
+    }
+    if ((nowMs - startMs) >= timeoutMs) {
+      SHT3x::PollJobResult cancelled;
+      const SHT3x::Status cancelStatus =
+          deviceInstance.cancelJob(SHT3x::CancelReason::DEADLINE_EXPIRED,
+                                   cancelled);
+      if (!isExpectedMeasurementTerminal(cancelled, requestId)) {
+        return SHT3x::Status::Error(SHT3x::Err::BUSY,
+                                    "Unexpected cancelled job identity");
+      }
+      return cancelStatus;
     }
     yield();
   }
-  return SHT3x::Status::Error(SHT3x::Err::TIMEOUT, "measurement timeout", timeoutMs);
+}
+
+SHT3x::Status performMeasurementBlocking(
+    SHT3x::Measurement& out,
+    uint32_t timeoutMs = MEASUREMENT_JOB_TIMEOUT_MS) {
+  SHT3x::MeasurementMilli milli;
+  const SHT3x::Status st = performMeasurementMilliBlocking(milli, timeoutMs);
+  if (!st.ok()) {
+    return st;
+  }
+  out.temperatureC = static_cast<float>(milli.temperatureMilliCelsius) / 1000.0f;
+  out.humidityPct = static_cast<float>(milli.humidityMilliPercent) / 1000.0f;
+  return SHT3x::Status::Ok();
 }
 
 SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
@@ -806,7 +874,11 @@ SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
 }
 
 void runStress(int count) {
-  cancelPending();
+  const SHT3x::Status prepareStatus = cancelPending();
+  if (!prepareStatus.ok()) {
+    printStatus(prepareStatus);
+    return;
+  }
   resetStressStats(count);
   if (verboseMode) {
     logInfo("Starting stress test: %d cycles", count);
@@ -834,11 +906,12 @@ void runStress(int count) {
 }
 
 void runI2cSoak(uint32_t durationS) {
-  cancelPending();
+  const SHT3x::Status prepareStatus = cancelPending();
+  if (!prepareStatus.ok()) {
+    printStatus(prepareStatus);
+    return;
+  }
   const uint32_t durationMs = durationS * 1000UL;
-  const uint32_t startMs = millis();
-  const uint32_t successBefore = deviceInstance.totalSuccess();
-  const uint32_t failBefore = deviceInstance.totalFailures();
   uint32_t okCount = 0;
   uint32_t failCount = 0;
   bool hasSample = false;
@@ -857,6 +930,14 @@ void runI2cSoak(uint32_t durationS) {
       failCount++;
     }
   }
+
+  const uint32_t startMs = millis();
+  const uint32_t successBefore = deviceInstance.totalSuccess();
+  const uint32_t failBefore = deviceInstance.totalFailures();
+  const uint32_t transportSuccessBefore = deviceInstance.transportSuccess();
+  const uint32_t transportFailBefore = deviceInstance.transportFailures();
+  const uint32_t protocolFailBefore = deviceInstance.protocolFailures();
+  const uint32_t notReadyBefore = deviceInstance.totalNotReady();
 
   while (st.ok() && (millis() - startMs) < durationMs) {
     SHT3x::Measurement measurement;
@@ -884,10 +965,19 @@ void runI2cSoak(uint32_t durationS) {
   const uint32_t elapsedMs = millis() - startMs;
   const uint32_t successDelta = deviceInstance.totalSuccess() - successBefore;
   const uint32_t failDelta = deviceInstance.totalFailures() - failBefore;
+  const uint32_t transportSuccessDelta =
+      deviceInstance.transportSuccess() - transportSuccessBefore;
+  const uint32_t transportFailDelta =
+      deviceInstance.transportFailures() - transportFailBefore;
+  const uint32_t protocolFailDelta =
+      deviceInstance.protocolFailures() - protocolFailBefore;
+  const uint32_t notReadyDelta = deviceInstance.totalNotReady() - notReadyBefore;
   Serial.printf(
       "i2c_soak: ok=%lu fail=%lu duration_ms=%lu temp_min=%.2f temp_max=%.2f "
       "humidity_min=%.2f humidity_max=%.2f health_ok_delta=%lu "
-      "health_fail_delta=%lu state=%s consec=%u\n",
+      "health_fail_delta=%lu transport_ok_delta=%lu transport_fail_delta=%lu "
+      "protocol_fail_delta=%lu not_ready_delta=%lu state=%s consec=%u "
+      "owner_api=pollJob milli=1\n",
       static_cast<unsigned long>(okCount),
       static_cast<unsigned long>(failCount),
       static_cast<unsigned long>(elapsedMs),
@@ -897,6 +987,10 @@ void runI2cSoak(uint32_t durationS) {
       static_cast<double>(hasSample ? maxHumidity : 0.0f),
       static_cast<unsigned long>(successDelta),
       static_cast<unsigned long>(failDelta),
+      static_cast<unsigned long>(transportSuccessDelta),
+      static_cast<unsigned long>(transportFailDelta),
+      static_cast<unsigned long>(protocolFailDelta),
+      static_cast<unsigned long>(notReadyDelta),
       stateToStr(deviceInstance.state()),
       static_cast<unsigned>(deviceInstance.consecutiveFailures()));
 }
@@ -919,7 +1013,11 @@ void runStressMix(int count) {
   };
   const int opCount = static_cast<int>(sizeof(stats) / sizeof(stats[0]));
 
-  cancelPending();
+  const SHT3x::Status prepareStatus = cancelPending();
+  if (!prepareStatus.ok()) {
+    printStatus(prepareStatus);
+    return;
+  }
   HealthSnapshot<SHT3x::SHT3x> healthBefore;
   healthBefore.capture(deviceInstance);
   const uint32_t succBefore = deviceInstance.totalSuccess();
@@ -1097,7 +1195,12 @@ void runSelfTest() {
   };
 
   Serial.println("=== SHT3x selftest (safe commands) ===");
-  cancelPending();
+  const SHT3x::Status prepareStatus = cancelPending();
+  if (!prepareStatus.ok()) {
+    printStatus(prepareStatus);
+    Serial.println("Selftest result: pass=0 fail=1 skip=0");
+    return;
+  }
 
   SHT3x::SettingsSnapshot baseline;
   bool haveBaseline = deviceInstance.readSettings(baseline).ok();
@@ -1187,10 +1290,17 @@ void runSelfTest() {
 }
 
 SHT3x::Status scheduleMeasurement() {
-  SHT3x::Status st = deviceInstance.requestMeasurement();
+  const uint32_t startMs = millis();
+  const uint32_t requestId = allocateRequestId();
+  SHT3x::JobRequest request;
+  request.requestId = requestId;
+  request.deadlineMs = startMs + MEASUREMENT_JOB_TIMEOUT_MS;
+  request.hasDeadline = true;
+  SHT3x::Status st = deviceInstance.requestMeasurement(request);
   if (st.code == SHT3x::Err::IN_PROGRESS) {
     pendingRead = true;
-    pendingStartMs = millis();
+    pendingStartMs = startMs;
+    pendingRequestId = requestId;
     if (verboseMode && !stressStats.active) {
       Serial.printf("Measurement requested at %lu ms\n",
                     static_cast<unsigned long>(pendingStartMs));
@@ -1199,14 +1309,16 @@ SHT3x::Status scheduleMeasurement() {
   return st;
 }
 
-void handleMeasurementReady() {
-  if (!pendingRead || !deviceInstance.measurementReady()) {
+void handleMeasurementTerminal(const SHT3x::PollJobResult& result) {
+  if (!pendingRead || !result.terminal) {
     return;
   }
 
-  SHT3x::Measurement m;
-  SHT3x::Status st = deviceInstance.getMeasurement(m);
+  SHT3x::MeasurementMilli milli;
+  const SHT3x::Status st =
+      readTerminalMeasurementMilli(result, pendingRequestId, milli);
   pendingRead = false;
+  pendingRequestId = 0;
 
   if (!st.ok()) {
     if (stressStats.active) {
@@ -1224,9 +1336,19 @@ void handleMeasurementReady() {
       }
     } else {
       printStatus(st);
+      Serial.printf("job: request=%lu phase=%u outcome=%u effect=%u instructions=%u\n",
+                    static_cast<unsigned long>(result.requestId),
+                    static_cast<unsigned>(result.phase),
+                    static_cast<unsigned>(result.outcome),
+                    static_cast<unsigned>(result.effect),
+                    static_cast<unsigned>(result.instructionsUsed));
     }
     return;
   }
+
+  SHT3x::Measurement m;
+  m.temperatureC = static_cast<float>(milli.temperatureMilliCelsius) / 1000.0f;
+  m.humidityPct = static_cast<float>(milli.humidityMilliPercent) / 1000.0f;
 
   if (stressStats.active) {
     updateStressStats(m);
@@ -1388,7 +1510,11 @@ void startPeriodicFromArgs(const CliString& args, const char* label) {
 }
 
 void requestMeasurementCommand(const char* label) {
-  cancelPending();
+  const SHT3x::Status prepareStatus = cancelPending();
+  if (!prepareStatus.ok()) {
+    printLabeledStatus(label, prepareStatus);
+    return;
+  }
   const SHT3x::Status st = scheduleMeasurement();
   printLabeledStatus(label, st);
 }
@@ -1400,7 +1526,11 @@ void singleShotCommand(const CliString& arg) {
     return;
   }
 
-  cancelPending();
+  const SHT3x::Status prepareStatus = cancelPending();
+  if (!prepareStatus.ok()) {
+    printStatus(prepareStatus);
+    return;
+  }
   SHT3x::Status st = deviceInstance.setMode(SHT3x::Mode::SINGLE_SHOT);
   printLabeledStatus("single mode", st);
   if (!st.ok()) {
@@ -1464,7 +1594,11 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "read") {
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     const SHT3x::Status st = scheduleMeasurement();
     if (st.code != SHT3x::Err::IN_PROGRESS) {
       printStatus(st);
@@ -1615,7 +1749,11 @@ void processCommandString(const CliString& cmdLine) {
       return;
     }
 
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     SHT3x::Status st = deviceInstance.setMode(mode);
     printStatus(st);
     return;
@@ -2052,21 +2190,33 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "reset") {
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     SHT3x::Status st = deviceInstance.softReset();
     printStatus(st);
     return;
   }
 
   if (cmd == "defaults") {
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     SHT3x::Status st = deviceInstance.resetToDefaults();
     printStatus(st);
     return;
   }
 
   if (cmd == "restore") {
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     SHT3x::Status st = deviceInstance.resetAndRestore();
     printStatus(st);
     return;
@@ -2099,14 +2249,22 @@ void processCommandString(const CliString& cmdLine) {
       logWarn("Config not ready");
       return;
     }
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     SHT3x::Status st = deviceInstance.begin(configInstance);
     printStatus(st);
     return;
   }
 
   if (cmd == "end") {
-    cancelPending();
+    const SHT3x::Status prepareStatus = cancelPending();
+    if (!prepareStatus.ok()) {
+      printStatus(prepareStatus);
+      return;
+    }
     deviceInstance.end();
     logInfo("Driver ended");
     return;
@@ -2387,7 +2545,17 @@ void processCommand(const char* line) {
 }
 
 void tick() {
-  deviceInstance.tick(millis());
+  if (pendingRead) {
+    SHT3x::PollJobResult result;
+    const SHT3x::Status st = deviceInstance.pollJob(millis(), 1, result);
+    if (result.terminal) {
+      handleMeasurementTerminal(result);
+    } else if (st.code != SHT3x::Err::IN_PROGRESS) {
+      pendingRead = false;
+      pendingRequestId = 0;
+      printStatus(st);
+    }
+  }
 
   if (stressStats.active && stressRemaining > 0 && !pendingRead) {
     const SHT3x::Status st = scheduleMeasurement();
@@ -2405,13 +2573,49 @@ void tick() {
     }
   }
 
-  handleMeasurementReady();
 }
 
-void cancelPending() {
-  pendingRead = false;
+SHT3x::Status cancelPending() {
   stressRemaining = 0;
   stressStats.active = false;
+
+  if (!pendingRead || pendingRequestId == 0U) {
+    return SHT3x::Status::Ok();
+  }
+
+  SHT3x::PollJobResult current;
+  SHT3x::Status st = deviceInstance.pollJob(millis(), 0, current);
+  if (current.terminal) {
+    const uint32_t requestId = pendingRequestId;
+    handleMeasurementTerminal(current);
+    if (!isExpectedMeasurementTerminal(current, requestId)) {
+      return SHT3x::Status::Error(SHT3x::Err::BUSY,
+                                  "CLI does not own terminal job result");
+    }
+    return st;
+  }
+  if (current.requestId != pendingRequestId ||
+      current.type != SHT3x::JobType::MEASUREMENT) {
+    return SHT3x::Status::Error(SHT3x::Err::BUSY,
+                                "CLI does not own active job");
+  }
+  if (current.effect != SHT3x::JobEffect::NONE) {
+    return SHT3x::Status::Error(
+        SHT3x::Err::BUSY,
+        "Measurement has physical effect; wait for terminal result");
+  }
+
+  SHT3x::PollJobResult cancelled;
+  st = deviceInstance.cancelJob(SHT3x::CancelReason::REQUESTED, cancelled);
+  if (!isExpectedMeasurementTerminal(cancelled, pendingRequestId) ||
+      cancelled.outcome != SHT3x::JobOutcome::CANCELLED ||
+      cancelled.effect != SHT3x::JobEffect::NONE) {
+    return SHT3x::Status::Error(SHT3x::Err::BUSY,
+                                "Unexpected cancellation result");
+  }
+  pendingRead = false;
+  pendingRequestId = 0;
+  return st.code == SHT3x::Err::CANCELLED ? SHT3x::Status::Ok() : st;
 }
 
 void logInfo(const char* fmt, ...) {

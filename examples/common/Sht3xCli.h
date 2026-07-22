@@ -41,7 +41,7 @@ void printVersionInfo();
 void printDriverHealth();
 void processCommand(const char* line);
 void tick();
-void cancelPending();
+SHT3x::Status cancelPending();
 
 void logInfo(const char* fmt, ...);
 void logWarn(const char* fmt, ...);

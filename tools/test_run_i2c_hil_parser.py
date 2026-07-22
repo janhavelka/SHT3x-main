@@ -80,7 +80,12 @@ class ReadErrorSerial:
 
 
 def fake_args() -> argparse.Namespace:
-    return argparse.Namespace(expect_address="0x44")
+    return argparse.Namespace(
+        expect_address="0x44",
+        expect_library_version="",
+        expect_library_commit="",
+        allow_dirty_firmware=True,
+    )
 
 
 def classify(spec, text: str):
@@ -97,6 +102,74 @@ def test_pass_command() -> None:
     )
     assert result == hil.RESULT_PASS, notes
     assert parsed["library_version"] == "1.5.0"
+
+
+def test_version_requires_expected_clean_commit() -> None:
+    spec = hil.version_step()
+    text = (
+        "SHT3x library version: 1.7.0\n"
+        "SHT3x library commit: 5409793f9f6e (clean)\n"
+    )
+    parsed = hil.parse_command_output(spec.command, text)
+    args = argparse.Namespace(
+        expect_address="0x44",
+        expect_library_version="1.7.0",
+        expect_library_commit="5409793f9f6e69f4",
+        allow_dirty_firmware=False,
+    )
+    result, notes = hil.classify(text, spec, False, parsed, args)
+    assert result == hil.RESULT_PASS, notes
+    assert parsed["library_commit"] == "5409793f9f6e"
+    assert parsed["library_git_status"] == "clean"
+
+
+def test_version_rejects_stale_or_dirty_firmware() -> None:
+    spec = hil.version_step()
+    args = argparse.Namespace(
+        expect_address="0x44",
+        expect_library_version="1.7.0",
+        expect_library_commit="5409793f9f6e",
+        allow_dirty_firmware=False,
+    )
+    for text, expected_note in (
+        (
+            "SHT3x library version: 1.6.1\n"
+            "SHT3x library commit: 5409793f9f6e (clean)\n",
+            "library version",
+        ),
+        (
+            "SHT3x library version: 1.7.0\n"
+            "SHT3x library commit: deadbeef0000 (clean)\n",
+            "library commit",
+        ),
+        (
+            "SHT3x library version: 1.7.0\n"
+            "SHT3x library commit: 5409793f9f6e (dirty)\n",
+            "firmware git status",
+        ),
+    ):
+        parsed = hil.parse_command_output(spec.command, text)
+        result, notes = hil.classify(text, spec, False, parsed, args)
+        assert result == hil.RESULT_FAIL
+        assert expected_note in notes
+
+
+def test_version_rejects_ambiguous_short_commit() -> None:
+    spec = hil.version_step()
+    text = (
+        "SHT3x library version: 1.7.0\n"
+        "SHT3x library commit: 5 (clean)\n"
+    )
+    parsed = hil.parse_command_output(spec.command, text)
+    args = argparse.Namespace(
+        expect_address="0x44",
+        expect_library_version="1.7.0",
+        expect_library_commit="5409793f9f6e",
+        allow_dirty_firmware=False,
+    )
+    result, notes = hil.classify(text, spec, False, parsed, args)
+    assert result == hil.RESULT_FAIL
+    assert "not a 12-character hexadecimal revision" in notes
 
 
 def test_default_sequence_covers_common_minimum_commands() -> None:
@@ -202,6 +275,36 @@ def test_status_output_parses() -> None:
     assert parsed["status_word"] == "0x8010"
     assert parsed["status_bits"]["alert"] == 1
     assert parsed["status_bits"]["reset"] == 1
+
+
+def test_periodic_rate_ten_is_not_truncated_to_one() -> None:
+    parsed = hil.parse_command_output(
+        "settings",
+        "Periodic rate: 10 mps\n",
+    )
+    assert parsed["periodic_rate"] == "10"
+
+
+def test_alert_readback_requires_expected_raw_word() -> None:
+    spec = next(
+        item for item in hil.alert_write_commands() if item.command == "alert read hs"
+    )
+    result, notes, _ = classify(spec, "Alert HIGH_SET: raw=0x0000\n")
+    assert result == hil.RESULT_FAIL
+    assert "0x0000 != expected 0xCD33" in notes
+
+
+def test_alert_cleanup_requires_disabled_limits() -> None:
+    spec = hil.alert_write_commands()[-1]
+    result, notes, _ = classify(
+        spec,
+        "Alert HIGH_SET: raw=0x0000\n"
+        "Alert HIGH_CLEAR: raw=0x0000\n"
+        "Alert LOW_CLEAR: raw=0x0000\n"
+        "Alert LOW_SET: raw=0x0000\n",
+    )
+    assert result == hil.RESULT_FAIL
+    assert "LOW_SET raw 0x0000 != expected 0xFFFF" in notes
 
 
 def test_status_raw_idf_output_parses() -> None:
@@ -532,6 +635,16 @@ def test_dry_run_verdict_is_incomplete() -> None:
     assert hil.verdict(results, dry_run=True) == hil.VERDICT_INCOMPLETE
 
 
+def test_nonpass_verdicts_are_nonzero_without_explicit_override() -> None:
+    assert hil.verdict_exit_code(hil.VERDICT_PASS, False) == 0
+    assert hil.verdict_exit_code(hil.VERDICT_FAIL, False) == 1
+    assert hil.verdict_exit_code(hil.VERDICT_INCOMPLETE, False) == 2
+    assert hil.verdict_exit_code(hil.VERDICT_OPERATOR, False) == 2
+    assert hil.verdict_exit_code(hil.VERDICT_INCOMPLETE, True) == 0
+    assert hil.verdict_exit_code(hil.VERDICT_OPERATOR, True) == 0
+    assert hil.verdict_exit_code(hil.VERDICT_FAIL, True) == 1
+
+
 def test_dry_run_operator_and_fixture_branches() -> None:
     operator_row = hil.run_dry(hil.operator_specs()[0])
     fixture_row = hil.run_dry(hil.operator_specs()[1])
@@ -701,13 +814,18 @@ def test_i2c_soak_parser_accepts_zero_failure_summary() -> None:
         spec,
         "i2c_soak: ok=64 fail=0 duration_ms=1005 temp_min=24.10 "
         "temp_max=24.40 humidity_min=44.00 humidity_max=44.50 "
-        "health_ok_delta=64 health_fail_delta=0 state=READY consec=0\n",
+        "health_ok_delta=64 health_fail_delta=0 transport_ok_delta=128 "
+        "transport_fail_delta=0 protocol_fail_delta=0 not_ready_delta=0 "
+        "state=READY consec=0 owner_api=pollJob milli=1\n",
     )
     assert result == hil.RESULT_PASS, notes
     assert parsed["total_success"] == 64
     assert parsed["total_failures"] == 0
     assert parsed["health_fail_delta"] == 0
     assert parsed["state"] == "READY"
+    assert parsed["temperature_min_c"] == 24.10
+    assert parsed["transport_ok_delta"] == 128
+    assert parsed["owner_api"] == "pollJob"
 
 
 def test_i2c_soak_parser_rejects_health_failure() -> None:
@@ -716,27 +834,81 @@ def test_i2c_soak_parser_rejects_health_failure() -> None:
         spec,
         "i2c_soak: ok=63 fail=1 duration_ms=1005 temp_min=24.10 "
         "temp_max=24.40 humidity_min=44.00 humidity_max=44.50 "
-        "health_ok_delta=63 health_fail_delta=1 state=DEGRADED consec=1\n",
+        "health_ok_delta=63 health_fail_delta=1 transport_ok_delta=126 "
+        "transport_fail_delta=1 protocol_fail_delta=0 not_ready_delta=0 "
+        "state=DEGRADED consec=1 owner_api=pollJob milli=1\n",
     )
     assert result == hil.RESULT_FAIL
     assert parsed["total_failures"] == 1
     assert "failure token detected" in notes or "i2c_soak failures is nonzero" in notes
 
 
-def test_duration_soak_cycle_specs_are_bounded() -> None:
-    args = argparse.Namespace(
-        soak_chunk_count=8,
-        soak_recover_every=0,
-        timeout=hil.DEFAULT_TIMEOUT_S,
+def test_i2c_soak_rejects_short_duration_and_implausible_extrema() -> None:
+    spec = hil.i2c_soak_command(3600.0)
+    result, notes, _ = classify(
+        spec,
+        "i2c_soak: ok=1 fail=0 duration_ms=1 temp_min=200.00 temp_max=201.00 "
+        "humidity_min=44.00 humidity_max=44.50 health_ok_delta=1 "
+        "health_fail_delta=0 transport_ok_delta=2 transport_fail_delta=0 "
+        "protocol_fail_delta=0 not_ready_delta=0 state=READY consec=0 "
+        "owner_api=pollJob milli=1\n",
     )
-    specs = hil.duration_soak_cycle_specs(args, cycle=6)
+    assert result == hil.RESULT_FAIL
+    assert "duration 1 ms < requested 3600000 ms" in notes
+    assert "temperature extrema outside" in notes
+
+
+def test_final_cleanup_is_deterministic_and_verifiable() -> None:
+    args = hil.parse_args(
+        [
+            "--dry-run",
+            "--include-destructive",
+            "--include-alert-write",
+            "--include-heater",
+            "--include-soak",
+        ]
+    )
+    specs = hil.final_cleanup_specs(args)
     commands = [spec.command for spec in specs]
-    assert "stress 8" in commands
-    assert "stress_mix 4" in commands
-    assert "periodic start 10 high" in commands
-    assert "art start" in commands
-    assert "settings" not in commands
-    assert all(spec.timeout_s >= hil.DEFAULT_TIMEOUT_S for spec in specs)
+    assert commands == [
+        "periodic stop",
+        "heater off",
+        "heater status",
+        "alert disable",
+        "alert show",
+        "clear_status",
+        "mode single",
+        "stretch 0",
+        "repeat high",
+        "drv",
+        "settings",
+    ]
+    assert "settings_baseline" in specs[-1].validators
+
+
+def test_default_builtin_plan_also_has_failure_path_cleanup() -> None:
+    args = hil.parse_args(["--dry-run"])
+    commands = [spec.command for spec in hil.final_cleanup_specs(args)]
+    assert commands == [
+        "periodic stop",
+        "mode single",
+        "stretch 0",
+        "repeat high",
+        "drv",
+        "settings",
+    ]
+
+
+def test_invalid_duration_is_rejected_before_hil_artifacts() -> None:
+    assert hil.main(["--dry-run", "--soak-duration-s", "nan"]) == 2
+    assert hil.main(["--dry-run", "--soak-duration-s", "86401"]) == 2
+    assert hil.main(["--dry-run", "--soak-duration-s", "3600"]) == 2
+
+
+def test_live_hil_requires_exact_expected_identity() -> None:
+    assert hil.main(["--port", "COM19", "--expect-library-version", ""]) == 2
+    assert hil.main(["--port", "COM19", "--expect-library-commit", ""]) == 2
+    assert hil.main(["--port", "COM19", "--expect-library-commit", "abc123"]) == 2
 
 
 def test_parser_self_test() -> None:

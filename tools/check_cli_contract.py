@@ -122,6 +122,20 @@ def main() -> int:
         if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
             fail(f"mandatory command '{cmd}' missing in {shared_cli.as_posix()}")
 
+    for token in (
+        "requestMeasurement(request)",
+        "pollJob(nowMs, 1, result)",
+        "cancelJob(SHT3x::CancelReason::REQUESTED",
+        "getMeasurementMilli(out)",
+        "owner_api=pollJob milli=1",
+        "current.requestId != pendingRequestId",
+        "current.effect != SHT3x::JobEffect::NONE",
+        "Measurement has physical effect; wait for terminal result",
+    ):
+        require_text(shared_cli, text, token)
+    if "deviceInstance.tick(" in text:
+        fail("Arduino CLI must retain PollJobResult instead of discarding it through tick()")
+
     for item in MANDATORY_HELP_ITEMS:
         if item not in text:
             fail(f"mandatory help item '{item}' missing in {shared_cli.as_posix()}")

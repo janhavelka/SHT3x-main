@@ -106,6 +106,15 @@ Hardware run:
 python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
 ```
 
+By default the runner derives the expected library version from `library.json`,
+expects the current checkout commit, and requires firmware built from a clean
+worktree, and a live run is refused when tracked checkout files are dirty.
+Override the identity only deliberately with
+`--expect-library-version`, `--expect-library-commit`, or
+`--allow-dirty-firmware`; the selected and observed values are retained in the
+environment and summary artifacts. A failed version/commit preflight stops the
+run before optional destructive commands.
+
 These commands require a full repository checkout. The PlatformIO package
 payload may exclude `tools/` because it is meant for library consumption, not
 host-side evidence generation.
@@ -199,6 +208,7 @@ and final READY health with zero unexplained failures.
 | `--include-soak --soak-duration-s N` | firmware-side low-USB `i2c_soak N` measurement loop | Only proves the configured duration when the compact summary and final health pass. |
 | `--include-clock-stretch` | stretch-enabled read and serial/EIC | Unsupported or timeout behavior must be recorded explicitly. |
 | `--include-alert-write` | software-visible alert write/readback and cleanup | Does not prove physical ALERT pin transitions. |
+| `--include-heater` | brief heater enable/status/disable plus cleanup verification | Proves the command/status path only, not controlled self-heating performance. |
 | `--include-all-periodic-rates` | additional 4 and 10 mps periodic fetches | Needs final health review and self-heating notes for stronger claims. |
 | `--include-output-tests` | ALERT output operator/GPIO procedure | PASS requires GPIO or logic-analyzer evidence. |
 | `--include-fault-tests` | fault/unplug/CRC-injection procedure | PASS requires safe jig/interposer/emulator or documented manual fault evidence. |
@@ -210,7 +220,18 @@ be recorded as `SKIP_UNSUPPORTED`, not hidden as a pass.
 
 Final runner verdict values are `PASS`, `FAIL`, `OPERATOR_REVIEW_REQUIRED`, and
 `INCOMPLETE`. A `PASS` verdict is limited to the selected automated serial
-groups and attached artifacts.
+groups and attached artifacts. All verdicts except `PASS` return nonzero by
+default; `--allow-incomplete` is an explicit planning-only override for
+`INCOMPLETE` or operator-review runs.
+
+The firmware-side duration path uses nonzero request IDs, absolute deadlines,
+one-callback `pollJob()` steps, zero-I2C cancellation, and milli-unit sample
+readout. Its compact summary passes only when the measurement loop ran for at
+least the requested time, every sample succeeded, logical and transport counts
+agree, protocol/not-ready/transport failures are zero, extrema remain broadly
+plausible, and final driver state is `READY`. This validates the exercised
+sensor/transport path; it does not substitute for a consumer-specific adapter
+test.
 
 ## Target Record Checklist
 
@@ -265,11 +286,15 @@ mode single
 stretch 0
 repeat high
 drv
+settings
 ```
 
-Pass the restore step only if the final state is `READY`, `online` is true, and
-there are no new unexplained consecutive failures. If a fault test leaves the
-sensor disconnected, reconnect first, run `recover`, then run the restore step.
+The runner performs the applicable cleanup automatically after every built-in
+run, including failure paths when serial communication remains available.
+Pass the restore step only if the final state is `READY`, `online` is true,
+settings show single-shot/high-repeatability/no-stretch, and there are no new
+unexplained failures. If a fault test leaves the sensor disconnected, reconnect
+first, run `recover`, then run the restore step.
 
 ## Ambient Humidity Test Notes
 

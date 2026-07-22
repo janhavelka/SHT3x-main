@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added opt-in heater enable/status/disable HIL coverage and deterministic
+  post-run cleanup verification.
+- Added strict HIL firmware identity checks against `library.json`, the current
+  commit, and a clean build by default.
+
+### Changed
+- Refactored the Arduino diagnostic CLI into an explicit cooperative-job owner:
+  nonzero request IDs, absolute deadlines, one-callback `pollJob()` steps,
+  terminal identity/provenance checks, zero-I2C cancellation, and milli-unit
+  sample consumption now cover interactive reads, stress, and duration soaks.
+- Made incomplete and operator-review HIL verdicts return nonzero unless
+  `--allow-incomplete` is explicitly selected.
+
+### Fixed
+- Prevented abandoned CLI measurements from surviving local cancellation or
+  being joined by a later request.
+- Prevented false HIL passes for stale firmware, short duration soaks, wrong
+  alert readbacks, implausible soak extrema, missing counter evidence, and
+  incomplete final restoration; corrected parsing of the 10 mps rate.
+- Removed unused duration-soak chunk/recovery options and their dead planner so
+  reported settings now correspond to behavior that actually runs.
+
 ## [1.7.0] - 2026-07-22
 
 ### Added

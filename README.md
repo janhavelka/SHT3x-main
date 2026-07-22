@@ -721,7 +721,7 @@ Default runner groups cover safe smoke, single-shot low/medium/high,
 status/status_restore, serial/EIC, heater status, alert read/encode/decode,
 selected periodic rates, and ART. Optional groups are gated by
 `--include-destructive`, `--include-bus-wide-reset`, `--include-soak`,
-`--include-clock-stretch`, `--include-alert-write`,
+`--include-clock-stretch`, `--include-alert-write`, `--include-heater`,
 `--include-all-periodic-rates`, `--include-output-tests`, and
 `--include-fault-tests`.
 
@@ -729,6 +729,18 @@ For duration-based soaks, `--include-soak --soak-duration-s <seconds>` uses the
 firmware-side `i2c_soak <seconds>` command. That keeps USB traffic low by
 running repeated SHT3x measurements on the board and emitting one compact,
 parseable summary at the end.
+
+The runner rejects a firmware image whose library version or embedded commit
+does not match the checkout and requires an embedded `clean` status by default.
+Live runs also require the checkout's tracked files to be clean. Use
+`--allow-dirty-firmware` only when deliberately collecting non-release
+development evidence from a dirty checkout or image. Duration-soak acceptance checks the requested elapsed
+time, plausible extrema, logical/transport/protocol counters, and the
+request-ID/`pollJob()`/milli-unit path. Built-in runs finish with a deterministic
+single-shot/no-stretch/high-repeatability cleanup and verification. `FAIL`,
+`INCOMPLETE`, and `OPERATOR_REVIEW_REQUIRED` are nonzero process outcomes;
+`--allow-incomplete` is available for planning workflows that intentionally
+leave fixture/operator rows open.
 
 That list describes current runner capability. A hardware `PASS` claim is
 limited to the selected commands and artifacts in a specific run summary.

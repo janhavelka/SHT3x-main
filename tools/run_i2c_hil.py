@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import datetime as dt
 import json
+import math
 import re
 import subprocess
 import sys
@@ -54,6 +55,7 @@ STRESS_MIX_EXPECTED = ("stress_mix:", "stress_mix summary", "Total:")
 STRESS_VALIDATORS = ("stress_totals", "stress_zero_failures")
 I2C_SOAK_EXPECTED = ("i2c_soak:",)
 I2C_SOAK_VALIDATORS = ("i2c_soak",)
+I2C_SOAK_MAX_SECONDS = 24 * 60 * 60
 
 
 @dataclasses.dataclass(frozen=True)
@@ -77,6 +79,8 @@ class CommandSpec:
     review_only: bool = False
     unsupported_ok: bool = False
     expected_encoded: str | None = None
+    expected_raw: str | None = None
+    expected_alert_limits: tuple[tuple[str, str], ...] = ()
     expected_temperature_c: float | None = None
     expected_humidity_pct: float | None = None
     tolerance: float = 2.0
@@ -204,16 +208,25 @@ def alert_write_commands() -> list[CommandSpec]:
         CommandSpec("alert encode 60 80", "Encode high-set value.", group="alert-write", expected_any=("Alert encoded:", "encoded=0x"), validators=("alert_encoded",), expected_encoded="0xCD33", requires_opt_in="--include-alert-write"),
         CommandSpec("alert decode 0xCD33", "Decode high-set value.", group="alert-write", expected_any=("Alert decoded:", "temperature="), validators=("alert_decoded",), expected_temperature_c=60.0, expected_humidity_pct=80.0, requires_opt_in="--include-alert-write"),
         CommandSpec("alert set hs 60 80", "Write high-set alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0),
-        CommandSpec("alert read hs", "Read high-set alert limit.", group="alert-write", expected_any=("Alert HIGH_SET:", "raw=0x", "alert_HIGH_SET"), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
+        CommandSpec("alert read hs", "Read high-set alert limit.", group="alert-write", expected_any=("Alert HIGH_SET:", "raw=0x", "alert_HIGH_SET"), validators=("alert_read",), expected_raw="0xCD33", requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert set hc 58 79", "Write high-clear alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0),
-        CommandSpec("alert read hc", "Read high-clear alert limit.", group="alert-write", expected_any=("Alert HIGH_CLEAR:", "raw=0x", "alert_HIGH_CLEAR"), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
+        CommandSpec("alert read hc", "Read high-clear alert limit.", group="alert-write", expected_any=("Alert HIGH_CLEAR:", "raw=0x", "alert_HIGH_CLEAR"), validators=("alert_read",), expected_raw="0xC92D", requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert set lc -9 22", "Write low-clear alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0),
-        CommandSpec("alert read lc", "Read low-clear alert limit.", group="alert-write", expected_any=("Alert LOW_CLEAR:", "raw=0x", "alert_LOW_CLEAR"), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
+        CommandSpec("alert read lc", "Read low-clear alert limit.", group="alert-write", expected_any=("Alert LOW_CLEAR:", "raw=0x", "alert_LOW_CLEAR"), validators=("alert_read",), expected_raw="0x3869", requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert set ls -10 20", "Write low-set alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0),
-        CommandSpec("alert read ls", "Read low-set alert limit.", group="alert-write", expected_any=("Alert LOW_SET:", "raw=0x", "alert_LOW_SET"), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
+        CommandSpec("alert read ls", "Read low-set alert limit.", group="alert-write", expected_any=("Alert LOW_SET:", "raw=0x", "alert_LOW_SET"), validators=("alert_read",), expected_raw="0x3466", requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert show", "Record alert limits after writes.", group="alert-write", expected_any=("HIGH_SET", "alert_HIGH_SET", "raw=0x"), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert disable", "Disable alerts as cleanup.", group="alert-write", expected_any=("Status: OK", "alert disable: OK", "alert disable: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0, notes="Cleanup command; this still does not prove physical ALERT pin behavior."),
-        CommandSpec("alert show", "Verify alert cleanup state.", group="alert-write", expected_any=("HIGH_SET", "alert_HIGH_SET", "raw=0x"), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
+        CommandSpec("alert show", "Verify alert cleanup state.", group="alert-write", expected_any=("HIGH_SET", "alert_HIGH_SET", "raw=0x"), validators=("alert_read",), expected_alert_limits=(("HIGH_SET", "0x0000"), ("LOW_SET", "0xFFFF")), requires_opt_in="--include-alert-write", timeout_s=12.0),
+    ]
+
+
+def heater_commands() -> list[CommandSpec]:
+    return [
+        CommandSpec("heater on", "Enable the heater briefly for command/status verification.", group="heater", expected_any=("Status: OK", "heater: OK", "heater: OK code=0"), requires_opt_in="--include-heater", destructive=True),
+        CommandSpec("heater status", "Verify the heater reports enabled.", group="heater", expected_any=("Heater:", "heater="), validators=("heater_on",), requires_opt_in="--include-heater"),
+        CommandSpec("heater off", "Disable the heater immediately after verification.", group="heater", expected_any=("Status: OK", "heater: OK", "heater: OK code=0"), requires_opt_in="--include-heater", destructive=True),
+        CommandSpec("heater status", "Verify heater cleanup.", group="heater", expected_any=("Heater:", "heater="), validators=("heater_off",), requires_opt_in="--include-heater"),
     ]
 
 
@@ -278,6 +291,14 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def library_version() -> str:
+    try:
+        payload = json.loads((repo_root() / "library.json").read_text(encoding="utf-8"))
+        return str(payload["version"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return ""
+
+
 def git_value(*args: str) -> str:
     try:
         return subprocess.run(
@@ -325,6 +346,16 @@ def command_count(command: str) -> int | None:
         return None
 
 
+def requested_soak_duration_ms(command: str) -> int | None:
+    parts = command.split()
+    if len(parts) != 2 or parts[0] != "i2c_soak":
+        return None
+    try:
+        return int(parts[1]) * 1000
+    except ValueError:
+        return None
+
+
 def default_executable_commands() -> list[str]:
     return [step.command for step in DEFAULT_COMMAND_SEQUENCE if step.send]
 
@@ -339,6 +370,7 @@ def opt_in_enabled(flag: str | None, args: argparse.Namespace) -> bool:
         "--include-output-tests": args.include_output_tests,
         "--include-clock-stretch": args.include_clock_stretch,
         "--include-alert-write": args.include_alert_write,
+        "--include-heater": args.include_heater,
         "--include-all-periodic-rates": args.include_all_periodic_rates,
         "--include-bus-wide-reset": args.include_bus_wide_reset,
     }.get(flag, False)
@@ -365,6 +397,7 @@ def all_optional_specs(args: argparse.Namespace) -> list[CommandSpec]:
         *soak_commands(args.soak_count, args.soak_duration_s),
         *clock_stretch_commands(),
         *alert_write_commands(),
+        *heater_commands(),
         *extra_periodic_commands(),
         *benchmark_commands(args.benchmark_count),
         *operator_specs(),
@@ -488,13 +521,22 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
         ("library_full", r"library_full=([^\s]+)"),
         ("firmware_version", r"Example firmware build:\s*([^\r\n]+)"),
         ("firmware_version", r"example_build=([^\r\n]+)"),
-        ("library_commit", r"SHT3x library commit:\s*([^\r\n]+)"),
-        ("library_commit", r"library_commit=([^\r\n]+)"),
     )
     for key, pattern in patterns:
         match = re.search(pattern, plain)
         if match:
             parsed[key] = match.group(1).strip()
+
+    commit = re.search(
+        r"SHT3x library commit:\s*([^\s()]+)\s*\(([^)]+)\)", plain
+    )
+    if not commit:
+        commit = re.search(
+            r"library_commit=([^\s]+)\s+git_status=([^\s]+)", plain
+        )
+    if commit:
+        parsed["library_commit"] = commit.group(1).strip()
+        parsed["library_git_status"] = commit.group(2).strip().lower()
 
     match = re.search(r"Temp:\s*(-?\d+(?:\.\d+)?)\s*C,\s*Humidity:\s*(-?\d+(?:\.\d+)?)\s*%", plain)
     if not match:
@@ -606,7 +648,7 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
         match = re.search(
             r"\bi2c_soak:\s*ok=(\d+)\s+fail=(\d+)\s+duration_ms=(\d+)"
             r".*?\bhealth_ok_delta=(\d+)\s+health_fail_delta=(\d+)"
-            r"\s+state=([A-Za-z_]+)\s+consec=(\d+)",
+            r".*?\bstate=([A-Za-z_]+)\s+consec=(\d+)",
             plain,
         )
         if match:
@@ -617,6 +659,30 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
             parsed["health_fail_delta"] = int(match.group(5))
             parsed["state"] = match.group(6).upper()
             parsed["consecutive_failures"] = int(match.group(7))
+        for key, pattern in (
+            ("temperature_min_c", r"\btemp_min=(-?\d+(?:\.\d+)?)"),
+            ("temperature_max_c", r"\btemp_max=(-?\d+(?:\.\d+)?)"),
+            ("humidity_min_pct", r"\bhumidity_min=(-?\d+(?:\.\d+)?)"),
+            ("humidity_max_pct", r"\bhumidity_max=(-?\d+(?:\.\d+)?)"),
+        ):
+            value = re.search(pattern, plain)
+            if value:
+                parsed[key] = float(value.group(1))
+        for key, token in (
+            ("transport_ok_delta", "transport_ok_delta"),
+            ("transport_fail_delta", "transport_fail_delta"),
+            ("protocol_fail_delta", "protocol_fail_delta"),
+            ("not_ready_delta", "not_ready_delta"),
+        ):
+            value = re.search(rf"\b{token}=(\d+)", plain)
+            if value:
+                parsed[key] = int(value.group(1))
+        owner = re.search(r"\bowner_api=([^\s]+)", plain)
+        if owner:
+            parsed["owner_api"] = owner.group(1)
+        milli = re.search(r"\bmilli=(\d+)", plain)
+        if milli:
+            parsed["milli"] = int(milli.group(1))
     if not command.startswith("stress"):
         match = re.search(r"Total success:\s*(\d+)", plain)
         if not match:
@@ -635,7 +701,7 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     match = re.search(r"\b(?:Repeatability:\s*|repeat=)(low|medium|med|high)", plain, re.IGNORECASE)
     if match:
         parsed["repeatability"] = match.group(1)
-    match = re.search(r"\b(?:Periodic rate:\s*|rate=)(0\.5|0_5|1|2|4|10)", plain, re.IGNORECASE)
+    match = re.search(r"\b(?:Periodic rate:\s*|rate=)(0\.5|0_5|10|4|2|1)(?=\s|$)", plain, re.IGNORECASE)
     if match:
         parsed["periodic_rate"] = match.group(1).replace("_", ".")
     match = re.search(r"\b(?:Clock stretching:\s*|stretch=)(ENABLED|DISABLED|0|1)", plain, re.IGNORECASE)
@@ -659,7 +725,7 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
     alert_words = re.findall(r"(?:alert\s+|Alert\s+)(HIGH_SET|HIGH_CLEAR|LOW_CLEAR|LOW_SET)[: ]+.*?raw=0x([0-9A-Fa-f]{4})", plain)
     if alert_words:
         parsed["alert_limits"] = {name: f"0x{raw.upper()}" for name, raw in alert_words}
-    elif command.startswith("alert read") and "raw=" in plain:
+    if command.startswith("alert read") and "raw=" in plain:
         match = re.search(r"raw=0x([0-9A-Fa-f]{4})", plain)
         if match:
             parsed["alert_raw"] = f"0x{match.group(1).upper()}"
@@ -694,8 +760,31 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
     errors: list[str] = []
     for validator in spec.validators:
         if validator == "version":
-            if not parsed.get("library_version"):
+            actual_version = str(parsed.get("library_version", ""))
+            expected_version = str(getattr(args, "expect_library_version", ""))
+            if not actual_version:
                 errors.append("library version not parsed")
+            elif expected_version and actual_version != expected_version:
+                errors.append(
+                    f"library version {actual_version} != expected {expected_version}"
+                )
+            actual_commit = str(parsed.get("library_commit", "")).strip().lower()
+            expected_commit = str(getattr(args, "expect_library_commit", "")).strip().lower()[:12]
+            if expected_commit:
+                if re.fullmatch(r"[0-9a-f]{12}", actual_commit) is None:
+                    errors.append("library commit is not a 12-character hexadecimal revision")
+                elif re.fullmatch(r"[0-9a-f]{12}", expected_commit) is None:
+                    errors.append("expected library commit is not a 12-character hexadecimal revision")
+                elif actual_commit != expected_commit:
+                    errors.append(
+                        f"library commit {actual_commit} != expected {expected_commit}"
+                    )
+            if not bool(getattr(args, "allow_dirty_firmware", True)):
+                git_status = str(parsed.get("library_git_status", ""))
+                if not git_status:
+                    errors.append("firmware git status not parsed")
+                elif git_status != "clean":
+                    errors.append(f"firmware git status is {git_status}, expected clean")
         elif validator == "expected_address":
             expected_addr = str(args.expect_address).lower()
             seen = [str(addr).lower() for addr in parsed.get("i2c_addresses_seen", [])]
@@ -721,6 +810,20 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
                 errors.append("driver online flag not parsed")
             if online is False:
                 errors.append("driver is not online")
+        elif validator == "settings_baseline":
+            mode = str(parsed.get("mode", "")).lower()
+            repeatability = str(parsed.get("repeatability", "")).lower()
+            stretching = str(parsed.get("clock_stretching", "")).upper()
+            if mode not in ("single", "single_shot"):
+                errors.append(f"final mode is {mode or '<missing>'}, expected single")
+            if repeatability != "high":
+                errors.append(
+                    f"final repeatability is {repeatability or '<missing>'}, expected high"
+                )
+            if stretching != "DISABLED":
+                errors.append(
+                    f"final clock stretching is {stretching or '<missing>'}, expected DISABLED"
+                )
         elif validator == "zero_failures":
             if "consecutive_failures" not in parsed:
                 errors.append("consecutive failures not parsed")
@@ -752,10 +855,48 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
                 errors.append("i2c_soak had no successful measurements")
             if int(parsed.get("total_failures", 0)) != 0:
                 errors.append("i2c_soak failures is nonzero")
-            if int(parsed.get("duration_ms", 0)) <= 0:
+            duration_ms = int(parsed.get("duration_ms", 0))
+            requested_ms = requested_soak_duration_ms(spec.command)
+            if duration_ms <= 0:
                 errors.append("i2c_soak duration not parsed")
+            elif requested_ms is not None and duration_ms < requested_ms:
+                errors.append(
+                    f"i2c_soak duration {duration_ms} ms < requested {requested_ms} ms"
+                )
             if int(parsed.get("health_fail_delta", 0)) != 0:
                 errors.append("i2c_soak health failures is nonzero")
+            success = int(parsed.get("total_success", 0))
+            if int(parsed.get("health_ok_delta", -1)) != success:
+                errors.append("i2c_soak logical success delta does not match samples")
+            if int(parsed.get("transport_ok_delta", -1)) != success * 2:
+                errors.append("i2c_soak transport success delta does not match two transfers per sample")
+            for key, label in (
+                ("transport_fail_delta", "transport failures"),
+                ("protocol_fail_delta", "protocol failures"),
+                ("not_ready_delta", "not-ready responses"),
+            ):
+                if int(parsed.get(key, -1)) != 0:
+                    errors.append(f"i2c_soak {label} is nonzero or not parsed")
+            temp_min = parsed.get("temperature_min_c")
+            temp_max = parsed.get("temperature_max_c")
+            humidity_min = parsed.get("humidity_min_pct")
+            humidity_max = parsed.get("humidity_max_pct")
+            if None in (temp_min, temp_max, humidity_min, humidity_max):
+                errors.append("i2c_soak extrema not parsed")
+            else:
+                if not (TEMP_MIN_C <= float(temp_min) <= float(temp_max) <= TEMP_MAX_C):
+                    errors.append("i2c_soak temperature extrema outside broad plausibility range")
+                if not (
+                    HUMIDITY_MIN_PCT
+                    <= float(humidity_min)
+                    <= float(humidity_max)
+                    <= HUMIDITY_MAX_PCT
+                ):
+                    errors.append("i2c_soak humidity extrema outside broad plausibility range")
+            if parsed.get("owner_api") != "pollJob":
+                errors.append("i2c_soak did not report pollJob owner API")
+            if parsed.get("milli") != 1:
+                errors.append("i2c_soak did not report milli-unit readout")
             state = str(parsed.get("state", "")).upper()
             if state != "READY":
                 errors.append(f"i2c_soak state is {state or '<missing>'}, expected READY")
@@ -786,9 +927,24 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
         elif validator == "heater_off":
             if parsed.get("heater") != "OFF":
                 errors.append("heater is not reported OFF")
+        elif validator == "heater_on":
+            if parsed.get("heater") != "ON":
+                errors.append("heater is not reported ON")
         elif validator == "alert_read":
             if not parsed.get("alert_limits") and not parsed.get("alert_raw"):
                 errors.append("alert limit raw value not parsed")
+            if spec.expected_raw:
+                actual_raw = str(parsed.get("alert_raw", ""))
+                if actual_raw.upper() != spec.expected_raw.upper():
+                    errors.append(
+                        f"alert raw {actual_raw or '<missing>'} != expected {spec.expected_raw}"
+                    )
+            for name, expected in spec.expected_alert_limits:
+                actual = str((parsed.get("alert_limits") or {}).get(name, ""))
+                if actual.upper() != expected.upper():
+                    errors.append(
+                        f"alert {name} raw {actual or '<missing>'} != expected {expected}"
+                    )
         elif validator == "alert_encoded":
             encoded = parsed.get("alert_encoded")
             if not encoded:
@@ -831,14 +987,27 @@ def validate_parsed(spec: CommandSpec, parsed: dict[str, Any], args: argparse.Na
 
 
 def parser_self_test() -> int:
-    args = argparse.Namespace(expect_address="0x44")
+    args = argparse.Namespace(
+        expect_address="0x44",
+        expect_library_version="1.6.0",
+        expect_library_commit="abc123abc123",
+        allow_dirty_firmware=False,
+    )
 
     version = version_step()
     parsed = parse_command_output(
         version.command,
-        "=== Version Info ===\n  SHT3x library version: 1.6.0\n",
+        "=== Version Info ===\n  SHT3x library version: 1.6.0\n"
+        "  SHT3x library commit: abc123abc123 (clean)\n",
     )
-    result, notes = classify("SHT3x library version: 1.6.0\n", version, False, parsed, args)
+    result, notes = classify(
+        "SHT3x library version: 1.6.0\n"
+        "SHT3x library commit: abc123abc123 (clean)\n",
+        version,
+        False,
+        parsed,
+        args,
+    )
     if result != RESULT_PASS:
         raise AssertionError(f"version parser failed: {notes}")
 
@@ -865,9 +1034,21 @@ def parser_self_test() -> int:
         firmware_soak.command,
         "i2c_soak: ok=12 fail=0 duration_ms=1001 temp_min=24.10 "
         "temp_max=24.20 humidity_min=45.00 humidity_max=45.20 "
-        "health_ok_delta=12 health_fail_delta=0 state=READY consec=0\n",
+        "health_ok_delta=12 health_fail_delta=0 transport_ok_delta=24 "
+        "transport_fail_delta=0 protocol_fail_delta=0 not_ready_delta=0 "
+        "state=READY consec=0 owner_api=pollJob milli=1\n",
     )
-    result, notes = classify("i2c_soak: ok=12 fail=0 duration_ms=1001 health_ok_delta=12 health_fail_delta=0 state=READY consec=0\n", firmware_soak, False, parsed, args)
+    result, notes = classify(
+        "i2c_soak: ok=12 fail=0 duration_ms=1001 temp_min=24.10 "
+        "temp_max=24.20 humidity_min=45.00 humidity_max=45.20 "
+        "health_ok_delta=12 health_fail_delta=0 transport_ok_delta=24 "
+        "transport_fail_delta=0 protocol_fail_delta=0 not_ready_delta=0 "
+        "state=READY consec=0 owner_api=pollJob milli=1\n",
+        firmware_soak,
+        False,
+        parsed,
+        args,
+    )
     if result != RESULT_PASS:
         raise AssertionError(f"i2c_soak parser failed: {notes}")
 
@@ -1074,37 +1255,6 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
     return result_row(spec, result, note, time.monotonic() - start, output, reason, parsed)
 
 
-def duration_soak_cycle_specs(args: argparse.Namespace, cycle: int) -> list[CommandSpec]:
-    chunk_count = max(1, args.soak_chunk_count)
-    mix_count = max(1, chunk_count // 2)
-    cycle_note = f"duration-cycle={cycle}"
-    specs = [
-        CommandSpec(f"stress {chunk_count}", "Duration-bound single-shot stress chunk.", group="duration-soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, timeout_s=max(90.0, float(chunk_count) * 3.0), notes=cycle_note),
-        CommandSpec("raw", "Read cached raw sample during duration soak.", group="duration-soak", expected_any=("Raw:", "rawT=0x"), validators=("raw_sample",), notes=cycle_note),
-        CommandSpec("comp", "Read cached fixed-point sample during duration soak.", group="duration-soak", expected_any=("Comp:", "tempC_x100="), validators=("comp_sample",), notes=cycle_note),
-        CommandSpec(f"stress_mix {mix_count}", "Duration-bound mixed-operation stress chunk.", group="duration-soak", expected_any=STRESS_MIX_EXPECTED, validators=STRESS_VALIDATORS, timeout_s=max(90.0, float(mix_count) * 2.0), notes=cycle_note),
-    ]
-    if cycle % 2 == 0:
-        specs.extend([
-            CommandSpec("periodic start 10 high", "Duration-soak 10 mps periodic start.", group="duration-soak", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop", notes=cycle_note),
-            CommandSpec("periodic fetch", "Duration-soak periodic fetch.", group="duration-soak", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), pre_delay_s=0.35, timeout_s=12.0, notes=cycle_note),
-            CommandSpec("periodic stop", "Duration-soak periodic stop.", group="duration-soak", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0"), notes=cycle_note),
-        ])
-    if cycle % 3 == 0:
-        specs.extend([
-            CommandSpec("art start", "Duration-soak ART start.", group="duration-soak", expected_any=("art start: OK", "start_art: OK", "Status: OK", "art start: OK code=0"), recovery_command="art stop", unsupported_ok=True, notes=cycle_note),
-            CommandSpec("art fetch", "Duration-soak ART fetch.", group="duration-soak", expected_any=("Temp:", "temperature="), validators=("measurement_plausible",), pre_delay_s=1.0, timeout_s=12.0, unsupported_ok=True, notes=cycle_note),
-            CommandSpec("art stop", "Duration-soak ART stop.", group="duration-soak", expected_any=("art stop: OK", "stop_periodic: OK", "Status: OK", "art stop: OK code=0"), unsupported_ok=True, notes=cycle_note),
-        ])
-    if args.soak_recover_every > 0 and cycle % args.soak_recover_every == 0:
-        specs.append(CommandSpec("recover", "Optional manual recovery during duration soak.", group="duration-soak", expected_any=("recover: OK", "Status: OK"), timeout_s=20.0, notes=f"{cycle_note} configured by --soak-recover-every"))
-    specs.extend([
-        CommandSpec("probe", "Duration-soak diagnostic probe without health side effect.", group="duration-soak", expected_any=("Status: OK", "probe: OK", "probe: OK code=0"), notes=cycle_note),
-        CommandSpec("drv", "Duration-soak health snapshot.", group="duration-soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), notes=cycle_note),
-    ])
-    return [with_timeout(spec, args.timeout) for spec in specs]
-
-
 def duration_soak_marker(args: argparse.Namespace) -> CommandSpec:
     return CommandSpec(
         f"duration_soak {args.soak_duration_s:.3f}s",
@@ -1112,12 +1262,40 @@ def duration_soak_marker(args: argparse.Namespace) -> CommandSpec:
         group="duration-soak",
         send=False,
         requires_opt_in="--include-soak",
-        notes=(
-            f"mode=firmware-low-usb command=i2c_soak "
-            f"chunk_count={max(1, args.soak_chunk_count)} "
-            f"recover_every={args.soak_recover_every}"
-        ),
+        notes="mode=firmware-low-usb command=i2c_soak owner_api=pollJob",
     )
+
+
+def final_cleanup_specs(args: argparse.Namespace) -> list[CommandSpec]:
+    specs = [
+        CommandSpec("periodic stop", "Final stop of periodic or ART acquisition.", group="cleanup", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
+    ]
+    if args.include_heater:
+        specs.extend(
+            (
+                CommandSpec("heater off", "Final heater cleanup.", group="cleanup", expected_any=("Status: OK", "heater: OK", "heater: OK code=0"), destructive=True),
+                CommandSpec("heater status", "Verify final heater state.", group="cleanup", expected_any=("Heater:", "heater="), validators=("heater_off",)),
+            )
+        )
+    if args.include_alert_write:
+        specs.extend(
+            (
+                CommandSpec("alert disable", "Final alert-limit cleanup.", group="cleanup", expected_any=("Status: OK", "alert disable: OK", "alert disable: OK code=0"), destructive=True, timeout_s=12.0),
+                CommandSpec("alert show", "Verify final alert-limit cleanup.", group="cleanup", expected_any=("HIGH_SET", "alert_HIGH_SET", "raw=0x"), validators=("alert_read",), expected_alert_limits=(("HIGH_SET", "0x0000"), ("LOW_SET", "0xFFFF")), timeout_s=12.0),
+            )
+        )
+    if args.include_destructive:
+        specs.append(CommandSpec("clear_status", "Clear final sticky diagnostic flags.", group="cleanup", expected_any=("Status: OK", "clear_status: OK", "clear_status: OK code=0"), destructive=True))
+    specs.extend(
+        (
+            CommandSpec("mode single", "Restore single-shot mode.", group="cleanup", expected_any=("Status: OK", "mode: OK", "mode: OK code=0")),
+            CommandSpec("stretch 0", "Restore no-stretch operation.", group="cleanup", expected_any=("Status: OK", "stretch: OK", "stretch: OK code=0")),
+            CommandSpec("repeat high", "Restore high repeatability.", group="cleanup", expected_any=("Status: OK", "repeat: OK", "repeat: OK code=0")),
+            CommandSpec("drv", "Verify final driver health.", group="cleanup", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
+            CommandSpec("settings", "Verify final deterministic settings.", group="cleanup", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready", "settings_baseline")),
+        )
+    )
+    return [with_timeout(spec, args.timeout) for spec in specs]
 
 
 def run_duration_soak(ser: object, args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -1139,13 +1317,6 @@ def run_duration_soak(ser: object, args: argparse.Namespace) -> list[dict[str, A
     )
     results.append(result_row(marker, RESULT_PASS, "", elapsed, "", "duration-complete", {}))
     append_progress(args, results[-1])
-    for spec in (
-        CommandSpec("drv", "Final health after duration-bound soak.", group="duration-soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
-        CommandSpec("settings", "Final settings after duration-bound soak.", group="duration-soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",)),
-    ):
-        row = run_serial(ser, with_timeout(spec, args.timeout), args.idle, args)
-        results.append(row)
-        append_progress(args, row)
     return results
 
 
@@ -1175,12 +1346,22 @@ def verdict(results: list[dict[str, Any]], dry_run: bool) -> str:
     return VERDICT_PASS if values == {RESULT_PASS} else VERDICT_INCOMPLETE
 
 
+def verdict_exit_code(final: str, allow_incomplete: bool) -> int:
+    if final == VERDICT_FAIL:
+        return 1
+    if final in (VERDICT_INCOMPLETE, VERDICT_OPERATOR) and not allow_incomplete:
+        return 2
+    return 0
+
+
 def aggregate_parsed(results: list[dict[str, Any]]) -> dict[str, Any]:
     aggregate: dict[str, Any] = {
         "i2c_addresses_seen": [],
         "firmware_version": "",
         "library_version": "",
         "library_full": "",
+        "library_commit": "",
+        "library_git_status": "",
         "serial_eic": "",
         "final_health": {},
         "i2c_soak": {},
@@ -1190,7 +1371,14 @@ def aggregate_parsed(results: list[dict[str, Any]]) -> dict[str, Any]:
         parsed = row.get("parsed") or {}
         for addr in parsed.get("i2c_addresses_seen", []):
             addresses.add(str(addr))
-        for key in ("firmware_version", "library_version", "library_full", "serial_eic"):
+        for key in (
+            "firmware_version",
+            "library_version",
+            "library_full",
+            "library_commit",
+            "library_git_status",
+            "serial_eic",
+        ):
             if parsed.get(key):
                 aggregate[key] = parsed[key]
         if row.get("command") == "drv" and parsed:
@@ -1208,6 +1396,16 @@ def aggregate_parsed(results: list[dict[str, Any]]) -> dict[str, Any]:
                     "duration_ms",
                     "health_ok_delta",
                     "health_fail_delta",
+                    "transport_ok_delta",
+                    "transport_fail_delta",
+                    "protocol_fail_delta",
+                    "not_ready_delta",
+                    "temperature_min_c",
+                    "temperature_max_c",
+                    "humidity_min_pct",
+                    "humidity_max_pct",
+                    "owner_api",
+                    "milli",
                     "state",
                     "consecutive_failures",
                 )
@@ -1308,11 +1506,15 @@ def write_environment(path: Path, args: argparse.Namespace, state: dict[str, str
         fh.write(f"target_name={args.target_name}\n")
         fh.write(f"operator={args.operator}\n")
         fh.write(f"expected_address={args.expect_address}\n")
+        fh.write(f"expected_library_version={args.expect_library_version}\n")
+        fh.write(f"expected_library_commit={args.expect_library_commit}\n")
+        fh.write(f"allow_dirty_firmware={args.allow_dirty_firmware}\n")
         fh.write(f"soak_duration_s={args.soak_duration_s}\n")
-        fh.write(f"soak_chunk_count={args.soak_chunk_count}\n")
         fh.write(f"benchmark_count={args.benchmark_count}\n")
         fh.write(f"firmware_version={aggregate.get('firmware_version', '')}\n")
         fh.write(f"library_version={aggregate.get('library_version', '')}\n")
+        fh.write(f"library_commit={aggregate.get('library_commit', '')}\n")
+        fh.write(f"library_git_status={aggregate.get('library_git_status', '')}\n")
 
 
 def write_operator_artifacts(log_dir: Path, args: argparse.Namespace) -> None:
@@ -1345,6 +1547,8 @@ def write_summary_md(path: Path, args: argparse.Namespace, log_dir: Path, result
         fh.write(f"Board: `{args.board}`\n\nTarget name: `{args.target_name}`\n\nOperator: `{args.operator}`\n\n")
         fh.write(f"Firmware version: `{aggregate.get('firmware_version') or '<not parsed>'}`\n\n")
         fh.write(f"Library version: `{aggregate.get('library_version') or '<not parsed>'}`\n\n")
+        fh.write(f"Library commit: `{aggregate.get('library_commit') or '<not parsed>'}`\n\n")
+        fh.write(f"Firmware git status: `{aggregate.get('library_git_status') or '<not parsed>'}`\n\n")
         fh.write(f"Expected I2C address: `{args.expect_address}`\n\n")
         fh.write(f"I2C addresses seen: `{', '.join(aggregate.get('i2c_addresses_seen', [])) or '<none parsed>'}`\n\n")
         fh.write(f"Dry run: `{args.dry_run}`\n\n")
@@ -1409,10 +1613,11 @@ def write_summary_json(path: Path, args: argparse.Namespace, log_dir: Path, resu
         "operator": args.operator,
         "firmware_version": aggregate.get("firmware_version", ""),
         "library_version": aggregate.get("library_version", ""),
+        "library_commit": aggregate.get("library_commit", ""),
+        "library_git_status": aggregate.get("library_git_status", ""),
         "i2c_addresses_seen": aggregate.get("i2c_addresses_seen", []),
         "expected_address": args.expect_address,
         "soak_duration_s": args.soak_duration_s,
-        "soak_chunk_count": args.soak_chunk_count,
         "benchmark_count": args.benchmark_count,
         "dry_run": args.dry_run,
         "initial_serial_output_present": bool(initial_output),
@@ -1478,14 +1683,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--include-fault-tests", action="store_true")
     parser.add_argument("--include-clock-stretch", action="store_true")
     parser.add_argument("--include-alert-write", action="store_true")
+    parser.add_argument("--include-heater", action="store_true", help="Briefly enable the heater, verify status, and disable it.")
     parser.add_argument("--include-all-periodic-rates", action="store_true")
     parser.add_argument("--include-bus-wide-reset", action="store_true")
     parser.add_argument("--soak-count", type=int, default=100)
     parser.add_argument("--soak-duration-s", type=float, default=0.0)
-    parser.add_argument("--soak-chunk-count", type=int, default=50)
-    parser.add_argument("--soak-recover-every", type=int, default=0, help="Run recover every N duration-soak cycles; 0 disables.")
     parser.add_argument("--benchmark-count", type=int, default=0)
     parser.add_argument("--expect-address", default="0x44")
+    parser.add_argument("--expect-library-version", default=library_version())
+    parser.add_argument("--expect-library-commit", default=git_value("rev-parse", "--short=12", "HEAD"))
+    parser.add_argument("--allow-dirty-firmware", action="store_true", help="Allow a tracked-dirty checkout or firmware build; exact version and commit still must match.")
+    parser.add_argument("--allow-incomplete", action="store_true", help="Return success for INCOMPLETE/operator-review verdicts; the recorded verdict is unchanged.")
     parser.add_argument("--board", default="unspecified")
     parser.add_argument("--target-name", default="unspecified")
     parser.add_argument("--operator", default="unspecified")
@@ -1501,8 +1709,39 @@ def main(argv: list[str]) -> int:
         return 2
     if args.include_bus_wide_reset:
         print("WARNING: --include-bus-wide-reset sends a general-call reset and may reset other I2C devices.", file=sys.stderr)
+    if not math.isfinite(args.soak_duration_s) or not (
+        0.0 <= args.soak_duration_s <= float(I2C_SOAK_MAX_SECONDS)
+    ):
+        print(
+            f"--soak-duration-s must be finite and between 0 and {I2C_SOAK_MAX_SECONDS}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.soak_duration_s > 0.0 and not args.include_soak:
+        print("--soak-duration-s requires --include-soak", file=sys.stderr)
+        return 2
     if not args.dry_run and not args.port:
         print("--port is required unless --dry-run is used", file=sys.stderr)
+        return 2
+    if not args.dry_run:
+        expected_version = args.expect_library_version.strip()
+        expected_commit = args.expect_library_commit.strip().lower()
+        if not expected_version:
+            print("Live HIL requires a non-empty --expect-library-version", file=sys.stderr)
+            return 2
+        if re.fullmatch(r"[0-9a-f]{12}", expected_commit) is None:
+            print(
+                "Live HIL requires --expect-library-commit to be exactly 12 hexadecimal characters",
+                file=sys.stderr,
+            )
+            return 2
+    tracked_changes = git_value("status", "--porcelain", "--untracked-files=no")
+    if not args.dry_run and tracked_changes and not args.allow_dirty_firmware:
+        print(
+            "Live HIL requires a tracked-clean checkout; commit the tested code or use "
+            "--allow-dirty-firmware for development-only evidence.",
+            file=sys.stderr,
+        )
         return 2
 
     log_dir = make_log_dir(Path(args.out))
@@ -1522,22 +1761,35 @@ def main(argv: list[str]) -> int:
             row = run_dry(duration_soak_marker(args))
             results.append(row)
             append_progress(args, row)
+        for spec in final_cleanup_specs(args):
+            row = run_dry(spec)
+            results.append(row)
+            append_progress(args, row)
     else:
         ser = open_serial(args)
+        firmware_identity_ok = True
         try:
             initial_output = drain_initial_output(ser, args.idle)
             for spec in specs:
                 row = run_serial(ser, spec, args.idle, args)
                 results.append(row)
                 append_progress(args, row)
+                if spec.command == "version" and row["result"] != RESULT_PASS:
+                    firmware_identity_ok = False
+                    break
                 recovery = recovery_spec_for(spec)
                 if row["result"] == RESULT_FAIL and recovery is not None:
                     recovery_row = run_serial(ser, recovery, args.idle, args)
                     results.append(recovery_row)
                     append_progress(args, recovery_row)
-            if args.include_soak and args.soak_duration_s > 0.0 and RESULT_FAIL not in {str(row["result"]) for row in results}:
+            if firmware_identity_ok and args.include_soak and args.soak_duration_s > 0.0 and RESULT_FAIL not in {str(row["result"]) for row in results}:
                 results.extend(run_duration_soak(ser, args))
         finally:
+            if firmware_identity_ok and not args.commands:
+                for spec in final_cleanup_specs(args):
+                    row = run_serial(ser, spec, args.idle, args)
+                    results.append(row)
+                    append_progress(args, row)
             ser.close()
 
     state = git_state()
@@ -1554,7 +1806,7 @@ def main(argv: list[str]) -> int:
     print(f"Operator checklist: {log_dir / 'operator_checklist.md'}")
     if args.dry_run:
         print("Dry run only. No physical HIL validation was performed.")
-    return 1 if final == VERDICT_FAIL else 0
+    return verdict_exit_code(final, args.allow_incomplete)
 
 
 if __name__ == "__main__":
