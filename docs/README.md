@@ -16,6 +16,7 @@ and hardware gates close; older audit material is historical evidence only.
 | [esp-idf.md](esp-idf.md) | ESP-IDF component/example boundary, adapter contract, and validation commands. |
 | [reference/README.md](reference/README.md) | Vendor source-document inventory and local chip notes. |
 | [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md) | Final maintained COM20 ESP32-S3 hardware report; superseded blocked-attempt reports were removed. |
+| [reports/hil-validation-COM19-20260722.md](reports/hil-validation-COM19-20260722.md) | v1.7.0 ESP32-S3 functional matrix, strict one-hour soak, and TunnelMonitor integration boundary. |
 | `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` | Repository-only traceable suitability findings, resolutions, and remaining external gates. |
 | `../Doxyfile` | Repository-only strict public API and maintained-documentation reference build. |
 
@@ -32,10 +33,10 @@ and hardware gates close; older audit material is historical evidence only.
   and one-callback `pollJob()` with deadlines, identity, phase, outcome, and
   partial/indeterminate-effect reporting. Synchronous APIs remain bounded
   convenience/diagnostic/maintenance operations.
-- Latest maintained hardware evidence is
-  [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md).
-- That evidence covers COM20 ESP32-S3 destructive serial HIL and post-reboot
-  smoke at address `0x44`; long-soak stability remains incomplete.
+- Latest maintained hardware evidence is the
+  [COM19 v1.7.0 report](reports/hil-validation-COM19-20260722.md): selected
+  functional coverage passed and a strict uninterrupted one-hour soak passed at
+  address `0x44`.
 - Pure ESP-IDF S2/S3 builds are configured in CI. Use a passing CI log or local
   ESP-IDF build log before claiming pure ESP-IDF validation.
 
@@ -71,11 +72,11 @@ TunnelMonitor suitability audit.
 
 ## Claim Boundary
 
-Safe wording today: v1.7.0 is software-hardened and locally software-tested.
-The historical v1.6.1 COM20 ESP32-S3 destructive serial HIL plus post-reboot
-smoke passed at address `0x44`. No v1.7.0 physical-hardware run was performed.
+Safe wording today: v1.7.0 is software-hardened and its selected COM19
+ESP32-S3 functional matrix plus one-hour owner-safe soak passed at address
+`0x44`.
 
 Do not claim full hardware validation, physical ALERT pin validation, humidity
 accuracy validation, pure ESP-IDF validation,
-long-soak stability, release publication, field-proven behavior, or
+multi-day stability, release publication, field-proven behavior, or
 industrial-grade status until the corresponding evidence exists.

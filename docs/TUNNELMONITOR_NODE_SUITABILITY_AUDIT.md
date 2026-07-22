@@ -24,7 +24,7 @@ fixes. The physical gates listed below remain open.
 | Repository | Re-audit baseline | Working-tree note |
 | --- | --- | --- |
 | SHT3x | Historical audit baseline `cf2ffad8eee28341edce74b05f06c12c8d71f7b6`; v1.6.1 source/tag commit `113ecc67a082c844d062a402412b91eb7980202f`; published annotated v1.7.0 tag commit `5409793f9f6e69f4dcd3b106621653e2a31caf4e` | The release is on `main`; no separate hardening branch is required for consumption. |
-| TunnelMonitor-node | Read-only planning baseline observed on 2026-07-22: `prompt-45-platformization` at `b9cf56d164e86ed94ca2924f835173236f42638d` | The worktree contained an unrelated active edit in `src/measurement/ProfileSampleBuilder.cpp` and was not modified, built, committed, branched, or reset by this audit. The earlier read-only `develop` baseline and discarded C-01 experiment remain historical evidence only. |
+| TunnelMonitor-node | Final read-only observation on 2026-07-22: `prompt-45-platformization` at `710d3acd8812704d974f04a76a22bc73efa087ad` | The repository advanced independently during the long HIL work and was clean at the final observation. It was not modified, built, committed, branched, or reset by this audit. The earlier read-only `develop` baseline and discarded C-01 experiment remain historical evidence only. |
 
 The current TunnelMonitor authority still keeps non-RV3032 I2C chip-library
 dependencies deferred in
@@ -130,24 +130,18 @@ TunnelMonitor C-01 experiment passed its full 1052/1052 native suite and the
 pinned `tunnelmonitor_wifi` production build before removal; that result is
 historical design evidence, not a claim about retained TunnelMonitor code.
 The TunnelMonitor worktree remains outside this library change. Independent
-reviews re-ran focused tests and documentation validation. Final package
-inspection is performed from the committed branch
-state at `5c7af7e`: the archive contains 42 files, is 122,513 bytes, has no
-forbidden or missing required entries, and has SHA-256
-`d2bde2392400350a1ae8edbbb97369ebf19649fa64f56f4da8810117a99229ae`.
-The later test-only revision and this final audit file are excluded by
-`library.json`, so committing them does not change those package contents.
-`idf.py` and `gh` were unavailable in the inspected shell, so no new pure
-ESP-IDF or live-CI result is claimed.
+reviews re-ran focused tests and documentation validation. GitHub Actions run
+`29928607190` passes native tests, validate-library, Arduino ESP32-S2/S3, and
+native ESP-IDF ESP32-S2/S3 builds for the exact final diagnostic commit.
 
-No new physical HIL was run. Native tests now cover address forwarding for
-`0x45`, hot-return behavior, and forced phase-specific NACK/timeout/CRC faults;
-that is not physical evidence. Physical `0x45`, hot-unplug/replug/replacement,
-fault injection, ALERT pin behavior, humidity or temperature accuracy,
-ESP32-S2 hardware, pure ESP-IDF hardware, shared-bus fault recovery, and an
-uninterrupted production-duration soak remain open. Existing COM20 evidence
-remains limited to its recorded `0x44` ESP32-S3 scenarios and partial long-run
-boundary.
+The maintained COM19 report records the v1.7.0 selected functional matrix and
+a strict uninterrupted one-hour soak at physical address `0x44`: 514,286
+measurements, 1,028,572 transfers, zero logical/transport/protocol/not-ready
+failures, final `READY`, and deterministic cleanup. This is library/fixture
+evidence, not a claim that the as-yet-unimplemented TunnelMonitor adapter ran.
+Physical `0x45`, hot-unplug/replug/replacement, fault injection, ALERT pin
+behavior, calibrated humidity or temperature accuracy, ESP32-S2 hardware,
+pure ESP-IDF hardware, and shared-bus fault recovery remain open.
 
 ## Historical source
 

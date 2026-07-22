@@ -18,30 +18,26 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 This tree contains the `1.7.0` owner-safe API. Local verification passes the
 116-test native fault/boundary suite, strict framework-neutral core compile,
 repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
-ESP32-S2. Hardware evidence remains the historical v1.6.1 evidence described
-in the [hardware validation guide](docs/hardware.md).
+ESP32-S2. The current COM19 ESP32-S3 evidence is described in the
+[hardware validation guide](docs/hardware.md).
 
-Pure ESP-IDF S2/S3 jobs are configured in CI, but local `idf.py` was unavailable
-in this shell. Do not claim pure ESP-IDF validation without a real passing CI log
-or local ESP-IDF build log.
+GitHub Actions passes native ESP-IDF S2/S3 example builds as well as the native,
+package/documentation, and Arduino S2/S3 jobs for the exact tested diagnostic
+commit.
 
-Hardware validation has explicit boundaries. No new physical-hardware run was
-performed for v1.7.0. The latest maintained COM20 report
-is [the 2026-06-30 COM20 report](docs/reports/hil-validation-COM20-20260629.md):
-destructive/all-round ESP32-S3 serial HIL passed all executable commands at
-SHT3x address `0x44`, and a post-reboot smoke run passed. The best long attempt
-reached 862,912
-successful driver operations with zero recorded driver failures before a
-host/USB diagnostic CLI timeout. Under the v1.6.1 release criterion, that
-timeout is treated as host diagnostic liveness evidence, not a SHT3x core/I2C
-failure. ALERT pin behavior, humidity accuracy, fault injection, ESP32-S2
-hardware, address `0x45`, and an uninterrupted 16-hour transcript remain
-pending. Every unexecuted hardware row stays `Not run`.
+Hardware validation has explicit boundaries. The maintained
+[2026-07-22 COM19 report](docs/reports/hil-validation-COM19-20260722.md)
+records 99 passing selected functional commands plus one unsupported
+interface-reset callback, followed by a strict one-hour `PASS`: 514,286
+measurements, 1,028,572 transfers, and zero logical/transport/protocol/not-ready
+failures. ALERT pin behavior, calibrated accuracy, fault injection, ESP32-S2
+hardware, and address `0x45` remain unproven. Every unexecuted hardware row
+stays `Not run`.
 
 Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
 
-Next long HIL run should use the low-USB `i2c_soak <seconds>` firmware command
+Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
 through `tools/run_i2c_hil.py --include-soak --soak-duration-s <seconds>`.
 
 A full repository checkout also keeps the repository-only

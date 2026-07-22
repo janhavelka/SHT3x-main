@@ -19,72 +19,63 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | PASS, 116/116 on the audited v1.7.0 release state. | Passing live-CI log or a retained local log from the exact publication commit. |
-| Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror` on the audited v1.7.0 release state. | Passing live-CI log from the exact publication commit. |
-| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally with the pinned PlatformIO/Espressif32 inputs for v1.7.0. | Build logs from the exact publication commit. |
-| Pure ESP-IDF ESP32-S3/S2 builds | CI configured; local `idf.py` availability depends on the shell. | Passing GitHub CI log or local ESP-IDF 5.4+ build log. |
-| Documentation/package validation | Strict Doxygen and package content inspection passed for the audited v1.7.0 state. | Passing live-CI/package log from the exact publication commit. |
+| Native tests | PASS, 116/116 on the exact tested diagnostic commit. | Repeat on a future changed core. |
+| Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally and in GitHub Actions with the pinned inputs. | Physical ESP32-S2 execution remains open. |
+| Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions run `29928607190`. | Physical pure-IDF execution remains open. |
+| Documentation/package validation | Strict Doxygen and package validation pass locally and in GitHub Actions. | Repeat for the final publication artifact. |
 
-These software results do not upgrade the physical evidence below: all current
-hardware transcripts still exercise v1.6.1 firmware, not v1.7.0. The v1.7.0
-release combines the audited owner-safe code baseline with its final
-documentation and CI corrections. Exact software commands, commits, and
-package scope are recorded in the repository-only
+These software results do not expand the boundaries of the physical evidence
+below. Exact commands, commits, counters, and untested cases are recorded in
+the curated reports and the repository-only
 `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
 
 ## Current Curated Evidence
 
 Latest maintained serial HIL evidence:
 
-- COM20 report: [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md)
-- Source runs:
-  `hil_logs/i2c_20260630T094139Z/summary.md`,
-  `hil_logs/i2c_20260630T094228Z/summary.md`,
-  `hil_logs/i2c_20260630T094228Z/progress.jsonl`
-- Branch recorded by runner: `main`
-- Code commit recorded by runner: `56ad12e98d43`
-- Firmware metadata: `1.6.1 (56ad12e98d43, Jun 30 2026 11:41:13, clean)`
-- Port/target: COM20, ESP32-S3, Arduino PlatformIO `esp32s3dev`
-- Expected SHT3x address: `0x44`
-- Final short smoke: 47 PASS, 0 FAIL
-- Final long attempt: 5765 PASS, 1 `SKIP_UNSUPPORTED`, 1 FAIL timeout at
-  `duration-cycle=670` on diagnostic `stress 500`
-- Long soak: not completed; last health before timeout was `READY`,
-  `consecutive_failures=0`, `total_success=862912`, `total_failures=0`
+- Current report:
+  [reports/hil-validation-COM19-20260722.md](reports/hil-validation-COM19-20260722.md)
+- Exact diagnostic commit: `524001cad59510aca21003e3c6a738224d640507`,
+  clean firmware, library version `1.7.0`
+- Port/target: COM19, ESP32-S3, Arduino PlatformIO `esp32s3dev`, SHT3x `0x44`
+- Functional matrix: 99 PASS, zero FAIL, one `SKIP_UNSUPPORTED` for the
+  application-provided interface-reset callback
+- Strict one-hour soak: 514,286 measurements and 1,028,572 transfers in
+  3,600,003 ms; zero logical, transport, protocol, or not-ready failures;
+  final `READY`, single-shot/high-repeatability/no-stretch
+- Historical COM20 v1.6.1 evidence remains in
+  [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md).
 
-The COM20 evidence covers default serial diagnostics, destructive/reset paths,
-clock-stretch read/serial paths, alert-limit write/readback, all periodic rates,
-ART mode, and a short smoke run. It also captured 862,912 successful driver
-operations with zero recorded driver failures before the host/USB diagnostic
-CLI timed out. For v1.6.1, that timeout is documented as host diagnostic
-liveness evidence, not as a SHT3x core/I2C failure. It still does not validate physical ALERT pin behavior,
-humidity accuracy, fault injection, ESP32-S2 hardware, address `0x45`, or an
-uninterrupted 16-hour transcript.
+The COM19 evidence covers the selected automatic command surface and an
+uninterrupted owner-safe hour. It does not validate physical ALERT pin behavior,
+calibrated humidity/temperature accuracy, safe fault injection, ESP32-S2
+hardware, address `0x45`, or multi-day/field stability.
 
 ## Evidence Status
 
 | Area | Current result | Evidence |
 | --- | --- | --- |
-| Address probe `0x44` | PASS on COM20 ESP32-S3 | COM20 report |
+| Address probe `0x44` | PASS on COM19 ESP32-S3 | COM19 report |
 | Address probe `0x45` | Not run | Needs serial log |
-| Single-shot low/medium/high no-stretch | PASS on COM20 ESP32-S3 | COM20 report |
-| Single-shot clock stretching | PASS on COM20 ESP32-S3 | COM20 report |
-| Periodic fetch 0.5/1/2 mps | PASS on COM20 ESP32-S3 | COM20 report |
-| Periodic fetch 4/10 mps | PASS on COM20 ESP32-S3 | COM20 report |
-| ART mode | PASS on COM20 ESP32-S3 | COM20 report |
-| Status read/status restore | PASS on COM20 ESP32-S3, without induced ALERT | COM20 report |
-| Status clear | PASS on COM20 ESP32-S3 | COM20 report |
-| Alert read and encode/decode vectors | PASS on COM20 ESP32-S3 | COM20 report |
-| Alert write/read round trip | PASS on COM20 ESP32-S3 with cleanup | COM20 report |
+| Single-shot low/medium/high no-stretch | PASS on COM19 ESP32-S3 | COM19 report |
+| Single-shot clock stretching | PASS on COM19 ESP32-S3 | COM19 report |
+| Periodic fetch 0.5/1/2 mps | PASS on COM19 ESP32-S3 | COM19 report |
+| Periodic fetch 4/10 mps | PASS on COM19 ESP32-S3 | COM19 report |
+| ART mode | PASS on COM19 ESP32-S3 | COM19 report |
+| Status read/status restore | PASS on COM19 ESP32-S3, without induced ALERT | COM19 report |
+| Status clear | PASS on COM19 ESP32-S3 | COM19 report |
+| Alert read and encode/decode vectors | PASS on COM19 ESP32-S3 | COM19 report |
+| Alert write/read round trip | PASS on COM19 ESP32-S3 with exact readback and cleanup | COM19 report |
 | Physical ALERT pin | Not run | Needs GPIO or logic-analyzer evidence |
-| Heater status read | PASS on COM20 ESP32-S3; heater enable not run | COM20 report |
-| Heater enable/disable behavior | Not run | Needs controlled ambient log |
-| Soft reset/recover/restore | PASS on COM20 ESP32-S3 | COM20 report |
-| Interface reset | Unsupported by current firmware callback | COM20 report |
+| Heater status read | PASS on COM19 ESP32-S3 | COM19 report |
+| Heater enable/disable command/status | PASS on COM19 ESP32-S3; controlled self-heating not measured | COM19 report |
+| Soft reset/recover/restore | PASS on COM19 ESP32-S3 | COM19 report |
+| Interface reset | Unsupported by current firmware callback | COM19 report |
 | General-call reset | Not run; bus had other ACKing devices | Needs isolated bus evidence |
 | ESP32-S2 hardware smoke | Not run | Needs ESP32-S2 serial log |
 | Fault injection | Not run | Needs safe jig/interposer/emulator or documented manual fault evidence |
-| Long soak | Partial COM20 I2C evidence only: 862,912 successful driver operations, zero recorded driver failures, then host/USB diagnostic timeout before requested 16 hours | COM20 report; next run should use low-USB `i2c_soak` duration soak |
+| Long soak | Strict uninterrupted one-hour PASS: 514,286 measurements, 1,028,572 transfers, zero failure deltas | COM19 report; multi-day/field evidence remains open |
 | Humidity production fixture | Not run | Needs reference fixture report |
 
 ## Serial Runner

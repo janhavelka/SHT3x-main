@@ -65,6 +65,7 @@
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
       "docs/reports/hil-validation-COM20-20260629.md",
+      "docs/reports/hil-validation-COM19-20260722.md",
       "tools/run_sht3x_hil.py",
       "tools/run_i2c_hil.py"
     ],
