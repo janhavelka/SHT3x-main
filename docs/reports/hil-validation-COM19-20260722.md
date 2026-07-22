@@ -153,4 +153,3 @@ the hashes above are the maintained repository evidence.
 - SHT3x at `0x45`, ESP32-S2 hardware, and pure ESP-IDF execution on this
   physical fixture.
 - Calibrated temperature/humidity accuracy and production environmental range.
-
