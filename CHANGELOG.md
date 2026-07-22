@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   post-run cleanup verification.
 - Added strict HIL firmware identity checks against `library.json`, the current
   commit, and a clean build by default.
-- Added the curated COM19 v1.7.0 functional and strict one-hour HIL report,
-  including the TunnelMonitor-node integration boundary.
+- Added the accepted COM19 v1.7.0 functional and strict one-hour HIL evidence
+  to the maintained hardware guide.
 
 ### Changed
 - Refactored the Arduino diagnostic CLI into an explicit cooperative-job owner:
@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their final diagnostics to example serial-output truncation.
 - Removed unused duration-soak chunk/recovery options and their dead planner so
   reported settings now correspond to behavior that actually runs.
+
+### Removed
+- Removed completed dated HIL reports and the finished suitability audit after
+  consolidating their current evidence and owner contract into evergreen
+  hardware and TunnelMonitor integration guides.
+- Removed two tracked legacy HIL artifact directories, including their full
+  serial transcripts. Generated HIL artifacts remain local and ignored.
 
 ## [1.7.0] - 2026-07-22
 

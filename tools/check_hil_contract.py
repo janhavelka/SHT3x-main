@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Guard the SHT3x serial HIL runner and auditor documentation contract."""
+"""Guard the SHT3x serial HIL runner and maintained documentation contract."""
 
 from __future__ import annotations
 
 import importlib.util
 import py_compile
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,6 +63,21 @@ def read(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         fail(f"missing required file: {path.relative_to(ROOT)}")
+
+
+def check_tracked_hil_artifacts() -> None:
+    result = subprocess.run(
+        ["git", "ls-files", "--", "hil_logs"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        fail(f"cannot inspect tracked HIL artifacts: {result.stderr.strip()}")
+    tracked = [line for line in result.stdout.splitlines() if line.strip()]
+    if tracked:
+        fail(f"generated HIL artifacts must not be tracked: {tracked!r}")
 
 
 def import_runner():
@@ -125,6 +141,7 @@ def main() -> int:
     gitignore_lines = {line.strip() for line in read(GITIGNORE).splitlines()}
     if "hil_logs/" not in gitignore_lines:
         fail(".gitignore must include hil_logs/")
+    check_tracked_hil_artifacts()
 
     hardware_text = read(HARDWARE)
     for token in (

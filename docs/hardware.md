@@ -6,9 +6,10 @@ This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
 behavior, board layout, fixture quality, or sensor accuracy.
 
-No physical HIL validation was performed by a dry run. Physical HIL evidence is
-limited to the serial transcripts and reports listed below. Dry runs remain
-parser/planning checks only.
+No physical HIL validation was performed by a dry run. The exact accepted
+metrics and artifact hashes are maintained below. Full serial transcripts and
+other generated run artifacts stay local and ignored; they are not maintained
+documentation or package content. Dry runs remain parser/planning checks only.
 
 ACK alone is not chip identity. A bus scan proves only that something
 acknowledged an address. Stronger SHT3x evidence is a CRC-checked status read,
@@ -19,33 +20,59 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | PASS, 116/116 on the exact tested diagnostic commit. | Repeat on a future changed core. |
+| Native tests | PASS, 116/116 on the exact tested diagnostic baseline. | Repeat on a future changed core. |
 | Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
 | Arduino PlatformIO ESP32-S3/S2 builds | PASS locally and in GitHub Actions with the pinned inputs. | Physical ESP32-S2 execution remains open. |
-| Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions run `29928607190`. | Physical pure-IDF execution remains open. |
+| Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions for the tested baseline. | Physical pure-IDF execution remains open. |
 | Documentation/package validation | Strict Doxygen and package validation pass locally and in GitHub Actions. | Repeat for the final publication artifact. |
 
 These software results do not expand the boundaries of the physical evidence
-below. Exact commands, commits, counters, and untested cases are recorded in
-the curated reports and the repository-only
-`TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
+below. TunnelMonitor-specific ownership and adapter rules are maintained in
+[tunnelmonitor-integration.md](tunnelmonitor-integration.md).
 
 ## Current Curated Evidence
 
 Latest maintained serial HIL evidence:
 
-- Current report:
-  [reports/hil-validation-COM19-20260722.md](reports/hil-validation-COM19-20260722.md)
-- Exact diagnostic commit: `524001cad59510aca21003e3c6a738224d640507`,
-  clean firmware, library version `1.7.0`
-- Port/target: COM19, ESP32-S3, Arduino PlatformIO `esp32s3dev`, SHT3x `0x44`
-- Functional matrix: 99 PASS, zero FAIL, one `SKIP_UNSUPPORTED` for the
-  application-provided interface-reset callback
+- Core release: annotated tag `v1.7.0` at
+  `5409793f9f6e69f4dcd3b106621653e2a31caf4e`.
+- Exact diagnostic commit: `524001cad59510aca21003e3c6a738224d640507`;
+  firmware identified itself as version `1.7.0`, that commit, and clean.
+- Fixture: COM19 at 115200 baud, ESP32-S3, Arduino PlatformIO `esp32s3dev`,
+  SHT3x at `0x44`, serial/EIC `0x29075EB0`. Other ACK addresses were `0x3C`,
+  `0x41`, `0x50`, and `0x51`.
+- Functional selection: 100 rows total. 99 executable commands passed, zero
+  failed, and the application-provided `iface_reset` callback was the sole
+  `SKIP_UNSUPPORTED` row. The runner therefore retained an `INCOMPLETE`
+  aggregate verdict instead of hiding the unsupported row.
+- Functional coverage included single-shot low/medium/high with and without
+  clock stretching; periodic fetch at 0.5/1/2/4/10 mps; ART; CRC-protected
+  measurement, status, and EIC paths; status restore/clear; alert vectors and
+  write/readback cleanup; heater on/status/off; soft reset, restoration,
+  self-test, recovery, stress, mixed stress, and a 1000-sample benchmark.
 - Strict one-hour soak: 514,286 measurements and 1,028,572 transfers in
-  3,600,003 ms; zero logical, transport, protocol, or not-ready failures;
-  final `READY`, single-shot/high-repeatability/no-stretch
-- Historical COM20 v1.6.1 evidence remains in
-  [reports/hil-validation-COM20-20260629.md](reports/hil-validation-COM20-20260629.md).
+  3,600,003 ms firmware time (3,600.485 s observed by the host), with zero
+  logical, transport, protocol, or expected-not-ready failures. Temperature
+  remained 26.51..27.03 C and RH 33.35..34.35 %. The run used nonzero request
+  identity, `pollJob()`, and milli-unit readout, then finished `READY` in
+  single-shot/high-repeatability/no-stretch mode.
+
+The first complete one-hour attempt exposed one diagnostic-only defect: its
+single summary line exceeded the example's fixed output buffer, so final
+diagnostic tokens were truncated even though all sensor transfers succeeded.
+The output was split into bounded records, parser regression coverage was
+added, a short physical proof passed, and the full strict hour above was rerun
+successfully. No `include/` or `src/` change was required.
+
+Ignored local artifact integrity for the accepted runs is retained by SHA-256:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| One-hour `summary.json` | `7ba58e6898c3c01348043bb143bfef052822365cd6366b492f72c9b0339224ab` |
+| One-hour `serial_transcript.txt` | `5c03cf1172f2016df2e19979fdf9def626262fdf11f56ed2f447164454f252db` |
+| One-hour `progress.jsonl` | `07082a08243142e4584c7370902eca697d3a9208a9565ea2108d334d9a9f260a` |
+| Functional `summary.json` | `d619b68cf92c52b9a55d798a4222e00d8adc42dc8c1c5dc759710dcfd3766702` |
+| Functional `serial_transcript.txt` | `4ab2852499d8a270fb88b9304c4b07109436b72bbe0e21f3512f7a94e6de105d` |
 
 The COM19 evidence covers the selected automatic command surface and an
 uninterrupted owner-safe hour. It does not validate physical ALERT pin behavior,
@@ -56,26 +83,26 @@ hardware, address `0x45`, or multi-day/field stability.
 
 | Area | Current result | Evidence |
 | --- | --- | --- |
-| Address probe `0x44` | PASS on COM19 ESP32-S3 | COM19 report |
+| Address probe `0x44` | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
 | Address probe `0x45` | Not run | Needs serial log |
-| Single-shot low/medium/high no-stretch | PASS on COM19 ESP32-S3 | COM19 report |
-| Single-shot clock stretching | PASS on COM19 ESP32-S3 | COM19 report |
-| Periodic fetch 0.5/1/2 mps | PASS on COM19 ESP32-S3 | COM19 report |
-| Periodic fetch 4/10 mps | PASS on COM19 ESP32-S3 | COM19 report |
-| ART mode | PASS on COM19 ESP32-S3 | COM19 report |
-| Status read/status restore | PASS on COM19 ESP32-S3, without induced ALERT | COM19 report |
-| Status clear | PASS on COM19 ESP32-S3 | COM19 report |
-| Alert read and encode/decode vectors | PASS on COM19 ESP32-S3 | COM19 report |
-| Alert write/read round trip | PASS on COM19 ESP32-S3 with exact readback and cleanup | COM19 report |
+| Single-shot low/medium/high no-stretch | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Single-shot clock stretching | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Periodic fetch 0.5/1/2 mps | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Periodic fetch 4/10 mps | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| ART mode | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Status read/status restore | PASS on COM19 ESP32-S3, without induced ALERT | 2026-07-22 accepted run above |
+| Status clear | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Alert read and encode/decode vectors | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Alert write/read round trip | PASS on COM19 ESP32-S3 with exact readback and cleanup | 2026-07-22 accepted run above |
 | Physical ALERT pin | Not run | Needs GPIO or logic-analyzer evidence |
-| Heater status read | PASS on COM19 ESP32-S3 | COM19 report |
-| Heater enable/disable command/status | PASS on COM19 ESP32-S3; controlled self-heating not measured | COM19 report |
-| Soft reset/recover/restore | PASS on COM19 ESP32-S3 | COM19 report |
-| Interface reset | Unsupported by current firmware callback | COM19 report |
+| Heater status read | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Heater enable/disable command/status | PASS on COM19 ESP32-S3; controlled self-heating not measured | 2026-07-22 accepted run above |
+| Soft reset/recover/restore | PASS on COM19 ESP32-S3 | 2026-07-22 accepted run above |
+| Interface reset | Unsupported by current firmware callback | Explicit `SKIP_UNSUPPORTED` above |
 | General-call reset | Not run; bus had other ACKing devices | Needs isolated bus evidence |
 | ESP32-S2 hardware smoke | Not run | Needs ESP32-S2 serial log |
 | Fault injection | Not run | Needs safe jig/interposer/emulator or documented manual fault evidence |
-| Long soak | Strict uninterrupted one-hour PASS: 514,286 measurements, 1,028,572 transfers, zero failure deltas | COM19 report; multi-day/field evidence remains open |
+| Long soak | Strict uninterrupted one-hour PASS: 514,286 measurements, 1,028,572 transfers, zero failure deltas | Accepted run above; multi-day/field evidence remains open |
 | Humidity production fixture | Not run | Needs reference fixture report |
 
 ## Serial Runner
@@ -106,9 +133,9 @@ Override the identity only deliberately with
 environment and summary artifacts. A failed version/commit preflight stops the
 run before optional destructive commands.
 
-These commands require a full repository checkout. The PlatformIO package
-payload may exclude `tools/` because it is meant for library consumption, not
-host-side evidence generation.
+The PlatformIO package includes the two HIL runner entrypoints named above.
+Parser tests, repository guards, and other maintenance-only tooling still
+require a full repository checkout.
 
 The runner creates `hil_logs/i2c_<UTC_TIMESTAMP>/` and writes:
 

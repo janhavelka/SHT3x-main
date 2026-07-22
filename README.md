@@ -26,13 +26,12 @@ package/documentation, and Arduino S2/S3 jobs for the exact tested diagnostic
 commit.
 
 Hardware validation has explicit boundaries. The maintained
-[2026-07-22 COM19 report](docs/reports/hil-validation-COM19-20260722.md)
-records 99 passing selected functional commands plus one unsupported
-interface-reset callback, followed by a strict one-hour `PASS`: 514,286
-measurements, 1,028,572 transfers, and zero logical/transport/protocol/not-ready
-failures. ALERT pin behavior, calibrated accuracy, fault injection, ESP32-S2
-hardware, and address `0x45` remain unproven. Every unexecuted hardware row
-stays `Not run`.
+[hardware validation guide](docs/hardware.md) records 100 selected functional
+rows: 99 executable commands passed, zero failed, and one interface-reset row
+was explicitly unsupported. A separate strict one-hour run passed with 514,286
+measurements, 1,028,572 transfers, and zero logical, transport, protocol, or
+not-ready failures. ALERT pin behavior, calibrated accuracy, fault injection,
+ESP32-S2 hardware, and address `0x45` remain unproven.
 
 Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
@@ -40,11 +39,9 @@ and generated `include/SHT3x/Version.h`.
 Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
 through `tools/run_i2c_hil.py --include-soak --soak-duration-s <seconds>`.
 
-A full repository checkout also keeps the repository-only
-`docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`. It records the owner-safe
-design rationale, completed v1.7.0 findings, and remaining external
-integration/hardware gates. It is audit evidence, not a consumer-package
-dependency or a claim that TunnelMonitor was modified.
+The [TunnelMonitor integration guide](docs/tunnelmonitor-integration.md)
+describes the live owner/adapter boundary. It does not claim that the consumer
+adapter is implemented or that TunnelMonitor-node was modified.
 
 ## Installation
 
@@ -710,8 +707,9 @@ python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --
 python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
 ```
 
-These runner commands require a full repository checkout. The PlatformIO package
-payload is library-focused and may exclude repository maintenance tools.
+The PlatformIO package includes these two runner entrypoints. Live
+commit/worktree identity checks and the surrounding parser/guard test tooling
+require a full repository checkout.
 
 Default runner groups cover safe smoke, single-shot low/medium/high,
 status/status_restore, serial/EIC, heater status, alert read/encode/decode,
@@ -730,9 +728,10 @@ The runner rejects a firmware image whose library version or embedded commit
 does not match the checkout and requires an embedded `clean` status by default.
 Live runs also require the checkout's tracked files to be clean. Use
 `--allow-dirty-firmware` only when deliberately collecting non-release
-development evidence from a dirty checkout or image. Duration-soak acceptance checks the requested elapsed
-time, plausible extrema, logical/transport/protocol counters, and the
-request-ID/`pollJob()`/milli-unit path. Built-in runs finish with a deterministic
+development evidence from a dirty checkout or image. Duration-soak acceptance
+checks the requested elapsed time, plausible extrema,
+logical/transport/protocol counters, and the request-ID/`pollJob()`/milli-unit
+path. Built-in runs finish with deterministic
 single-shot/no-stretch/high-repeatability cleanup and verification. `FAIL`,
 `INCOMPLETE`, and `OPERATOR_REVIEW_REQUIRED` are nonzero process outcomes;
 `--allow-incomplete` is available for planning workflows that intentionally
@@ -741,9 +740,9 @@ leave fixture/operator rows open.
 That list describes current runner capability. A hardware `PASS` claim is
 limited to the selected commands and artifacts in a specific run summary.
 
-Do not claim hardware validation, ALERT pin validation, humidity accuracy,
-fault recovery on real buses, soak stability, or production readiness until
-those rows have real logs and fixture evidence.
+Do not extend the accepted one-hour result into claims of multi-day/field
+stability, physical ALERT validation, calibrated humidity accuracy, real-bus
+fault recovery, or production readiness until those rows have fixture evidence.
 
 ## Documentation
 
@@ -751,8 +750,8 @@ those rows have real logs and fixture evidence.
 - [Documentation index](https://github.com/janhavelka/SHT3x-main/blob/main/docs/README.md) - maintained guides and claim boundary
 - [docs/hardware.md](docs/hardware.md) - hardware evidence status and HIL procedure
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component/example notes
+- [docs/tunnelmonitor-integration.md](docs/tunnelmonitor-integration.md) - current external-owner integration contract
 - [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - compact SHT3x source-document notes
-- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - repository-only integration suitability evidence
 - Repository-only reference material includes vendor PDFs and the alert
   bit-conversion spreadsheet.
 

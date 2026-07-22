@@ -34,10 +34,8 @@ STRIP_CODE_COMMENTS    = NO
 INPUT                  = README.md CHANGELOG.md include \
                          docs/hardware.md \
                          docs/esp-idf.md \
-                         docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md \
-                         docs/reference/sht3x-chip-notes.md \
-                         docs/reports/hil-validation-COM20-20260629.md \
-                         docs/reports/hil-validation-COM19-20260722.md
+                         docs/tunnelmonitor-integration.md \
+                         docs/reference/sht3x-chip-notes.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */.doxygen/* \
