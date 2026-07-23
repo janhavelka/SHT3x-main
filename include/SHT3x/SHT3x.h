@@ -43,6 +43,12 @@ struct MeasurementMilli {
   int32_t humidityMilliPercent = 0;     ///< Relative humidity in milli-percent
 };
 
+/// Rounding policy for integer milli-unit conversions.
+enum class MilliRounding : uint8_t {
+  NEAREST = 0,        ///< Round scaled values to the nearest milli-unit
+  TRUNCATE_SCALED = 1 ///< Truncate the positive scaled ratio before the temperature offset
+};
+
 /// Cooperative operation kind.
 enum class JobType : uint8_t {
   NONE = 0,
@@ -467,6 +473,12 @@ public:
   /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
   Status getMeasurementMilli(MeasurementMilli& out) const;
 
+  /// Get the last captured measurement using an explicit milli-unit rounding policy.
+  /// @param[out] out Last cached temperature and humidity in milli-units
+  /// @param rounding Integer conversion rounding policy
+  /// @return Status::Ok() on success, INVALID_PARAM for an unknown policy, or MEASUREMENT_NOT_READY
+  Status getMeasurementMilli(MeasurementMilli& out, MilliRounding rounding) const;
+
   // =========================================================================
   // Configuration
   // =========================================================================
@@ -760,16 +772,24 @@ public:
   /// @note Uses a 64-bit intermediate and rounds to the nearest milli-degree.
   static int32_t convertTemperatureMilliCelsius(uint16_t raw);
 
+  /// Convert raw temperature with an explicit integer rounding policy.
+  static int32_t convertTemperatureMilliCelsius(uint16_t raw,
+                                                MilliRounding rounding);
+
   /// Convert raw humidity to signed milli-percent relative humidity.
   /// @note Uses a 64-bit intermediate and rounds to the nearest milli-percent.
   static int32_t convertHumidityMilliPercent(uint16_t raw);
+
+  /// Convert raw humidity with an explicit integer rounding policy.
+  static int32_t convertHumidityMilliPercent(uint16_t raw,
+                                             MilliRounding rounding);
 
   // =========================================================================
   // Timing
   // =========================================================================
 
-  /// Estimate max measurement time based on current repeatability, Config::lowVdd,
-  /// and the driver's safety margin.
+  /// Estimate max measurement time based on current repeatability,
+  /// Config::lowVdd, and Config::singleShotMeasurementMarginMs.
   /// @return Measurement time in milliseconds
   uint32_t estimateMeasurementTimeMs() const;
 

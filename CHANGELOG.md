@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed two tracked legacy HIL artifact directories, including their full
   serial transcripts. Generated HIL artifacts remain local and ignored.
 
+## [1.8.0] - 2026-07-23
+
+### Added
+- Added caller-selected nearest or scaled-truncating milli-unit conversion
+  while retaining nearest rounding as the default API behavior.
+- Added a bounded configurable single-shot measurement safety margin. The
+  default remains 1 ms; normal-VDD compatibility callers may explicitly select
+  zero when their owner contract requires the datasheet maximum with no margin.
+
 ## [1.7.0] - 2026-07-22
 
 ### Added
@@ -374,7 +383,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.5.0...v1.6.0

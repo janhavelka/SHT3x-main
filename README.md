@@ -15,8 +15,8 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-This tree contains the `1.7.0` owner-safe API. Local verification passes the
-116-test native fault/boundary suite, strict framework-neutral core compile,
+This tree contains the `1.8.0` owner-safe API. Local verification passes the
+117-test native fault/boundary suite, strict framework-neutral core compile,
 repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
 ESP32-S2. The current COM19 ESP32-S3 evidence is described in the
 [hardware validation guide](docs/hardware.md).
@@ -33,7 +33,7 @@ measurements, 1,028,572 transfers, and zero logical, transport, protocol, or
 not-ready failures. ALERT pin behavior, calibrated accuracy, fault injection,
 ESP32-S2 hardware, and address `0x45` remain unproven.
 
-Version metadata is `1.7.0` in `library.json`, `idf_component.yml`, Doxyfile,
+Version metadata is `1.8.0` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
 
 Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
@@ -294,11 +294,11 @@ write procedure, so there is no rare NVM operation class in this library.
 | `pollJob()` | Advance at most one transport callback and return active or exactly-once terminal provenance. |
 | `cancelMeasurement()` | Cancel a measurement locally with zero I2C. |
 | `measurementReady()` | Report whether a sample is ready to be read. |
-| `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` / `getMeasurementMilli()` | Read float, raw, centi-unit, or signed milli-unit sample data. |
+| `getMeasurement()` / `getRawSample()` / `getCompensatedSample()` / `getMeasurementMilli()` | Read float, raw, centi-unit, or signed milli-unit sample data; milli output supports explicit nearest or scaled-truncating conversion. |
 | `hasSample()` | True after at least one raw/converted sample has been cached. |
 | `sampleTimestampMs()` / `sampleAgeMs(nowMs)` | Cached sample timestamp helpers. |
 | `missedSamplesEstimate()` | Best-effort estimate of skipped periodic samples. |
-| `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings. |
+| `estimateMeasurementTimeMs()` | Return the current single-shot timing estimate from repeatability settings plus the bounded configurable safety margin. |
 
 `begin()` requires `Config::nowMs`, `Config::nowUs`, and
 `Config::cooperativeYield`. Without those callbacks the driver cannot enforce

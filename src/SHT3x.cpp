@@ -19,13 +19,13 @@ static constexpr size_t MAX_READ_LEN = cmd::MEASUREMENT_DATA_LEN;
 static constexpr uint32_t RESET_DELAY_MS = 2;
 static constexpr uint32_t BREAK_DELAY_MS = 1;
 static constexpr uint16_t MIN_COMMAND_DELAY_MS = 1;
-static constexpr uint32_t MEASUREMENT_MARGIN_MS = 1;
 static constexpr uint32_t ART_PERIOD_MS = 250;
 static constexpr uint32_t MAX_I2C_TIMEOUT_MS = 60000;
 static constexpr uint16_t MAX_COMMAND_DELAY_MS = 1000;
 static constexpr uint32_t MAX_NOT_READY_TIMEOUT_MS = 600000;
 static constexpr uint32_t MAX_PERIODIC_FETCH_MARGIN_MS = 60000;
 static constexpr uint32_t MAX_RECOVER_BACKOFF_MS = 600000;
+static constexpr uint16_t MAX_SINGLE_SHOT_MARGIN_MS = 1000;
 static constexpr float ALERT_DEFAULT_MATCH_EPSILON = 0.001f;
 
 struct AlertDefaultVector {
@@ -218,6 +218,9 @@ Status SHT3x::bind(const Config& config) {
   }
   if (candidate.recoverBackoffMs > MAX_RECOVER_BACKOFF_MS) {
     return Status::Error(Err::INVALID_CONFIG, "Recover backoff too large");
+  }
+  if (candidate.singleShotMeasurementMarginMs > MAX_SINGLE_SHOT_MARGIN_MS) {
+    return Status::Error(Err::INVALID_CONFIG, "Single-shot margin too large");
   }
   if (candidate.nowMs == nullptr || candidate.nowUs == nullptr ||
       candidate.cooperativeYield == nullptr) {
@@ -1055,6 +1058,11 @@ Status SHT3x::getCompensatedSample(CompensatedSample& out) const {
 }
 
 Status SHT3x::getMeasurementMilli(MeasurementMilli& out) const {
+  return getMeasurementMilli(out, MilliRounding::NEAREST);
+}
+
+Status SHT3x::getMeasurementMilli(MeasurementMilli& out,
+                                  MilliRounding rounding) const {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
@@ -1062,7 +1070,14 @@ Status SHT3x::getMeasurementMilli(MeasurementMilli& out) const {
     return measurementStatus();
   }
 
-  out = _milliSample;
+  if (rounding != MilliRounding::NEAREST &&
+      rounding != MilliRounding::TRUNCATE_SCALED) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid milli rounding");
+  }
+  out.temperatureMilliCelsius =
+      convertTemperatureMilliCelsius(_rawSample.rawTemperature, rounding);
+  out.humidityMilliPercent =
+      convertHumidityMilliPercent(_rawSample.rawHumidity, rounding);
   return Status::Ok();
 }
 
@@ -1904,19 +1919,34 @@ uint32_t SHT3x::convertHumidityPct_x100(uint16_t raw) {
 }
 
 int32_t SHT3x::convertTemperatureMilliCelsius(uint16_t raw) {
+  return convertTemperatureMilliCelsius(raw, MilliRounding::NEAREST);
+}
+
+int32_t SHT3x::convertTemperatureMilliCelsius(uint16_t raw,
+                                               MilliRounding rounding) {
   const int64_t numerator = 175000LL * static_cast<int64_t>(raw);
-  const int32_t scaled = static_cast<int32_t>((numerator + 32767LL) / 65535LL);
+  const int64_t bias =
+      rounding == MilliRounding::TRUNCATE_SCALED ? 0LL : 32767LL;
+  const int32_t scaled =
+      static_cast<int32_t>((numerator + bias) / 65535LL);
   return scaled - 45000;
 }
 
 int32_t SHT3x::convertHumidityMilliPercent(uint16_t raw) {
+  return convertHumidityMilliPercent(raw, MilliRounding::NEAREST);
+}
+
+int32_t SHT3x::convertHumidityMilliPercent(uint16_t raw,
+                                           MilliRounding rounding) {
   const int64_t numerator = 100000LL * static_cast<int64_t>(raw);
-  return static_cast<int32_t>((numerator + 32767LL) / 65535LL);
+  const int64_t bias =
+      rounding == MilliRounding::TRUNCATE_SCALED ? 0LL : 32767LL;
+  return static_cast<int32_t>((numerator + bias) / 65535LL);
 }
 
 uint32_t SHT3x::estimateMeasurementTimeMs() const {
   const uint32_t baseMs = baseMeasurementMs(_config.repeatability, _config.lowVdd);
-  return baseMs + MEASUREMENT_MARGIN_MS;
+  return baseMs + _config.singleShotMeasurementMarginMs;
 }
 
 bool SHT3x::_singleShotMeasurementPending() const {

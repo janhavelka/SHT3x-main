@@ -201,6 +201,9 @@ struct Config {
 
   // === v1.7 Additions (append-only for aggregate initialization compatibility) ===
   HealthPolicy healthPolicy = HealthPolicy::LATCH_OFFLINE; ///< Health observation/admission behavior
+
+  // === v1.8 Additions (append-only for aggregate initialization compatibility) ===
+  uint16_t singleShotMeasurementMarginMs = 1; ///< Extra wait after the datasheet single-shot maximum, 0..1000 ms
 };
 
 } // namespace SHT3x

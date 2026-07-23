@@ -212,6 +212,7 @@ void test_config_defaults() {
   TEST_ASSERT_EQUAL(0, static_cast<uint8_t>(cfg.transportCapabilities));
   TEST_ASSERT_EQUAL(5, cfg.offlineThreshold);
   TEST_ASSERT_EQUAL(HealthPolicy::LATCH_OFFLINE, cfg.healthPolicy);
+  TEST_ASSERT_EQUAL_UINT16(1u, cfg.singleShotMeasurementMarginMs);
   TEST_ASSERT_EQUAL(1u, cfg.commandDelayMs);
   TEST_ASSERT_EQUAL(0u, cfg.notReadyTimeoutMs);
   TEST_ASSERT_EQUAL(0u, cfg.periodicFetchMarginMs);
@@ -263,6 +264,11 @@ void test_conversions_basic() {
   TEST_ASSERT_EQUAL_UINT32(8u, timing.estimateMeasurementTimeMs());
   timing._config.repeatability = Repeatability::HIGH_REPEATABILITY;
   TEST_ASSERT_EQUAL_UINT32(17u, timing.estimateMeasurementTimeMs());
+  timing._config.lowVdd = false;
+  timing._config.singleShotMeasurementMarginMs = 0;
+  TEST_ASSERT_EQUAL_UINT32(15u, timing.estimateMeasurementTimeMs());
+  timing._config.singleShotMeasurementMarginMs = 7;
+  TEST_ASSERT_EQUAL_UINT32(22u, timing.estimateMeasurementTimeMs());
 }
 
 void test_alert_limit_roundtrip() {
@@ -1340,6 +1346,11 @@ void test_begin_rejects_oversized_timing_config() {
   TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
 
   cfg.recoverBackoffMs = 100;
+  cfg.singleShotMeasurementMarginMs = 1001;
+  st = device.begin(cfg);
+  TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
+
+  cfg.singleShotMeasurementMarginMs = 1;
   cfg.healthPolicy = static_cast<HealthPolicy>(0xFF);
   st = device.bind(cfg);
   TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, st.code);
@@ -2881,6 +2892,25 @@ void test_milli_conversions_cover_endpoints_midpoint_and_rounding() {
       SHT3xDevice::convertHumidityMilliPercent(11389u));
 }
 
+void test_milli_conversions_support_explicit_scaled_truncation() {
+  TEST_ASSERT_EQUAL_INT32(
+      -32557,
+      SHT3xDevice::convertTemperatureMilliCelsius(
+          0x1234u, MilliRounding::TRUNCATE_SCALED));
+  TEST_ASSERT_EQUAL_INT32(
+      7110,
+      SHT3xDevice::convertHumidityMilliPercent(
+          0x1234u, MilliRounding::TRUNCATE_SCALED));
+  TEST_ASSERT_EQUAL_INT32(
+      -32556,
+      SHT3xDevice::convertTemperatureMilliCelsius(
+          0x1234u, MilliRounding::NEAREST));
+  TEST_ASSERT_EQUAL_INT32(
+      7111,
+      SHT3xDevice::convertHumidityMilliPercent(
+          0x1234u, MilliRounding::NEAREST));
+}
+
 void test_measurement_milli_and_float_use_unrounded_raw_sample() {
   PreciseTimingTransport ctx;
   ctx.nowMs = 200;
@@ -2927,6 +2957,14 @@ void test_measurement_milli_and_float_use_unrounded_raw_sample() {
   TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
   TEST_ASSERT_EQUAL_INT32(-44997, milli.temperatureMilliCelsius);
   TEST_ASSERT_EQUAL_INT32(2, milli.humidityMilliPercent);
+
+  st = device.getMeasurementMilli(milli, MilliRounding::TRUNCATE_SCALED);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_EQUAL_INT32(-44998, milli.temperatureMilliCelsius);
+  TEST_ASSERT_EQUAL_INT32(1, milli.humidityMilliPercent);
+  st = device.getMeasurementMilli(
+      milli, static_cast<MilliRounding>(0xFFu));
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
 
 void test_bind_rebind_and_end_are_zero_i2c_local_operations() {
@@ -5043,6 +5081,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_single_shot_poll_timestamps_follow_transport_completion);
   RUN_TEST(test_single_shot_poll_ready_time_wraps_milliseconds);
   RUN_TEST(test_milli_conversions_cover_endpoints_midpoint_and_rounding);
+  RUN_TEST(test_milli_conversions_support_explicit_scaled_truncation);
   RUN_TEST(test_measurement_milli_and_float_use_unrounded_raw_sample);
   RUN_TEST(test_bind_rebind_and_end_are_zero_i2c_local_operations);
   RUN_TEST(test_repeated_begin_and_end_reinitialize_deterministically);
