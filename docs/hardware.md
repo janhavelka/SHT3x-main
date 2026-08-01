@@ -1,6 +1,6 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-07-22
+Last updated: 2026-07-31
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
@@ -20,9 +20,9 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | PASS, 116/116 on the exact tested diagnostic baseline. | Repeat on a future changed core. |
+| Native tests | PASS, 117/117 on the current source. | Repeat on a future changed core. |
 | Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
-| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally and in GitHub Actions with the pinned inputs. | Physical ESP32-S2 execution remains open. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally with pioarduino `55.03.311`; CI is configured with the required PlatformIO Core `6.1.19`. | Observe the exact-commit CI run; physical ESP32-S2 execution remains open. |
 | Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions for the tested baseline. | Physical pure-IDF execution remains open. |
 | Documentation/package validation | Strict Doxygen and package validation pass locally and in GitHub Actions. | Repeat for the final publication artifact. |
 

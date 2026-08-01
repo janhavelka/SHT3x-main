@@ -608,6 +608,10 @@ python tools/check_idf_example_contract.py
 
 Arduino firmware builds and package validation:
 
+The repository examples exact-pin pioarduino `platform-espressif32`
+`55.03.311` (Arduino-ESP32 `3.3.11`, ESP-IDF `5.5.5`). Consuming applications
+continue to select and own their platform version.
+
 ```bash
 pio run -e esp32s3dev
 pio run -e esp32s2dev

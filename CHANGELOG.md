@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the maintained hardware guide.
 
 ### Changed
+- Updated the exact-pinned Arduino build platform to pioarduino
+  `platform-espressif32` `55.03.311` (Arduino-ESP32 `3.3.11`, ESP-IDF `5.5.5`)
+  and raised the CI PlatformIO Core pin to the platform's required `6.1.19`.
+- Removed unused ESP32-S3 PSRAM/cache-workaround flags from the no-PSRAM
+  `esp32-s3-devkitc-1` example target.
+- Updated the ESP32-S2 post-upload reset mode to esptool 5's hyphenated
+  `no-reset-stub` spelling.
 - Refactored the Arduino diagnostic CLI into an explicit cooperative-job owner:
   nonzero request IDs, absolute deadlines, one-callback `pollJob()` steps,
   terminal identity/provenance checks, zero-I2C cancellation, and milli-unit
@@ -41,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardware and TunnelMonitor integration guides.
 - Removed two tracked legacy HIL artifact directories, including their full
   serial transcripts. Generated HIL artifacts remain local and ignored.
+
+### Validation
+- Native tests pass 117/117, and the ESP32-S3 and ESP32-S2 Arduino examples
+  build with the resolved pioarduino `55.03.311` stack. No post-upgrade
+  hardware upload, HIL, USB-CDC soak, or debugger validation is claimed.
 
 ## [1.8.0] - 2026-07-23
 
