@@ -1,15 +1,17 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-07-31
+Last updated: 2026-08-01
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
 behavior, board layout, fixture quality, or sensor accuracy.
 
 No physical HIL validation was performed by a dry run. The exact accepted
-metrics and artifact hashes are maintained below. Full serial transcripts and
-other generated run artifacts stay local and ignored; they are not maintained
-documentation or package content. Dry runs remain parser/planning checks only.
+metrics and artifact hashes are maintained below. Raw serial transcripts are
+preservation artifacts: keep them locally or in the evidence archive and do
+not delete them during routine cleanup. Other generated run artifacts stay
+local and ignored; neither category is maintained documentation or package
+content. Dry runs remain parser/planning checks only.
 
 ACK alone is not chip identity. A bus scan proves only that something
 acknowledged an address. Stronger SHT3x evidence is a CRC-checked status read,
@@ -57,14 +59,7 @@ Latest maintained serial HIL evidence:
   identity, `pollJob()`, and milli-unit readout, then finished `READY` in
   single-shot/high-repeatability/no-stretch mode.
 
-The first complete one-hour attempt exposed one diagnostic-only defect: its
-single summary line exceeded the example's fixed output buffer, so final
-diagnostic tokens were truncated even though all sensor transfers succeeded.
-The output was split into bounded records, parser regression coverage was
-added, a short physical proof passed, and the full strict hour above was rerun
-successfully. No `include/` or `src/` change was required.
-
-Ignored local artifact integrity for the accepted runs is retained by SHA-256:
+Recorded SHA-256 fingerprints for the accepted runs:
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -73,6 +68,11 @@ Ignored local artifact integrity for the accepted runs is retained by SHA-256:
 | One-hour `progress.jsonl` | `07082a08243142e4584c7370902eca697d3a9208a9565ea2108d334d9a9f260a` |
 | Functional `summary.json` | `d619b68cf92c52b9a55d798a4222e00d8adc42dc8c1c5dc759710dcfd3766702` |
 | Functional `serial_transcript.txt` | `4ab2852499d8a270fb88b9304c4b07109436b72bbe0e21f3512f7a94e6de105d` |
+
+The files behind these hashes are not present in this checkout and were not
+found elsewhere in the local Projects workspace during the 2026-08-01 cleanup.
+Only their recorded fingerprints remain here; direct transcript review requires
+recovering the external archive.
 
 The COM19 evidence covers the selected automatic command surface and an
 uninterrupted owner-safe hour. It does not validate physical ALERT pin behavior,
@@ -107,10 +107,9 @@ hardware, address `0x45`, or multi-day/field stability.
 
 ## Serial Runner
 
-The reusable host runner is `tools/run_sht3x_hil.py`, backed by
-`tools/run_i2c_hil.py`. It drives the Arduino or ESP-IDF diagnostic CLI over a
-serial port from the host. It does not talk directly to I2C and does not flash
-firmware.
+The reusable host runner is `tools/run_sht3x_hil.py`. It drives the Arduino or
+ESP-IDF diagnostic CLI over a serial port from the host. It does not talk
+directly to I2C and does not flash firmware.
 
 Dry-run only:
 
@@ -133,11 +132,11 @@ Override the identity only deliberately with
 environment and summary artifacts. A failed version/commit preflight stops the
 run before optional destructive commands.
 
-The PlatformIO package includes the two HIL runner entrypoints named above.
+The PlatformIO package includes the HIL runner named above.
 Parser tests, repository guards, and other maintenance-only tooling still
 require a full repository checkout.
 
-The runner creates `hil_logs/i2c_<UTC_TIMESTAMP>/` and writes:
+The runner creates `hil_logs/sht3x_<UTC_TIMESTAMP>/` and writes:
 
 - `serial_transcript.txt`
 - `summary.md`
@@ -155,7 +154,7 @@ to become project evidence.
 
 The default sequence is safe by design: it avoids status clearing, heater
 enable, alert writes, resets, raw command writes, fault injection, and soak
-tests. This block is checked against `tools/run_i2c_hil.py` by
+tests. This block is checked against `tools/run_sht3x_hil.py` by
 `tools/check_hil_contract.py`.
 
 <!-- BEGIN DEFAULT_HIL_COMMANDS -->

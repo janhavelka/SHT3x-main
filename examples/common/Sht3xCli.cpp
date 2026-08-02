@@ -115,10 +115,6 @@ public:
     return rhs != nullptr && std::strcmp(_buf, rhs) == 0;
   }
 
-  bool operator!=(const char* rhs) const {
-    return !(*this == rhs);
-  }
-
 private:
   void assign(const char* value) {
     assign(value, value == nullptr ? 0U : std::strlen(value));

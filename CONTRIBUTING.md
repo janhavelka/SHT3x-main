@@ -7,7 +7,10 @@ Thank you for considering contributing to this project!
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Ensure examples build: `pio run -e esp32s3dev -e esp32s2dev`
+4. Run the full-checkout validation listed under README **Running Tests**,
+   including native tests, repository guards, both Arduino targets, Doxygen,
+   and package inspection. Run the native ESP-IDF matrix when its toolchain is
+   available.
 5. Commit with a clear message: `git commit -m "feat: add X"`
 6. Push and open a Pull Request
 
@@ -33,6 +36,8 @@ Thank you for considering contributing to this project!
 - Update documentation if needed
 - Add changelog entry under `[Unreleased]`
 - Ensure CI passes
+- Do not commit generated build/package/Doxygen output. Preserve vendor source
+  documents and raw hardware transcripts; curate summaries separately.
 
 ### What We Accept
 - Bug fixes

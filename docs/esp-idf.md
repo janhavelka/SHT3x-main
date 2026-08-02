@@ -1,6 +1,6 @@
 # SHT3x ESP-IDF Notes
 
-Last updated: 2026-07-21
+Last updated: 2026-08-01
 
 Scope: framework-neutral core component plus a native ESP-IDF diagnostic
 example. Arduino/PlatformIO support remains separate and intact.
@@ -114,10 +114,12 @@ ESP-IDF targets.
 
 ## Validation
 
-Current v1.7.0 evidence: the repository-local IDF example/CLI contract guards
-pass, and CI defines pinned ESP-IDF 5.4.2 builds for ESP32-S2 and ESP32-S3.
-Pure ESP-IDF software validation requires passing jobs for the exact release
-commit; pure ESP-IDF hardware validation remains open.
+The repository defines pinned ESP-IDF 5.4.2 CI builds for ESP32-S2 and ESP32-S3
+and keeps the example/CLI contract under repository checks. Pure ESP-IDF
+software validation requires passing jobs for the exact release commit; pure
+ESP-IDF hardware validation remains open.
+
+The following maintenance commands require a full repository checkout:
 
 Run from the repository root:
 

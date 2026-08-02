@@ -21,12 +21,6 @@ sdkconfig.old
 dependencies.lock
 managed_components/
 compile_commands.json
-examples/idf/basic/build/
-examples/idf/basic/sdkconfig
-examples/idf/basic/sdkconfig.old
-examples/idf/basic/dependencies.lock
-examples/idf/basic/managed_components/
-examples/idf/basic/compile_commands.json
 
 # Python (for scripts/)
 __pycache__/
@@ -58,4 +52,3 @@ hil_logs/
 
 # Generated documentation
 .doxygen/
-docs/doxygen/

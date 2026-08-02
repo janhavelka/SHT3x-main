@@ -21,8 +21,8 @@ include/SHT3x/         - Public API headers only (Doxygen)
 src/                    - Implementation (.cpp)
 examples/
   01_*/
-  common/               - Example-only helpers (Log.h, BoardConfig.h, I2cTransport.h,
-                          I2cScanner.h, CommandHandler.h)
+  common/               - Example-only helpers (BoardConfig.h, I2cTransport.h,
+                          I2cScanner.h, Sht3xCli.h/.cpp)
 platformio.ini
 library.json
 README.md

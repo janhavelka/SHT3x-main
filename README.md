@@ -21,9 +21,9 @@ repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
 ESP32-S2. The current COM19 ESP32-S3 evidence is described in the
 [hardware validation guide](docs/hardware.md).
 
-GitHub Actions passes native ESP-IDF S2/S3 example builds as well as the native,
-package/documentation, and Arduino S2/S3 jobs for the exact tested diagnostic
-commit.
+GitHub Actions is configured to build the native ESP-IDF and Arduino S2/S3
+examples and to run native, package, documentation, and repository-contract
+validation. Check the exact commit's workflow result before citing CI evidence.
 
 Hardware validation has explicit boundaries. The maintained
 [hardware validation guide](docs/hardware.md) records 100 selected functional
@@ -37,7 +37,7 @@ Version metadata is `1.8.0` in `library.json`, `idf_component.yml`, Doxyfile,
 and generated `include/SHT3x/Version.h`.
 
 Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
-through `tools/run_i2c_hil.py --include-soak --soak-duration-s <seconds>`.
+through `tools/run_sht3x_hil.py --include-soak --soak-duration-s <seconds>`.
 
 The [TunnelMonitor integration guide](docs/tunnelmonitor-integration.md)
 describes the live owner/adapter boundary. It does not claim that the consumer
@@ -589,6 +589,9 @@ The driver is **not** thread-safe and must be externally serialized. Do not call
 
 ## Running Tests
 
+The maintenance commands in this section require a full repository checkout;
+they are not all included in the packaged library payload.
+
 Host tests (requires a native compiler like `g++`):
 
 ```bash
@@ -598,8 +601,8 @@ pio test -e native
 Host HIL parser/contract checks (stdlib Python; no pytest required):
 
 ```bash
-python tools/test_run_i2c_hil_parser.py
-python tools/run_i2c_hil.py --parser-self-test
+python tools/test_run_sht3x_hil_parser.py
+python tools/run_sht3x_hil.py --parser-self-test
 python tools/check_cli_contract.py
 python tools/check_hil_contract.py
 python tools/check_core_timing_guard.py
@@ -711,7 +714,7 @@ python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --
 python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
 ```
 
-The PlatformIO package includes these two runner entrypoints. Live
+The PlatformIO package includes this runner. Live
 commit/worktree identity checks and the surrounding parser/guard test tooling
 require a full repository checkout.
 
@@ -751,7 +754,7 @@ fault recovery, or production readiness until those rows have fixture evidence.
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - full release history
-- [Documentation index](https://github.com/janhavelka/SHT3x-main/blob/main/docs/README.md) - maintained guides and claim boundary
+- [docs/README.md](https://github.com/janhavelka/SHT3x-main/blob/main/docs/README.md) - maintained guides and claim boundary
 - [docs/hardware.md](docs/hardware.md) - hardware evidence status and HIL procedure
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component/example notes
 - [docs/tunnelmonitor-integration.md](docs/tunnelmonitor-integration.md) - current external-owner integration contract

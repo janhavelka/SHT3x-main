@@ -117,10 +117,10 @@ static constexpr size_t DATA_WORD_BYTES = 2;     ///< Bytes in one data word
 static constexpr size_t DATA_CRC_BYTES = 1;      ///< CRC bytes following one data word
 static constexpr size_t DATA_WORD_WITH_CRC = 3;  ///< One data word plus CRC
 
-static constexpr size_t MEASUREMENT_DATA_LEN = 6; ///< Temperature word+CRC plus humidity word+CRC
-static constexpr size_t STATUS_DATA_LEN = 3;      ///< Status word plus CRC
-static constexpr size_t SERIAL_DATA_LEN = 6;      ///< Two serial/EIC words, each with CRC
-static constexpr size_t ALERT_DATA_LEN = 3;       ///< Alert-limit word plus CRC
+static constexpr size_t MEASUREMENT_DATA_LEN = 2 * DATA_WORD_WITH_CRC; ///< Temperature and humidity words
+static constexpr size_t STATUS_DATA_LEN = DATA_WORD_WITH_CRC;         ///< Status word plus CRC
+static constexpr size_t SERIAL_DATA_LEN = 2 * DATA_WORD_WITH_CRC;     ///< Two serial/EIC words
+static constexpr size_t ALERT_DATA_LEN = DATA_WORD_WITH_CRC;          ///< Alert-limit word plus CRC
 
 /// @}
 

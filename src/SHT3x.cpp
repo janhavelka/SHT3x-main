@@ -5,8 +5,6 @@
 
 #include "SHT3x/SHT3x.h"
 
-#include "PlatformTime.h"
-
 #include <cstring>
 #include <limits>
 #include <cmath>
@@ -62,11 +60,11 @@ private:
 };
 
 static uint32_t _nowMs(const Config& cfg) {
-  return (cfg.nowMs != nullptr) ? cfg.nowMs(cfg.timeUser) : platform::nowMs();
+  return cfg.nowMs(cfg.timeUser);
 }
 
 static uint32_t _nowUs(const Config& cfg) {
-  return (cfg.nowUs != nullptr) ? cfg.nowUs(cfg.timeUser) : platform::nowUs();
+  return cfg.nowUs(cfg.timeUser);
 }
 
 static uint32_t saturatingAddU32(uint32_t a, uint32_t b) {
@@ -1473,19 +1471,17 @@ Status SHT3x::readStatusWithModeRestore(StatusReadSnapshot& out) {
     out.statusValid = true;
   }
 
-  Status stRestore = Status::Ok();
   {
     ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
-    stRestore = (initialMode == Mode::ART)
+    const Status stRestore = (initialMode == Mode::ART)
         ? _enterPeriodic(initialRate, initialRepeatability, true)
         : _enterPeriodic(initialRate, initialRepeatability, false);
-  }
-  out.restoreStatus = stRestore;
-  out.finalMode = _mode;
-  out.restored = stRestore.ok() && _periodicActive && _mode == initialMode;
-
-  if (!stRestore.ok()) {
-    return stRestore;
+    out.restoreStatus = stRestore;
+    out.finalMode = _mode;
+    out.restored = stRestore.ok() && _periodicActive && _mode == initialMode;
+    if (!stRestore.ok()) {
+      return stRestore;
+    }
   }
   if (!stStatus.ok()) {
     return stStatus;
@@ -2550,11 +2546,7 @@ Status SHT3x::_ensureCommandDelay() {
     } else if (++stableLoops >= 500000U) {
       return Status::Error(Err::TIMEOUT, "Command delay timeout");
     }
-    if (_config.cooperativeYield != nullptr) {
-      _config.cooperativeYield(_config.timeUser);
-    } else {
-      platform::cooperativeYield();
-    }
+    _config.cooperativeYield(_config.timeUser);
   }
 
   return Status::Ok();
@@ -2585,11 +2577,7 @@ Status SHT3x::_waitMs(uint32_t delayMs) {
     } else if (++stableLoops >= 500000U) {
       return Status::Error(Err::TIMEOUT, "Wait timeout");
     }
-    if (_config.cooperativeYield != nullptr) {
-      _config.cooperativeYield(_config.timeUser);
-    } else {
-      platform::cooperativeYield();
-    }
+    _config.cooperativeYield(_config.timeUser);
   }
 
   return Status::Ok();

@@ -338,6 +338,7 @@ void test_command_delay_guard() {
   device._initialized = true;
   device._config.commandDelayMs = 1;
   device._config.i2cTimeoutMs = 1;
+  installTimingHooks(device);
   gMicros = 0;
   gMicrosStep = 0;
   gMillis = 0;
@@ -2496,12 +2497,10 @@ void test_public_single_shot_measurement_timing_and_readout() {
   Status st = device.begin(cfg);
   TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
 
-  const uint32_t requestMs = bus.nowMs;
   st = device.requestMeasurement();
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
   TEST_ASSERT_FALSE(device.measurementReady());
 
-  bus.nowMs = requestMs;
   device.tick(bus.nowMs);
   TEST_ASSERT_FALSE(device.measurementReady());
 
@@ -2797,7 +2796,6 @@ void test_single_shot_poll_timestamps_follow_transport_completion() {
   // The old pre-transport deadline would have expired here. No read is legal
   // until the full conversion duration after command completion.
   ctx.nowMs = 100u + device.estimateMeasurementTimeMs();
-  ctx.nowUs = ctx.nowMs * 1000u;
   st = device.pollJob(ctx.nowMs, 1, result);
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
   TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
@@ -2836,7 +2834,6 @@ void test_single_shot_poll_ready_time_wraps_milliseconds() {
   TEST_ASSERT_EQUAL_HEX8(cmd::I2C_ADDR_LOW, ctx.lastAddress);
 
   ctx.nowMs = 7u;
-  ctx.nowUs = 2000u;
   st = device.pollJob(ctx.nowMs, 1, result);
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
   TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
@@ -4666,6 +4663,7 @@ void test_periodic_fetch_margin_blocks_early_fetch() {
   device._config.commandDelayMs = 1;
   device._config.periodicFetchMarginMs = 0;
   device._config.transportCapabilities = TransportCapability::NONE;
+  installTimingHooks(device);
   device._initialized = true;
   device._driverState = DriverState::READY;
   device._mode = Mode::PERIODIC;

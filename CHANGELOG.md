@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated the exact-pinned Arduino build platform to pioarduino
   `platform-espressif32` `55.03.311` (Arduino-ESP32 `3.3.11`, ESP-IDF `5.5.5`)
   and raised the CI PlatformIO Core pin to the platform's required `6.1.19`.
+- Consolidated host-side HIL execution and parsing under the single canonical
+  `tools/run_sht3x_hil.py` runner and renamed its parser regression suite to
+  match.
+- Enabled the documented strict warning policy for native tests and simplified
+  duplicated PlatformIO and CI configuration without changing either ESP32
+  target.
+- Refreshed the documentation index, hardware and ESP-IDF evidence boundaries,
+  contribution guidance, security support table, package metadata, and ignore
+  rules for the v1.8 maintenance state.
+- Made raw HIL transcript preservation explicit. Generated summaries and build
+  outputs remain local and excluded from release packages.
 - Removed unused ESP32-S3 PSRAM/cache-workaround flags from the no-PSRAM
   `esp32-s3-devkitc-1` example target.
 - Updated the ESP32-S2 post-upload reset mode to esptool 5's hyphenated
@@ -31,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--allow-incomplete` is explicitly selected.
 
 ### Fixed
+- Restored `idf_component.yml` to its generated canonical form and removed its
+  accidentally committed `.orig` backup, fixing version and ESP-IDF contract
+  checks after the platform upgrade.
 - Prevented abandoned CLI measurements from surviving local cancellation or
   being joined by a later request.
 - Prevented false HIL passes for stale firmware, short duration soaks, wrong
@@ -43,16 +57,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported settings now correspond to behavior that actually runs.
 
 ### Removed
+- Removed superseded example adapters, CLI facades, health views, logging
+  macros, and bus-scan aliases that had no remaining callers.
+- Removed unreachable core timing fallbacks now that validated timing hooks are
+  mandatory, plus dead scanner/string helpers and redundant test setup.
+- Removed the duplicate generic HIL runner entry point and stale Doxygen,
+  package, ignore, and CI configuration.
 - Removed completed dated HIL reports and the finished suitability audit after
   consolidating their current evidence and owner contract into evergreen
   hardware and TunnelMonitor integration guides.
-- Removed two tracked legacy HIL artifact directories, including their full
-  serial transcripts. Generated HIL artifacts remain local and ignored.
+- Removed two tracked legacy HIL artifact directories before the current raw
+  transcript-preservation rule was established. Their accepted fingerprints
+  remain documented; this cleanup does not delete raw transcripts.
 
 ### Validation
 - Native tests pass 117/117, and the ESP32-S3 and ESP32-S2 Arduino examples
-  build with the resolved pioarduino `55.03.311` stack. No post-upgrade
-  hardware upload, HIL, USB-CDC soak, or debugger validation is claimed.
+  build with the resolved pioarduino `55.03.311` stack. Repository guards, the
+  HIL parser suite, strict Doxygen, warning/portability static analysis, and
+  release-package inspection also pass.
+- No post-upgrade hardware upload, live HIL, USB-CDC soak, debugger run, or
+  local native ESP-IDF build is claimed by this cleanup.
 
 ## [1.8.0] - 2026-07-23
 

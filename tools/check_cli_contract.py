@@ -9,13 +9,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 REQUIRED_COMMON = [
     "BoardConfig.h",
-    "BuildConfig.h",
-    "Log.h",
-    "TransportAdapter.h",
-    "BusDiag.h",
-    "CliShell.h",
-    "CliStyle.h",
-    "HealthView.h",
+    "I2cScanner.h",
+    "I2cTransport.h",
+    "Sht3xCli.h",
 ]
 
 MANDATORY_COMMANDS = ["help", "scan", "probe", "recover", "drv", "read", "verbose", "stress"]
@@ -58,11 +54,6 @@ def ensure_exists(path: pathlib.Path, label: str) -> None:
         fail(f"missing {label}: {path.as_posix()}")
 
 
-def ensure_missing(path: pathlib.Path, label: str) -> None:
-    if path.exists():
-        fail(f"forbidden {label} still present: {path.as_posix()}")
-
-
 def require_text(path: pathlib.Path, text: str, needle: str) -> None:
     if needle not in text:
         fail(f"missing '{needle}' in {path.as_posix()}")
@@ -83,12 +74,6 @@ def main() -> int:
     ensure_exists(scanner, "I2C scanner")
     ensure_exists(idf_main, "ESP-IDF CLI example")
 
-    ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
-    ensure_missing(
-        ROOT / "examples" / "03_feature_walkthrough",
-        "deprecated example 03_feature_walkthrough",
-    )
-
     for name in REQUIRED_COMMON:
         ensure_exists(common_dir / name, f"common helper {name}")
 
@@ -99,6 +84,8 @@ def main() -> int:
 
     if "Sht3xCli.h" not in arduino_text:
         fail("Arduino example must use shared Sht3xCli.h")
+    for token in ("I2cScanner.h", "i2c_scanner::scan(Wire)"):
+        require_text(bringup_main, arduino_text, token)
     for token in ("cfg.nowMs", "cfg.nowUs", "cfg.cooperativeYield"):
         require_text(bringup_main, arduino_text, token)
     for token in (

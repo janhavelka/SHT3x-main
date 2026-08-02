@@ -5,7 +5,7 @@
 #include <Arduino.h>
 
 #include "common/BoardConfig.h"
-#include "common/BusDiag.h"
+#include "common/I2cScanner.h"
 #include "common/I2cTransport.h"
 #include "common/Sht3xCli.h"
 
@@ -71,7 +71,7 @@ void arduinoYield(void*) {
 }
 
 void arduinoScanBus(void*) {
-  bus_diag::scan();
+  i2c_scanner::scan(Wire);
 }
 
 void readSerialInput() {
@@ -143,7 +143,7 @@ void setup() {
   }
   sht3x_cli::logInfo("I2C initialized (SDA=%d, SCL=%d)", board::I2C_SDA, board::I2C_SCL);
 
-  bus_diag::scan();
+  i2c_scanner::scan(Wire);
 
   SHT3x::Config& cfg = sht3x_cli::config();
   cfg.i2cWrite = transport::wireWrite;

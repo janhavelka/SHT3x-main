@@ -92,6 +92,7 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint8_t* rxData, size_t rxLen,
                             uint32_t timeoutMs, void* user) {
+  (void)txData; // SHT3x reads are separate transactions; txLen must remain zero.
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "Wire instance is null");

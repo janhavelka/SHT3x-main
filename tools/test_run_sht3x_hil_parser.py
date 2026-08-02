@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small parser checks for tools/run_i2c_hil.py."""
+"""Small parser checks for tools/run_sht3x_hil.py."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "tools" / "run_i2c_hil.py"
+RUNNER = ROOT / "tools" / "run_sht3x_hil.py"
 
 
 def load_runner():
-    spec = importlib.util.spec_from_file_location("run_i2c_hil_under_test", RUNNER)
+    spec = importlib.util.spec_from_file_location("run_sht3x_hil_under_test", RUNNER)
     if spec is None or spec.loader is None:
-        raise RuntimeError("cannot import run_i2c_hil.py")
+        raise RuntimeError("cannot import run_sht3x_hil.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -1075,7 +1075,7 @@ def main() -> int:
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
-    print("test_run_i2c_hil_parser: OK")
+    print("test_run_sht3x_hil_parser: OK")
     return 0
 
 

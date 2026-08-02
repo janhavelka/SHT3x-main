@@ -37,10 +37,6 @@ static constexpr uint32_t I2C_FREQ_HZ = 400000;
 /// @brief I2C timeout in milliseconds for example transactions.
 static constexpr uint16_t I2C_TIMEOUT_MS = 50;
 
-/// @brief LED pin. Example default for ESP32-S3 (RGB LED on GPIO48).
-/// Set to -1 to disable.
-static constexpr int LED = 47;
-
 /// @brief Initialize I2C for examples using the default config.
 inline bool initI2c() {
   return transport::initWire(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS);

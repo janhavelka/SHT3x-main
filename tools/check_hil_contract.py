@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "tools" / "run_i2c_hil.py"
+RUNNER = ROOT / "tools" / "run_sht3x_hil.py"
 HARDWARE = ROOT / "docs" / "hardware.md"
 README = ROOT / "README.md"
 DOCS_INDEX = ROOT / "docs" / "README.md"
@@ -81,9 +81,9 @@ def check_tracked_hil_artifacts() -> None:
 
 
 def import_runner():
-    spec = importlib.util.spec_from_file_location("run_i2c_hil_contract", RUNNER)
+    spec = importlib.util.spec_from_file_location("run_sht3x_hil_contract", RUNNER)
     if spec is None or spec.loader is None:
-        fail("cannot import tools/run_i2c_hil.py")
+        fail("cannot import tools/run_sht3x_hil.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -176,7 +176,7 @@ def main() -> int:
         bare = path.name
         if rel not in docs_index_text and bare not in docs_index_text:
             fail(f"docs/README.md missing documentation link: {rel}")
-    if "tools/run_i2c_hil.py" not in hardware_text or "tools/run_sht3x_hil.py" not in hardware_text:
+    if "tools/run_sht3x_hil.py" not in hardware_text:
         fail("hardware doc must point to the serial HIL runner contract")
 
     check_claims()
