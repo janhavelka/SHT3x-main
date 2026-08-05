@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-05
+
 ### Added
 - Added one authoritative 70-row Arduino/native-ESP-IDF CLI contract covering
   help order, execution and safety classes, strict parsing, confirmation gates,
@@ -69,8 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pioarduino `55.03.311`; repository guards, HIL parser tests, strict Doxygen,
   warning/portability analysis, release-package inspection, and exact-branch
   Arduino/native-ESP-IDF GitHub Actions builds pass.
-- No post-upgrade hardware upload, live HIL, USB-CDC soak, or debugger run is
-  claimed.
+- Post-upgrade COM19/ESP32-S3 functional HIL on merged source commit
+  `fe29f7bf4165` passed every selected executable command, including 4 and
+  10 mps periodic acquisition. Interface reset remained unsupported, the
+  disabled general-call transport refused a bus-wide reset without I2C, and
+  physical fault injection remained fixture-blocked.
+- No post-upgrade USB-CDC soak, physical ALERT-pin capture, calibrated humidity
+  fixture, ESP32-S2 hardware run, address `0x45` run, or debugger run is claimed.
 
 ## [1.8.0] - 2026-07-23
 
@@ -413,7 +420,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1

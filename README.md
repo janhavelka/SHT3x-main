@@ -15,7 +15,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-This tree contains the `1.8.0` owner-safe API. The repository validation matrix
+This tree contains the `1.9.0` owner-safe API. The repository validation matrix
 covers the 118-test native fault/boundary suite, strict framework-neutral core
 compilation and Doxygen, repository contracts, package inspection, pinned
 Arduino PlatformIO builds for ESP32-S3/S2, and native ESP-IDF example builds.
@@ -29,6 +29,10 @@ validation. Check the exact commit's workflow result before citing CI evidence.
 Hardware validation has narrower evidence boundaries than software validation.
 The maintained [hardware validation guide](docs/hardware.md) is the sole source
 for accepted run metrics, artifact fingerprints, and remaining physical gaps.
+The post-pioarduino COM19 runs cover the Arduino ESP32-S3 command surface,
+including 0.5/1/2/4/10 mps periodic acquisition, ART, clock stretching,
+alert-limit read/write cleanup, heater control, owner-safe job cancellation,
+and recovery/reset paths without a long soak.
 
 Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
 through `tools/run_sht3x_hil.py --include-soak --soak-duration-s <seconds>`.
@@ -54,6 +58,14 @@ tracking a branch:
 ```ini
 lib_deps =
   https://github.com/janhavelka/SHT3x-main.git#<reviewed-full-commit-sha>
+```
+
+After the release tag is published, consumers may instead pin the immutable
+release tag:
+
+```ini
+lib_deps =
+  https://github.com/janhavelka/SHT3x-main.git#v1.9.0
 ```
 
 ### Manual
@@ -778,7 +790,7 @@ fault recovery, or production readiness until those rows have fixture evidence.
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - full release history
-- [docs/README.md](https://github.com/janhavelka/SHT3x-main/blob/main/docs/README.md) - maintained guides and claim boundary
+- [docs/README.md](docs/README.md) - maintained guides and claim boundary
 - [docs/hardware.md](docs/hardware.md) - hardware evidence status and HIL procedure
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component/example notes
 - [docs/tunnelmonitor-integration.md](docs/tunnelmonitor-integration.md) - current external-owner integration contract

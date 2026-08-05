@@ -21,7 +21,7 @@ boundaries belong in the evergreen guides below.
 
 ## Current Status
 
-- Version metadata is `1.8.0` in `library.json`, `idf_component.yml`, Doxyfile,
+- Version metadata is `1.9.0` in `library.json`, `idf_component.yml`, Doxyfile,
   and generated `include/SHT3x/Version.h`.
 - [The root README](../README.md) owns the current software/build status;
   [hardware.md](hardware.md) owns physical evidence and its limitations.
@@ -35,6 +35,9 @@ boundaries belong in the evergreen guides below.
   example-owned transfer assertions without sharing framework implementation.
 - CI covers native ESP-IDF S2/S3 builds, but physical pure-IDF execution remains
   untested.
+- Post-upgrade Arduino ESP32-S3 functional evidence is recorded in
+  [hardware.md](hardware.md); raw run artifacts remain in the external evidence
+  archive rather than this checkout.
 
 ## API Reference
 
