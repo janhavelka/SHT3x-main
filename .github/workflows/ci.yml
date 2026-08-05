@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  PLATFORMIO_VERSION: "6.1.19"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,7 +29,7 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio
-          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini', '.github/workflows/ci.yml') }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -36,7 +39,7 @@ jobs:
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          pip install platformio==6.1.18
+          pip install platformio==$PLATFORMIO_VERSION
 
       - name: Build ${{ matrix.environment }}
         run: pio run -e ${{ matrix.environment }}
@@ -53,7 +56,7 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio
-          key: ${{ runner.os }}-pio-native-${{ hashFiles('platformio.ini') }}
+          key: ${{ runner.os }}-pio-native-${{ hashFiles('platformio.ini', '.github/workflows/ci.yml') }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -63,7 +66,7 @@ jobs:
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          pip install platformio==6.1.18
+          pip install platformio==$PLATFORMIO_VERSION
 
       - name: Enforce core timing guard
         run: python tools/check_core_timing_guard.py
@@ -83,9 +86,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install PlatformIO
-        run: pip install platformio==6.1.18
+        run: pip install platformio==$PLATFORMIO_VERSION
 
-      - name: Install Doxygen
+      - name: Install Doxygen and Graphviz
         run: |
           sudo apt-get update
           sudo apt-get install --yes doxygen graphviz
@@ -100,7 +103,10 @@ jobs:
         run: python tools/check_hil_contract.py
 
       - name: Run HIL parser tests
-        run: python tools/test_run_i2c_hil_parser.py
+        run: python tools/test_run_sht3x_hil_parser.py
+
+      - name: Enforce documentation hygiene
+        run: python tools/check_docs_contract.py
 
       - name: Validate generated version header
         run: python scripts/generate_version.py check
@@ -124,12 +130,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-
-      - name: Enforce native ESP-IDF example contract
-        run: python tools/check_idf_example_contract.py
-
-      - name: Validate generated version header
-        run: python scripts/generate_version.py check
 
       - name: Build native ESP-IDF basic example (${{ matrix.idf_target }})
         shell: bash

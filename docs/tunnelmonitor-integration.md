@@ -1,12 +1,13 @@
 # TunnelMonitor-node Integration
 
-Last updated: 2026-07-23
+Last updated: 2026-08-05
 
 This guide describes the current integration boundary between SHT3x `1.8.0`
-and TunnelMonitor-node. The library is suitable for the owner's cooperative
-I2C model, but TunnelMonitor-node does not yet use this library in production.
-No TunnelMonitor-node source, branch, or repository state is changed by this
-guide.
+and TunnelMonitor-node. The local sibling checkout now exact-pins the annotated
+`v1.8.0` release and contains a private `Sht3xModule` plus a product-owned
+environment composition for `0x44` and `0x45`. This guide changes no
+TunnelMonitor-node source and does not treat its dirty working tree or unrun
+physical HIL as validated evidence.
 
 ## Ownership In Simple Terms
 
@@ -66,14 +67,28 @@ comparisons are wrap-safe over the supported operation interval.
 - General-call reset remains an owner/application policy because it affects the
   shared bus.
 
-## Work Still Outside This Library
+## Observed Consumer Status
 
-- Approve and exact-pin the SHT3x dependency in TunnelMonitor-node.
-- Implement an owner-private adapter and phase-aware post-probe NACK mapping.
-- Add native parity tests, then delete the duplicated direct SHT3x protocol
-  only after the adapter is authoritative.
-- Run the production TunnelMonitor task and adapter end to end on hardware.
+The local sibling source shows the intended integration completed in software:
 
-Those are consumer integration tasks, not unresolved SHT3x core defects. The
-current hardware evidence and its limits are maintained in
+- `platformio.ini` exact-pins `SHT3x-main` tag `v1.8.0`.
+- `Sht3xModule` privately owns one library instance, injects owner transport and
+  timing callbacks, uses passive `bind()`, and advances identified measurement
+  jobs through `pollJob()`.
+- The product environment owner composes independent `0x44` and `0x45` SHT3x
+  candidates with BME280 fallback instead of duplicating SHT3x protocol code.
+- Native tests cover binding, measurement timing, NACK classification, CRC and
+  timeout boundaries, cancellation, recovery/hotplug, and independent devices.
+
+The remaining consumer work is evidence, not another SHT3x abstraction:
+
+- Run the exact consumer commit's full software matrix after its current local
+  changes are finalized.
+- Run the production owner, both SHT3x addresses, hotplug/recovery, and
+  environment selection end to end on authorized hardware.
+- Re-review and deliberately update the exact pin only when a later SHT3x
+  release contains changes the consumer needs.
+
+These are consumer validation/release tasks, not unresolved SHT3x core defects.
+This library's hardware evidence and limits remain in
 [hardware.md](hardware.md).

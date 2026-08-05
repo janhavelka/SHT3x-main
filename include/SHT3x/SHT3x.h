@@ -242,6 +242,9 @@ public:
   ///       periodic mode; start that mode explicitly after reconciliation.
   ///       Returns BUSY rather than discarding an active job; cancel it first.
   ///       Invalid configuration leaves an existing idle binding unchanged.
+  /// @param config Configuration including transport and timing callbacks.
+  /// @return OK when the local binding is ready, BUSY for an active job, or a
+  ///         configuration error. No return path performs I2C.
   Status bind(const Config& config);
 
   /// Process one pending cooperative-job step with a one-callback budget.
@@ -260,12 +263,20 @@ public:
   /// @note Cancellation is observed only between pollJob() calls. An injected
   ///       transport callback is externally bounded but atomic from the
   ///       driver's perspective and cannot be interrupted by cancelJob().
+  /// @param nowMs Current timestamp from the Config::nowMs millisecond timebase.
+  /// @param maxInstructions Maximum transport callbacks authorized for this poll.
+  /// @param[out] result Active progress or exactly-once terminal provenance.
+  /// @return IN_PROGRESS while active, the terminal job status on completion,
+  ///         or a precondition/parameter error.
   Status pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& result);
 
   /// Schedule bounded destructive reconciliation into single-shot idle state.
   /// @note The job performs at most four transport callbacks across polls:
   ///       Break, soft reset, status command, and status read. Wait phases use
   ///       zero I2C. request.requestId must be nonzero.
+  /// @param request Nonzero owner identity and optional absolute deadline.
+  /// @return IN_PROGRESS when scheduled, BUSY if a job is active, or a
+  ///         parameter/precondition error. Scheduling performs no I2C.
   Status requestEnsureIdle(const JobRequest& request);
 
   /// Cancel the active cooperative job locally with zero I2C.
@@ -275,9 +286,18 @@ public:
   ///       Inspect effect for possible unread measurement data or
   ///       partial/indeterminate device state.
   ///       Invalid CancelReason values return INVALID_PARAM and leave the job active.
+  /// @param reason Owner-supplied cancellation reason.
+  /// @param[out] result Exactly-once terminal cancellation provenance.
+  /// @return CANCELLED for a requested cancellation, TIMEOUT for deadline
+  ///         expiry, MEASUREMENT_NOT_READY when none is active,
+  ///         NOT_INITIALIZED before binding, or INVALID_PARAM for an unknown
+  ///         reason. No path performs I2C.
   Status cancelJob(CancelReason reason, PollJobResult& result);
 
   /// Cancel an active measurement locally with zero I2C.
+  /// @return CANCELLED when the measurement was cancelled,
+  ///         MEASUREMENT_NOT_READY when no measurement job is active, or
+  ///         NOT_INITIALIZED before binding.
   Status cancelMeasurement();
 
   /// End the local driver session.
@@ -289,12 +309,14 @@ public:
   ///       identity; end() is an explicit session teardown and emits no result.
   void end();
 
-  /// Check if bind()/begin() completed successfully and end() has not been called
+  /// Check if bind()/begin() completed successfully and end() has not been called.
+  /// @return true while the driver has a valid local binding.
   bool isInitialized() const { return _initialized; }
 
   /// Get the active normalized configuration reference.
   /// @note The returned reference is owned by the driver and remains valid
   ///       until the next bind(), begin(), or end().
+  /// @return Reference to the driver's normalized configuration.
   const Config& getConfig() const { return _config; }
 
   // =========================================================================
@@ -329,6 +351,8 @@ public:
   ///       and resets the local restore cache to defaults. The recovery ladder
   ///       may stop after a successful probe without issuing a sensor reset only
   ///       when the prior hardware state was already verified and nonperiodic.
+  /// @return OK after a recovered default single-shot state, or the first
+  ///         recovery/reset failure.
   Status resetToDefaults();
 
   /// Recover communication and reapply cached settings.
@@ -336,16 +360,20 @@ public:
   ///       then reapplies cached settings. The recovery ladder may stop after a
   ///       successful probe without issuing a sensor reset. A failure can leave
   ///       hardware partially restored while the returned Status identifies the step.
+  /// @return OK after cached settings are restored, or the failing recovery or
+  ///         restore-step status.
   Status resetAndRestore();
 
   // =========================================================================
   // Driver State
   // =========================================================================
 
-  /// Get current driver state
+  /// Get current driver state.
+  /// @return Current local health/admission state.
   DriverState state() const { return _driverState; }
 
   /// Alias for state() used by shared diagnostics.
+  /// @return Current local health/admission state.
   DriverState driverState() const { return state(); }
 
   /// Check the legacy local health/admission state.
@@ -353,62 +381,77 @@ public:
   ///       passive bind() returns READY without I2C. OBSERVE_ONLY may still
   ///       authorize work while this returns false. Inspect operation results
   ///       and hardwareStateValid() for those separate facts.
+  /// @return true for READY or DEGRADED local state.
   bool isOnline() const {
     return _driverState == DriverState::READY ||
            _driverState == DriverState::DEGRADED;
   }
 
-  /// Check if periodic acquisition is currently active
+  /// Check if periodic acquisition is currently active.
+  /// @return true when the local mode is periodic or ART acquisition.
   bool isPeriodicActive() const { return _periodicActive; }
 
   /// True only after typed reconciliation established a known acquisition baseline.
   /// Raw/advanced command access and ambiguous transport failures invalidate it.
+  /// @return true when the driver has verified its acquisition-state baseline.
   bool hardwareStateValid() const { return _hardwareStateValid; }
 
   // =========================================================================
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful complete logical transport operation after bind()/begin()
+  /// Timestamp of last successful complete logical transport operation after bind()/begin().
+  /// @return Millisecond timestamp, or 0 when no tracked success exists.
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed tracked transport operation after bind()/begin()
+  /// Timestamp of last failed tracked transport operation after bind()/begin().
+  /// @return Millisecond timestamp, or 0 when no tracked failure exists.
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
   /// Timestamp of last tracked I2C attempt after bind()/begin().
   /// @note Includes successes, failures, and expected read-header NACKs.
+  /// @return Millisecond timestamp, or 0 when no tracked callback was attempted.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
   /// Most recent tracked transport error status.
   /// @note Validation, precondition, CRC, and sensor status-bit errors are
   ///       returned by the API that observes them but do not replace this value
   ///       unless they occur through a tracked transport wrapper.
+  /// @return Most recent tracked transport error, or OK before any such error.
   Status lastError() const { return _lastError; }
 
-  /// Consecutive logical-operation transport failures since last complete success
+  /// Consecutive logical-operation transport failures since last complete success.
+  /// @return Saturating consecutive-failure count.
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
 
-  /// Total logical-operation transport failure count for the current driver session
+  /// Total logical-operation transport failure count for the current driver session.
+  /// @return Saturating logical-failure count.
   uint32_t totalFailures() const { return _totalFailures; }
 
-  /// Total complete logical-operation transport success count for the current driver session
+  /// Total complete logical-operation transport success count for the current driver session.
+  /// @return Saturating logical-success count.
   uint32_t totalSuccess() const { return _totalSuccess; }
 
-  /// Total successful transport callbacks, including intermediate command writes
+  /// Total successful transport callbacks, including intermediate command writes.
+  /// @return Saturating successful-callback count.
   uint32_t transportSuccess() const { return _transportSuccess; }
 
   /// Total failed transport callbacks.
   /// @note Proven expected read-header NACK/not-ready responses are excluded
   ///       and counted by totalNotReady().
+  /// @return Saturating failed-callback count.
   uint32_t transportFailures() const { return _transportFailures; }
 
-  /// Total CRC/checksum failures and sensor-reported command rejections
+  /// Total CRC/checksum failures and sensor-reported command rejections.
+  /// @return Saturating protocol-failure count.
   uint32_t protocolFailures() const { return _protocolFailures; }
 
-  /// Total expected periodic read-header NACK/not-ready responses
+  /// Total expected periodic read-header NACK/not-ready responses.
+  /// @return Saturating expected-not-ready count.
   uint32_t totalNotReady() const { return _totalNotReady; }
 
-  /// Count of consecutive "not-ready" responses during periodic fetch
+  /// Count of consecutive "not-ready" responses during periodic fetch.
+  /// @return Saturating current periodic not-ready streak.
   uint32_t notReadyCount() const { return _notReadyCount; }
 
   // =========================================================================
@@ -422,24 +465,33 @@ public:
   Status requestMeasurement();
 
   /// Schedule a measurement correlated with caller identity and optional deadline.
+  /// @param request Nonzero owner identity and optional absolute deadline.
+  /// @return IN_PROGRESS when scheduled, BUSY if another job is active, or a
+  ///         parameter/precondition error. Scheduling performs no I2C.
   Status requestMeasurement(const JobRequest& request);
 
-  /// Check if measurement is ready to read
+  /// Check if measurement is ready to read.
+  /// @return true when a new measurement event awaits getMeasurement().
   bool measurementReady() const { return _measurementReady; }
 
   /// Check if a measurement request is pending completion.
+  /// @return true while a measurement job is active without a ready sample.
   bool measurementPending() const { return _measurementRequested && !_measurementReady; }
 
   /// True after at least one sample has been cached.
+  /// @return true when raw and compensated sample caches are valid.
   bool hasSample() const { return _hasSample; }
 
   /// Most recent measurement-path result from request, tick, pollJob, or readout.
+  /// @return Cached measurement-path status.
   Status lastMeasurementStatus() const { return _lastMeasurementStatus; }
 
   /// Current measurement status derived from cached state.
+  /// @return OK for a ready measurement, otherwise the cached measurement status.
   Status measurementStatus() const;
 
-  /// Timestamp of last completed sample (0 if none)
+  /// Timestamp of last completed sample.
+  /// @return Millisecond sample timestamp, or 0 if none has completed.
   uint32_t sampleTimestampMs() const { return _sampleTimestampMs; }
 
   /// Age of the last captured sample in milliseconds.
@@ -449,12 +501,16 @@ public:
     return _hasSample ? (nowMs - _sampleTimestampMs) : 0;
   }
 
-  /// Best-effort estimate of missed samples (periodic/ART mode)
+  /// Best-effort estimate of missed samples in periodic/ART mode.
+  /// @return Saturating estimate based on fetch timing.
   uint32_t missedSamplesEstimate() const { return _missedSamples; }
 
   /// Get measurement result (float)
   /// Returns MEASUREMENT_NOT_READY if not available
   /// Clears ready flag after successful read
+  /// @param[out] out Converted temperature and relative-humidity sample.
+  /// @return OK when a ready event was consumed, otherwise the current
+  ///         measurement or precondition status.
   Status getMeasurement(Measurement& out);
 
   /// Get last captured raw measurement values.
@@ -486,19 +542,27 @@ public:
   /// Set operating mode (SINGLE_SHOT, PERIODIC, ART).
   /// @note Switching into or out of periodic/ART can send Break and/or start
   ///       commands; cached mode is updated only after success.
+  /// @param mode Requested operating mode.
+  /// @return OK when applied, or a parameter/precondition/transport error.
   Status setMode(Mode mode);
 
-  /// Get current operating mode
+  /// Get current operating mode.
+  /// @param[out] out Receives the cached operating mode.
+  /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getMode(Mode& out) const;
 
-  /// Get a snapshot of current settings/state (no I2C)
+  /// Get a snapshot of current settings/state without I2C.
+  /// @param[out] out Receives cached configuration, state, and health fields.
+  /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getSettings(SettingsSnapshot& out) const;
 
   /// Get cached settings for restore-after-reset.
   /// @note This is the driver's desired restore plan, not a live sensor readback.
+  /// @return Desired restore-plan snapshot.
   CachedSettings getCachedSettings() const { return _cachedSettings; }
 
-  /// Check if cached settings are available
+  /// Check if cached settings are available.
+  /// @return true when the restore-plan snapshot is valid.
   bool hasCachedSettings() const { return _hasCachedSettings; }
 
   /// Get a snapshot of settings/state and attempt a non-disruptive status read.
@@ -509,6 +573,8 @@ public:
   ///       snapshot returns OK with statusValid=false and statusReadStatus=BUSY.
   ///       In OFFLINE state under LATCH_OFFLINE, readSettings() returns BUSY.
   ///       OBSERVE_ONLY records the state but still authorizes the attempt.
+  /// @param[out] out Receives cached settings and the status-read result.
+  /// @return OK for a valid snapshot, or a precondition/admission error.
   Status readSettings(SettingsSnapshot& out);
 
   // =========================================================================
@@ -563,16 +629,24 @@ public:
   /// @note If stopping an active periodic/ART mode succeeds but the restart
   ///       command fails, the sensor and driver are left in single-shot idle
   ///       while cached settings still describe the last fully applied plan.
+  /// @param rep Requested repeatability.
+  /// @return OK when applied, or a parameter/precondition/transport error.
   Status setRepeatability(Repeatability rep);
 
-  /// Get current repeatability
+  /// Get current repeatability.
+  /// @param[out] out Receives the cached repeatability.
+  /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getRepeatability(Repeatability& out) const;
 
   /// Set clock stretching mode for single-shot measurement and serial-number reads.
   /// @note Periodic/ART modes use Fetch Data and do not use this setting.
+  /// @param stretch Requested clock-stretching policy.
+  /// @return OK when applied, or a parameter/precondition error.
   Status setClockStretching(ClockStretching stretch);
 
-  /// Get current clock stretching mode
+  /// Get current clock stretching mode.
+  /// @param[out] out Receives the cached clock-stretching policy.
+  /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getClockStretching(ClockStretching& out) const;
 
   /// Set periodic rate; active periodic/ART modes are restarted and cached
@@ -580,24 +654,34 @@ public:
   /// @note If stopping an active periodic/ART mode succeeds but the restart
   ///       command fails, the sensor and driver are left in single-shot idle
   ///       while cached settings still describe the last fully applied plan.
+  /// @param rate Requested periodic measurement rate.
+  /// @return OK when applied, or a parameter/precondition/transport error.
   Status setPeriodicRate(PeriodicRate rate);
 
-  /// Get current periodic rate
+  /// Get current periodic rate.
+  /// @param[out] out Receives the cached periodic rate.
+  /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getPeriodicRate(PeriodicRate& out) const;
 
   /// Start periodic measurements.
   /// @note Sends one start command when idle. If already in periodic/ART, it
   ///       first sends Break and only updates cached settings after success.
+  /// @param rate Requested periodic measurement rate.
+  /// @param rep Requested repeatability.
+  /// @return OK when periodic acquisition starts, or a parameter/precondition/
+  ///         transport error.
   Status startPeriodic(PeriodicRate rate, Repeatability rep);
 
   /// Start ART (accelerated response time) mode.
   /// @note Sends one ART command when idle. If already in periodic/ART, it
   ///       first sends Break and only updates cached settings after success.
+  /// @return OK when ART acquisition starts, or a precondition/transport error.
   Status startArt();
 
   /// Stop periodic/ART mode (Break).
   /// @note Sends one Break command when active. After Break is accepted, local
   ///       state is updated before the bounded 1 ms processing wait.
+  /// @return OK when idle, or a precondition/transport error.
   Status stopPeriodic();
 
   // =========================================================================
@@ -608,12 +692,18 @@ public:
   /// @note Returns BUSY while any cooperative job or periodic/ART acquisition
   ///       is active. Use readStatusWithModeRestore()
   ///       when ALERT diagnosis is needed in periodic/ART modes.
+  /// @param[out] raw Receives the CRC-validated raw status word.
+  /// @return OK on success, BUSY while blocked by acquisition, CRC_MISMATCH for
+  ///         an invalid frame, or a transport/precondition error.
   Status readStatus(uint16_t& raw);
 
   /// Read and parse status register without clearing flags.
   /// @note Returns BUSY while any cooperative job or periodic/ART acquisition
   ///       is active. Use readStatusWithModeRestore()
   ///       when ALERT diagnosis is needed in periodic/ART modes.
+  /// @param[out] out Receives decoded status bits and the raw word.
+  /// @return OK on success, BUSY while blocked by acquisition, CRC_MISMATCH for
+  ///         an invalid frame, or a transport/precondition error.
   Status readStatus(StatusRegister& out);
 
   /// Read status, breaking and restoring periodic/ART mode when needed.
@@ -626,10 +716,14 @@ public:
   ///       restarted successfully. If both status read and restore fail, the
   ///       top-level return reports restoreStatus; inspect statusReadStatus for
   ///       the earlier status-read failure.
+  /// @param[out] out Receives stop/read/restore provenance and decoded status.
+  /// @return OK when status was read and the original mode is established, or
+  ///         the failing stop/read/restore status.
   Status readStatusWithModeRestore(StatusReadSnapshot& out);
 
   /// Clear status flags. This is destructive for status bits 15, 11, 10, and 4.
   /// @note Returns BUSY while periodic/ART acquisition is active.
+  /// @return OK when flags are cleared, or a precondition/transport error.
   Status clearStatus();
 
   /// Enable/disable heater.
@@ -637,10 +731,14 @@ public:
   ///       mitigation workflows, not normal measurement. Self-heating can affect
   ///       temperature and humidity readings. Stop periodic/ART before changing
   ///       it. Cached heater state is updated only after success.
+  /// @param enable true to enable the heater, false to disable it.
+  /// @return OK when applied, or a precondition/transport error.
   Status setHeater(bool enable);
 
   /// Read heater state from status register.
   /// @note Follows readStatus() restrictions in active periodic/ART mode.
+  /// @param[out] enabled Receives the decoded heater state.
+  /// @return Status returned by the underlying status-register read.
   Status readHeaterStatus(bool& enabled);
 
   /// Soft reset the device.
@@ -649,6 +747,7 @@ public:
   ///       is not preserved; on reset success pending measurement/sample state
   ///       is cleared, mode is set to SINGLE_SHOT, and the restore cache is not
   ///       automatically rewritten.
+  /// @return OK after the reset delay, or a precondition/transport error.
   Status softReset();
 
   /// Interface reset sequence (SCL pulse recovery).
@@ -660,6 +759,8 @@ public:
   ///       callback may still have produced SCL edges. Callback failure is not
   ///       a tracked transport failure and success does not prove a sensor reset
   ///       occurred.
+  /// @return Callback status, UNSUPPORTED when no callback is configured, or a
+  ///         driver precondition error.
   Status interfaceReset();
 
   /// General call reset (bus-wide).
@@ -668,6 +769,8 @@ public:
   ///       It is disabled by default and is used by recover() only when that
   ///       explicit opt-in is set. On success, local measurement state is
   ///       cleared and mode is set to SINGLE_SHOT.
+  /// @return OK when the broadcast succeeds, UNSUPPORTED when disabled, or a
+  ///         precondition/transport error.
   Status generalCallReset();
 
   // =========================================================================
@@ -692,17 +795,23 @@ public:
   /// @note Alert mode is active during periodic acquisition, but alert-limit
   ///       commands are not documented as valid while periodic/ART is running.
   ///       This API returns BUSY in active periodic/ART mode.
+  /// @param kind Alert-limit register to read.
+  /// @param[out] value Receives the CRC-validated packed RH7/T9 word.
   /// @return Status::Ok() on success, CRC_MISMATCH on invalid response CRC, BUSY
   ///         when acquisition blocks access, or an I2C/precondition error.
   Status readAlertLimitRaw(AlertLimitKind kind, uint16_t& value);
 
   /// Read and decode alert limit.
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @param kind Alert-limit register to read.
+  /// @param[out] out Receives raw and decoded alert-limit values.
   /// @return Status::Ok() on success or the status from readAlertLimitRaw().
   Status readAlertLimit(AlertLimitKind kind, AlertLimit& out);
 
   /// Write raw alert limit word (CRC is computed internally).
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @param kind Alert-limit register to write.
+  /// @param value Packed RH7/T9 alert-limit word.
   /// @return Status::Ok() on success, COMMAND_FAILED or WRITE_CRC_ERROR when
   ///         status verification reports a sensor-side rejection, BUSY when
   ///         acquisition blocks access, or an I2C/precondition error.
@@ -710,6 +819,9 @@ public:
 
   /// Encode and write alert limit from physical values.
   /// @note Returns BUSY in active periodic/ART mode.
+  /// @param kind Alert-limit register to write.
+  /// @param temperatureC Temperature threshold in degrees Celsius.
+  /// @param humidityPct Relative-humidity threshold in percent.
   /// @return Status::Ok() on success, INVALID_PARAM for non-finite inputs, or
   ///         the status from writeAlertLimitRaw().
   Status writeAlertLimit(AlertLimitKind kind, float temperatureC, float humidityPct);
@@ -769,18 +881,28 @@ public:
   static uint32_t convertHumidityPct_x100(uint16_t raw);
 
   /// Convert raw temperature to signed milli-degrees Celsius.
+  /// @param raw Raw 16-bit temperature word.
+  /// @return Temperature rounded to nearest milli-degree Celsius.
   /// @note Uses a 64-bit intermediate and rounds to the nearest milli-degree.
   static int32_t convertTemperatureMilliCelsius(uint16_t raw);
 
   /// Convert raw temperature with an explicit integer rounding policy.
+  /// @param raw Raw 16-bit temperature word.
+  /// @param rounding Integer conversion rounding policy.
+  /// @return Temperature in milli-degrees Celsius.
   static int32_t convertTemperatureMilliCelsius(uint16_t raw,
                                                 MilliRounding rounding);
 
   /// Convert raw humidity to signed milli-percent relative humidity.
+  /// @param raw Raw 16-bit humidity word.
+  /// @return Relative humidity rounded to nearest milli-percent.
   /// @note Uses a 64-bit intermediate and rounds to the nearest milli-percent.
   static int32_t convertHumidityMilliPercent(uint16_t raw);
 
   /// Convert raw humidity with an explicit integer rounding policy.
+  /// @param raw Raw 16-bit humidity word.
+  /// @param rounding Integer conversion rounding policy.
+  /// @return Relative humidity in milli-percent.
   static int32_t convertHumidityMilliPercent(uint16_t raw,
                                              MilliRounding rounding);
 

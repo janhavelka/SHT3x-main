@@ -66,32 +66,15 @@
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
       "tools/run_sht3x_hil.py",
-      "tools/run_i2c_hil.py"
+      "tools/sht3x_cli_contract.py"
     ],
     "exclude": [
-      ".github/**",
-      ".idea/**",
-      ".pio/**",
-      ".pioignore",
-      ".vscode/**",
-      "build/**",
       "examples/idf/basic/build/**",
       "examples/idf/basic/sdkconfig",
       "examples/idf/basic/sdkconfig.old",
       "examples/idf/basic/dependencies.lock",
       "examples/idf/basic/managed_components/**",
-      "examples/idf/basic/compile_commands.json",
-      "hil_logs/**",
-      "test/**",
-      "*.tar",
-      "*.tar.gz",
-      "*.tgz",
-      "*.zip",
-      "docs/**/*.pdf",
-      "docs/**/*.xlsx",
-      ".doxygen/**",
-      "docs/doxygen/**",
-      "docs/reference/vendor/**"
+      "examples/idf/basic/compile_commands.json"
     ]
   }
 }

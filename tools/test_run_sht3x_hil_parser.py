@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small parser checks for tools/run_i2c_hil.py."""
+"""Small parser checks for tools/run_sht3x_hil.py."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "tools" / "run_i2c_hil.py"
+RUNNER = ROOT / "tools" / "run_sht3x_hil.py"
 
 
 def load_runner():
-    spec = importlib.util.spec_from_file_location("run_i2c_hil_under_test", RUNNER)
+    spec = importlib.util.spec_from_file_location("run_sht3x_hil_under_test", RUNNER)
     if spec is None or spec.loader is None:
-        raise RuntimeError("cannot import run_i2c_hil.py")
+        raise RuntimeError("cannot import run_sht3x_hil.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -85,6 +85,7 @@ def fake_args() -> argparse.Namespace:
         expect_library_version="",
         expect_library_commit="",
         allow_dirty_firmware=True,
+        board="esp32s3",
     )
 
 
@@ -98,15 +99,68 @@ def test_pass_command() -> None:
     spec = hil.version_step()
     result, notes, parsed = classify(
         spec,
+        "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n"
         "=== Version Info ===\n  SHT3x library version: 1.5.0\n  SHT3x library full: 1.5.0+abc\n",
     )
     assert result == hil.RESULT_PASS, notes
     assert parsed["library_version"] == "1.5.0"
 
 
+def test_runtime_framework_identity_parses_for_both_examples() -> None:
+    arduino = hil.parse_command_output(
+        "version",
+        "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n",
+    )
+    assert arduino["framework"] == "Arduino"
+    assert arduino["target"] == "esp32s3dev"
+    assert arduino["arduino_core_version"] == "3.3.11"
+    assert arduino["idf_version"] == "v5.5.5"
+
+    idf = hil.parse_command_output(
+        "version",
+        "framework=native-esp-idf target=esp32s3 idf_version=v5.5.5\n",
+    )
+    assert idf["framework"] == "native-esp-idf"
+    assert idf["target"] == "esp32s3"
+    assert idf["idf_version"] == "v5.5.5"
+
+
+def test_version_gate_rejects_missing_or_wrong_runtime_identity() -> None:
+    spec = hil.version_step()
+    args = fake_args()
+    for text, expected_note in (
+        ("SHT3x library version: 1.8.0\n", "runtime framework identity"),
+        (
+            "framework=Arduino target=esp32s2dev arduino_core=3.3.11 "
+            "idf_version=v5.5.5\nSHT3x library version: 1.8.0\n",
+            "does not match board",
+        ),
+        (
+            "framework=unknown target=unknown idf_version=v5.5.5\n"
+            "SHT3x library version: 1.8.0\n",
+            "runtime framework identity",
+        ),
+        (
+            "framework=Arduino target=esp32s3dev arduino_core=unknown "
+            "idf_version=v5.5.5\nSHT3x library version: 1.8.0\n",
+            "runtime Arduino core version",
+        ),
+        (
+            "framework=native-esp-idf target=esp32s3 idf_version=unknown\n"
+            "SHT3x library version: 1.8.0\n",
+            "runtime ESP-IDF version",
+        ),
+    ):
+        parsed = hil.parse_command_output(spec.command, text)
+        result, notes = hil.classify(text, spec, False, parsed, args)
+        assert result == hil.RESULT_FAIL
+        assert expected_note in notes
+
+
 def test_version_requires_expected_clean_commit() -> None:
     spec = hil.version_step()
     text = (
+        "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n"
         "SHT3x library version: 1.7.0\n"
         "SHT3x library commit: 5409793f9f6e (clean)\n"
     )
@@ -116,6 +170,7 @@ def test_version_requires_expected_clean_commit() -> None:
         expect_library_version="1.7.0",
         expect_library_commit="5409793f9f6e69f4",
         allow_dirty_firmware=False,
+        board="esp32s3",
     )
     result, notes = hil.classify(text, spec, False, parsed, args)
     assert result == hil.RESULT_PASS, notes
@@ -130,19 +185,23 @@ def test_version_rejects_stale_or_dirty_firmware() -> None:
         expect_library_version="1.7.0",
         expect_library_commit="5409793f9f6e",
         allow_dirty_firmware=False,
+        board="esp32s3",
     )
     for text, expected_note in (
         (
+            "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n"
             "SHT3x library version: 1.6.1\n"
             "SHT3x library commit: 5409793f9f6e (clean)\n",
             "library version",
         ),
         (
+            "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n"
             "SHT3x library version: 1.7.0\n"
             "SHT3x library commit: deadbeef0000 (clean)\n",
             "library commit",
         ),
         (
+            "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n"
             "SHT3x library version: 1.7.0\n"
             "SHT3x library commit: 5409793f9f6e (dirty)\n",
             "firmware git status",
@@ -157,6 +216,7 @@ def test_version_rejects_stale_or_dirty_firmware() -> None:
 def test_version_rejects_ambiguous_short_commit() -> None:
     spec = hil.version_step()
     text = (
+        "framework=Arduino target=esp32s3dev arduino_core=3.3.11 idf_version=v5.5.5\n"
         "SHT3x library version: 1.7.0\n"
         "SHT3x library commit: 5 (clean)\n"
     )
@@ -166,6 +226,7 @@ def test_version_rejects_ambiguous_short_commit() -> None:
         expect_library_version="1.7.0",
         expect_library_commit="5409793f9f6e",
         allow_dirty_firmware=False,
+        board="esp32s3",
     )
     result, notes = hil.classify(text, spec, False, parsed, args)
     assert result == hil.RESULT_FAIL
@@ -451,7 +512,7 @@ def test_driver_health_offline_flag_fails() -> None:
 
 
 def test_status_restore_snapshot_parses() -> None:
-    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore confirm")
     text = (
         "status_restore:\n"
         "result: OK code=0 detail=0 msg=\n"
@@ -468,7 +529,7 @@ def test_status_restore_snapshot_parses() -> None:
 
 
 def test_status_restore_boolean_snapshot_parses() -> None:
-    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore confirm")
     text = (
         "status_restore:\n"
         "result: OK code=0 detail=0 msg=\n"
@@ -499,7 +560,7 @@ def test_missing_status_restore_snapshot_fails() -> None:
 
 
 def test_status_restore_missing_fields_fails() -> None:
-    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore confirm")
     text = (
         "status_restore:\n"
         "result: OK code=0 detail=0 msg=\n"
@@ -513,7 +574,7 @@ def test_status_restore_missing_fields_fails() -> None:
 
 
 def test_status_restore_invalid_snapshot_fails() -> None:
-    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore confirm")
     text = (
         "status_restore:\n"
         "result: OK code=0 detail=0 msg=\n"
@@ -529,7 +590,7 @@ def test_status_restore_invalid_snapshot_fails() -> None:
 
 
 def test_status_restore_err_substatus_fails() -> None:
-    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore")
+    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore confirm")
     text = (
         "status_restore:\n"
         "result: OK code=0 detail=0 msg=\n"
@@ -893,9 +954,9 @@ def test_final_cleanup_is_deterministic_and_verifiable() -> None:
         "periodic stop",
         "heater off",
         "heater status",
-        "alert disable",
+        "alert disable confirm",
         "alert show",
-        "clear_status",
+        "clear_status confirm",
         "mode single",
         "stretch 0",
         "repeat high",
@@ -1071,11 +1132,310 @@ def test_operator_required_classification() -> None:
     assert notes == hil.RESULT_OPERATOR
 
 
+def test_optional_reset_callbacks_classify_shipped_numeric_errors_as_unsupported() -> None:
+    for spec, output in (
+        (
+            hil.destructive_commands(True)[-1],
+            "greset: ERR code=2 detail=0 msg=General call reset disabled",
+        ),
+        (
+            hil.destructive_commands(False)[-1],
+            "iface_reset: ERR code=2 detail=0 msg=Bus reset callback not set",
+        ),
+    ):
+        assert spec.unsupported_ok
+        parsed = hil.parse_command_output(spec.command, output)
+        result, notes = hil.classify(output, spec, False, parsed, fake_args())
+        assert result == hil.RESULT_SKIP
+        assert notes == hil.SKIP_UNSUPPORTED
+
+
+def build_custom_plan(commands: str, *extra_args: str):
+    executable = [
+        line.strip() for line in commands.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    injected_version = not executable or executable[0] != "version"
+    if injected_version:
+        commands = "version\n" + commands
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "commands.txt"
+    path.write_text(commands, encoding="utf-8")
+    args = hil.parse_args(["--dry-run", "--commands", str(path), *extra_args])
+    try:
+        specs, skipped = hil.build_plan(args)
+    except Exception:
+        temp_dir.cleanup()
+        raise
+    temp_dir.cleanup()
+    assert skipped == []
+    return args, specs[1:] if injected_version else specs
+
+
+def raw_custom_plan_error(commands: str, *extra_args: str) -> str:
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "commands.txt"
+    path.write_text(commands, encoding="utf-8")
+    args = hil.parse_args(["--dry-run", "--commands", str(path), *extra_args])
+    try:
+        hil.build_plan(args)
+    except hil.CustomPlanError as exc:
+        temp_dir.cleanup()
+        return str(exc)
+    temp_dir.cleanup()
+    raise AssertionError("custom plan unexpectedly passed safety classification")
+
+
+def custom_plan_error(commands: str, *extra_args: str) -> str:
+    try:
+        build_custom_plan(commands, *extra_args)
+    except hil.CustomPlanError as exc:
+        return str(exc)
+    raise AssertionError("custom plan unexpectedly passed safety classification")
+
+
+def test_safe_custom_plan_keeps_canonical_acceptance_criteria() -> None:
+    args, specs = build_custom_plan(
+        "# safe plan\nversion\nscan\nprobe\nstatus\nsingle high\ndrv\n"
+    )
+    by_command = {spec.command: spec for spec in specs}
+    assert by_command["version"].validators == ("version",)
+    assert by_command["scan"].validators == ("expected_address",)
+    assert by_command["status"].validators == ("status_word",)
+    assert by_command["single high"].validators == ("measurement_plausible",)
+    assert by_command["drv"].validators == ("driver_ready",)
+    assert all(not spec.review_only for spec in specs)
+    assert hil.cleanup_specs_for_plan(args, specs) == []
+
+
+def test_custom_greset_cannot_bypass_bus_wide_and_destructive_opt_ins() -> None:
+    sequence = "greset arm\ngreset confirm\n"
+    assert "requires --include-bus-wide-reset" in custom_plan_error(sequence)
+    assert "requires --include-destructive" in custom_plan_error(
+        sequence, "--include-bus-wide-reset"
+    )
+    _, specs = build_custom_plan(
+        sequence, "--include-bus-wide-reset", "--include-destructive"
+    )
+    assert all(spec.destructive for spec in specs)
+    assert all(spec.requires_opt_in == "--include-bus-wide-reset" for spec in specs)
+    assert specs[0].recovery_command == "greset disarm"
+    assert specs[1].recovery_command == "greset disarm"
+
+
+def test_custom_greset_requires_adjacent_one_shot_arm() -> None:
+    flags = ("--include-bus-wide-reset", "--include-destructive")
+    assert "immediately preceding" in custom_plan_error("greset confirm\n", *flags)
+    assert "immediately followed" in custom_plan_error("greset arm\n", *flags)
+    assert "immediately followed" in custom_plan_error(
+        "greset arm\nstatus\ngreset confirm\n", *flags
+    )
+
+
+def test_custom_heater_enable_requires_opt_in_and_cleanup() -> None:
+    assert "requires --include-heater" in custom_plan_error("heater on confirm\n")
+    args, specs = build_custom_plan("heater on confirm\n", "--include-heater")
+    assert specs[0].destructive
+    assert specs[0].recovery_command == "heater off"
+    recovery = hil.recovery_spec_for(specs[0])
+    assert recovery is not None
+    assert recovery.command == "heater off"
+    cleanup = [spec.command for spec in hil.cleanup_specs_for_plan(args, specs)]
+    assert cleanup[:3] == ["periodic stop", "heater off", "heater status"]
+
+
+def test_custom_mutations_require_exact_confirmation_syntax() -> None:
+    cases = (
+        ("heater on\n", ("--include-heater",)),
+        ("alert set hs 60 80\n", ("--include-alert-write",)),
+        ("alert disable\n", ("--include-alert-write",)),
+        ("command write 0x30A2\n", ("--include-destructive",)),
+        ("command read 0xF32D 3\n", ("--include-destructive",)),
+        ("clear_status\n", ("--include-destructive",)),
+        ("defaults\n", ("--include-destructive",)),
+        ("status_restore\n", ("--include-destructive",)),
+    )
+    for command, flags in cases:
+        assert "mutation-like" in custom_plan_error(command, *flags)
+
+
+def test_default_plan_exercises_zero_i2c_job_ownership_contract() -> None:
+    commands = hil.default_executable_commands()
+    subsequence = [
+        "xfer_reset",
+        "request",
+        "job current",
+        "xfer_assert 0 0 0",
+        "job cancel",
+        "result",
+        "xfer_assert 0 0 0",
+    ]
+    start = commands.index("xfer_reset")
+    assert commands[start:start + len(subsequence)] == subsequence
+
+
+def test_custom_raw_writes_cannot_bypass_risk_flags() -> None:
+    for command in ("command write 0x30A2 confirm", "command write_data 0x1234 0x5678 confirm"):
+        assert "requires --include-destructive" in custom_plan_error(command + "\n")
+        _, specs = build_custom_plan(command + "\n", "--include-destructive")
+        assert specs[0].destructive
+        assert specs[0].recovery_command == "settings"
+
+    assert "requires --include-alert-write" in custom_plan_error(
+        "alert raw write hs 0xCD33 confirm\n"
+    )
+    _, specs = build_custom_plan(
+        "alert raw write hs 0xCD33 confirm\n", "--include-alert-write"
+    )
+    assert specs[0].destructive
+    assert specs[0].recovery_command == "alert disable confirm"
+
+
+def test_raw_command_words_cannot_bypass_feature_specific_opt_ins() -> None:
+    assert "additionally requires --include-heater" in custom_plan_error(
+        "command write 0x306D confirm\n", "--include-destructive"
+    )
+    _, specs = build_custom_plan(
+        "command write 0x306D confirm\n", "--include-destructive", "--include-heater"
+    )
+    assert specs[0].destructive
+    assert specs[0].recovery_command == "heater off"
+
+    assert "additionally requires --include-alert-write" in custom_plan_error(
+        "command write_data 0x611D 0xCD33 confirm\n", "--include-destructive"
+    )
+    _, specs = build_custom_plan(
+        "command write_data 0x611D 0xCD33 confirm\n",
+        "--include-destructive",
+        "--include-alert-write",
+    )
+    assert specs[0].recovery_command == "alert disable confirm"
+
+    assert "additionally requires --include-all-periodic-rates" in custom_plan_error(
+        "command write 0x2737 confirm\n", "--include-destructive"
+    )
+    _, specs = build_custom_plan(
+        "command write 0x2737 confirm\n",
+        "--include-destructive",
+        "--include-all-periodic-rates",
+    )
+    assert specs[0].destructive
+    assert specs[0].recovery_command == "periodic stop"
+
+    assert "additionally requires --include-heater" in custom_plan_error(
+        "command read 0x306D 1 confirm\n", "--include-destructive"
+    )
+    _, specs = build_custom_plan(
+        "command read 0x306D 1 confirm\n",
+        "--include-destructive",
+        "--include-heater",
+    )
+    assert specs[0].recovery_command == "heater off"
+    assert "command read: OK" in specs[0].expected_any
+    assert "Command 0x" in specs[0].expected_any
+
+
+def test_custom_soak_and_all_rate_commands_require_their_opt_ins() -> None:
+    assert "exceeds the 100000-operation stress limit" in custom_plan_error(
+        "stress 100001\n", "--include-soak"
+    )
+    assert "requires --include-soak" in custom_plan_error("stress 37\n")
+    _, specs = build_custom_plan("stress 37\n", "--include-soak")
+    assert specs[0].validators == hil.STRESS_VALIDATORS
+
+    assert "requires --include-soak" in custom_plan_error("i2c_soak 60\n")
+    _, specs = build_custom_plan("i2c_soak 60\n", "--include-soak")
+    assert specs[0].validators == hil.I2C_SOAK_VALIDATORS
+
+    assert "requires --include-all-periodic-rates" in custom_plan_error(
+        "periodic start 10 medium\n"
+    )
+    _, specs = build_custom_plan(
+        "periodic start 10 medium\n", "--include-all-periodic-rates"
+    )
+    assert specs[0].recovery_command == "periodic stop"
+
+    _, specs = build_custom_plan("periodic start 1 high\n")
+    assert specs[0].requires_opt_in is None
+    assert specs[0].recovery_command == "periodic stop"
+
+
+def test_custom_operator_procedures_require_matching_opt_ins() -> None:
+    assert "requires --include-output-tests" in custom_plan_error(
+        "ALERT output/GPIO procedure\n"
+    )
+    _, specs = build_custom_plan(
+        "ALERT output/GPIO procedure\n", "--include-output-tests"
+    )
+    assert specs[0].operator_check and not specs[0].send
+
+    assert "requires --include-fault-tests" in custom_plan_error(
+        "fault/unplug/CRC-injection procedure\n"
+    )
+    _, specs = build_custom_plan(
+        "fault/unplug/CRC-injection procedure\n", "--include-fault-tests"
+    )
+    assert specs[0].fixture_required and not specs[0].send
+
+
+def test_unknown_custom_commands_are_rejected_even_with_review_opt_in() -> None:
+    assert "authoritative CLI contract" in custom_plan_error("frobnicate sensor\n")
+    assert "authoritative CLI contract" in custom_plan_error(
+        "frobnicate sensor\n", "--allow-custom-read-only-review"
+    )
+    assert "mutation-like" in custom_plan_error(
+        "mode periodic\n", "--allow-custom-read-only-review"
+    )
+
+
+def test_empty_custom_plan_is_rejected() -> None:
+    assert "contains no executable commands" in raw_custom_plan_error("# comments only\n\n")
+
+
+def test_custom_plan_requires_runtime_identity_first() -> None:
+    error = raw_custom_plan_error("status\nversion\n")
+    assert "must begin with exact 'version'" in error
+
+
+def test_noncanonical_read_only_custom_command_needs_explicit_review_opt_in() -> None:
+    assert "requires --include-destructive" in custom_plan_error(
+        "command read 0xF32D 3 confirm\n"
+    )
+    args, specs = build_custom_plan(
+        "command read 0xF32D 3 confirm\n", "--include-destructive"
+    )
+    assert specs[0].destructive
+    assert specs[0].group == "destructive"
+    assert specs[0].recovery_command == "settings"
+    assert hil.cleanup_specs_for_plan(args, specs)
+
+
+def test_custom_mutation_plan_gets_deterministic_final_cleanup() -> None:
+    args, specs = build_custom_plan(
+        "heater on confirm\nalert set hs 60 80 confirm\n",
+        "--include-heater",
+        "--include-alert-write",
+    )
+    cleanup = [spec.command for spec in hil.cleanup_specs_for_plan(args, specs)]
+    assert cleanup == [
+        "periodic stop",
+        "heater off",
+        "heater status",
+        "alert disable confirm",
+        "alert show",
+        "mode single",
+        "stretch 0",
+        "repeat high",
+        "drv",
+        "settings",
+    ]
+
+
 def main() -> int:
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
-    print("test_run_i2c_hil_parser: OK")
+    print("test_run_sht3x_hil_parser: OK")
     return 0
 
 

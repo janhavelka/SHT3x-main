@@ -5,7 +5,7 @@
 #include <Arduino.h>
 
 #include "common/BoardConfig.h"
-#include "common/BusDiag.h"
+#include "common/I2cScanner.h"
 #include "common/I2cTransport.h"
 #include "common/Sht3xCli.h"
 
@@ -71,7 +71,15 @@ void arduinoYield(void*) {
 }
 
 void arduinoScanBus(void*) {
-  bus_diag::scan();
+  i2c_scanner::scan(Wire);
+}
+
+sht3x_cli::TransferStats arduinoTransferStats(void*) {
+  return transport::transferStats();
+}
+
+void arduinoResetTransferStats(void*) {
+  transport::resetTransferStats();
 }
 
 void readSerialInput() {
@@ -91,9 +99,12 @@ void readSerialInput() {
 
     if (c == '\n' || c == '\r') {
       if (overflow) {
+        sht3x_cli::logWarn("Input line too long (maximum %u characters); command discarded",
+                           static_cast<unsigned>(sizeof(input) - 1U));
         len = 0;
         input[0] = '\0';
         overflow = false;
+        sht3x_cli::printPrompt();
         continue;
       }
       if (len > 0U) {
@@ -131,6 +142,16 @@ void setup() {
   cliPlatform.nowMs = arduinoNowMs;
   cliPlatform.yield = arduinoYield;
   cliPlatform.scanBus = arduinoScanBus;
+  cliPlatform.getTransferStats = arduinoTransferStats;
+  cliPlatform.resetTransferStats = arduinoResetTransferStats;
+  cliPlatform.framework = "Arduino";
+  cliPlatform.arduinoCoreVersion = ESP.getCoreVersion();
+  cliPlatform.espIdfVersion = ESP.getSdkVersion();
+#ifdef SHT3X_BUILD_TARGET
+  cliPlatform.buildTarget = SHT3X_BUILD_TARGET;
+#else
+  cliPlatform.buildTarget = "unknown";
+#endif
   cliPlatform.buildDate = __DATE__;
   cliPlatform.buildTime = __TIME__;
   sht3x_cli::setPlatform(cliPlatform);
@@ -143,7 +164,7 @@ void setup() {
   }
   sht3x_cli::logInfo("I2C initialized (SDA=%d, SCL=%d)", board::I2C_SDA, board::I2C_SCL);
 
-  bus_diag::scan();
+  i2c_scanner::scan(Wire);
 
   SHT3x::Config& cfg = sht3x_cli::config();
   cfg.i2cWrite = transport::wireWrite;
@@ -158,8 +179,8 @@ void setup() {
   cfg.offlineThreshold = 5;
   sht3x_cli::configReady() = true;
 
-  SHT3x::Status st = sht3x_cli::device().begin(cfg);
-  if (!st.ok()) {
+  SHT3x::Status st = sht3x_cli::beginOwnerSafe();
+  if (st.code != SHT3x::Err::IN_PROGRESS) {
     sht3x_cli::logError("Failed to initialize device: code=%u detail=%ld msg=%s",
                         static_cast<unsigned>(st.code),
                         static_cast<long>(st.detail),
@@ -167,7 +188,7 @@ void setup() {
     return;
   }
 
-  sht3x_cli::logInfo("Device initialized successfully");
+  sht3x_cli::logInfo("Device bound; owner-safe ensure-idle reconciliation scheduled");
   sht3x_cli::printDriverHealth();
   sht3x_cli::printHelp();
   sht3x_cli::printPrompt();

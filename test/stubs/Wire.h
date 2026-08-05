@@ -7,7 +7,12 @@
 
 class TwoWire {
 public:
-  void begin(int sda = -1, int scl = -1) { (void)sda; (void)scl; }
+  bool begin(int sda = -1, int scl = -1, uint32_t frequency = 0U) {
+    (void)sda;
+    (void)scl;
+    (void)frequency;
+    return _beginResult;
+  }
   void setClock(uint32_t freq) { _clockHz = freq; _clockSetCalls++; }
   void setTimeOut(uint32_t timeoutMs) { _timeoutMs = timeoutMs; }
   uint32_t getTimeOut() const { return _timeoutMs; }
@@ -59,6 +64,8 @@ public:
     _requestFromResult = 0;
   }
 
+  void _setBeginResult(bool result) { _beginResult = result; }
+
   bool _lastStopWasTrue() const { return _lastStop; }
   uint32_t _readCallCount() const { return _readCalls; }
   void _clearReadCallCount() { _readCalls = 0; }
@@ -77,6 +84,7 @@ private:
   uint32_t _readCalls = 0;
   bool _useRequestFromOverride = false;
   size_t _requestFromResult = 0;
+  bool _beginResult = true;
 };
 
 extern TwoWire Wire;

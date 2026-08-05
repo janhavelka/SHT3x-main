@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import py_compile
 import re
 import subprocess
@@ -11,11 +12,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "tools" / "run_i2c_hil.py"
+RUNNER = ROOT / "tools" / "run_sht3x_hil.py"
 HARDWARE = ROOT / "docs" / "hardware.md"
 README = ROOT / "README.md"
 DOCS_INDEX = ROOT / "docs" / "README.md"
 GITIGNORE = ROOT / ".gitignore"
+LIBRARY_JSON = ROOT / "library.json"
 
 DEFAULT_MARKER_RE = re.compile(
     r"<!-- BEGIN DEFAULT_HIL_COMMANDS -->\s*```text\s*(.*?)\s*```\s*<!-- END DEFAULT_HIL_COMMANDS -->",
@@ -81,9 +83,9 @@ def check_tracked_hil_artifacts() -> None:
 
 
 def import_runner():
-    spec = importlib.util.spec_from_file_location("run_i2c_hil_contract", RUNNER)
+    spec = importlib.util.spec_from_file_location("run_sht3x_hil_contract", RUNNER)
     if spec is None or spec.loader is None:
-        fail("cannot import tools/run_i2c_hil.py")
+        fail("cannot import tools/run_sht3x_hil.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -106,7 +108,7 @@ def check_claims() -> None:
 
 
 def main() -> int:
-    for path in (RUNNER, HARDWARE, README, DOCS_INDEX, GITIGNORE):
+    for path in (RUNNER, HARDWARE, README, DOCS_INDEX, GITIGNORE, LIBRARY_JSON):
         if not path.exists():
             fail(f"missing required file: {path.relative_to(ROOT)}")
 
@@ -132,11 +134,54 @@ def main() -> int:
     if actual != expected:
         fail(f"default command sequence mismatch: runner={actual!r} docs={expected!r}")
 
+    package_include = set(json.loads(read(LIBRARY_JSON))["export"]["include"])
+    for required_tool in (
+        "tools/run_sht3x_hil.py",
+        "tools/sht3x_cli_contract.py",
+    ):
+        if required_tool not in package_include:
+            fail(f"package export omits HIL runtime dependency: {required_tool}")
+
     for command in actual:
         lowered = command.lower()
         for forbidden in FORBIDDEN_DEFAULTS:
             if lowered == forbidden or lowered.startswith(forbidden + " "):
                 fail(f"unsafe command in default executable sequence: {command}")
+
+    owner_sequence = [
+        "xfer_reset",
+        "request",
+        "job current",
+        "xfer_assert 0 0 0",
+        "job cancel",
+        "result",
+        "xfer_assert 0 0 0",
+    ]
+    owner_start = actual.index("xfer_reset") if "xfer_reset" in actual else -1
+    if owner_start < 0 or actual[owner_start:owner_start + len(owner_sequence)] != owner_sequence:
+        fail("default plan must retain the zero-I2C request/result/cancel transfer assertion sequence")
+    if "status_restore confirm" not in actual or "status_restore" in actual:
+        fail("default status_restore must use the exact confirmation gate")
+
+    optional_commands = [
+        spec.command
+        for spec in (
+            *runner.destructive_commands(True),
+            *runner.alert_write_commands(),
+            *runner.heater_commands(),
+        )
+    ]
+    required_confirm_prefixes = (
+        "selftest", "recover", "clear_status", "reset", "restore",
+        "iface_reset", "alert set", "alert write", "alert raw write",
+        "alert disable", "heater on",
+    )
+    for command in optional_commands:
+        if command.startswith(required_confirm_prefixes) and not command.endswith(" confirm"):
+            fail(f"automated mutation lacks exact confirmation token: {command}")
+    greset = [command for command in optional_commands if command.startswith("greset ")]
+    if greset != ["greset arm", "greset confirm"]:
+        fail(f"bus-wide reset plan must be one-shot arm/confirm, got {greset!r}")
 
     gitignore_lines = {line.strip() for line in read(GITIGNORE).splitlines()}
     if "hil_logs/" not in gitignore_lines:
@@ -176,7 +221,7 @@ def main() -> int:
         bare = path.name
         if rel not in docs_index_text and bare not in docs_index_text:
             fail(f"docs/README.md missing documentation link: {rel}")
-    if "tools/run_i2c_hil.py" not in hardware_text or "tools/run_sht3x_hil.py" not in hardware_text:
+    if "tools/run_sht3x_hil.py" not in hardware_text:
         fail("hardware doc must point to the serial HIL runner contract")
 
     check_claims()

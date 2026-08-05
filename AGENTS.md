@@ -9,6 +9,18 @@ You are a professional embedded software engineer building a production-grade SH
 
 ---
 
+## PlatformIO
+
+Before editing, fetch remotes and fast-forward the newest intended working
+branch to its upstream. Stop and report dirty, divergent, or conflicted state;
+never overwrite work to force a sync.
+
+On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
+VS Code-managed installation. Never install another PlatformIO Core; if the
+wrapper cannot find it, stop and report the missing installation.
+
+---
+
 ## Repository Model (Single Library)
 
 ```
@@ -21,8 +33,8 @@ include/SHT3x/         - Public API headers only (Doxygen)
 src/                    - Implementation (.cpp)
 examples/
   01_*/
-  common/               - Example-only helpers (Log.h, BoardConfig.h, I2cTransport.h,
-                          I2cScanner.h, CommandHandler.h)
+  common/               - Example-only helpers (BoardConfig.h, I2cTransport.h,
+                          I2cScanner.h, Sht3xCli.h/.cpp)
 platformio.ini
 library.json
 README.md

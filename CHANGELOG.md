@@ -8,39 +8,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Added opt-in heater enable/status/disable HIL coverage and deterministic
-  post-run cleanup verification.
-- Added strict HIL firmware identity checks against `library.json`, the current
-  commit, and a clean build by default.
-- Added the accepted COM19 v1.7.0 functional and strict one-hour HIL evidence
-  to the maintained hardware guide.
+- Added one authoritative 70-row Arduino/native-ESP-IDF CLI contract covering
+  help order, execution and safety classes, strict parsing, confirmation gates,
+  runtime framework identity, cooperative job/result/cancel commands, and
+  example-owned transfer assertions.
+- Added structural owner-result validation to both diagnostic CLIs, including
+  nonzero identity, job type, callback budget, terminal outcome, completion,
+  status coherence, and physical-effect provenance.
+- Added fail-closed custom HIL command classification, strict firmware/checkout
+  identity checks, opt-in heater coverage, and deterministic restoration.
+- Added complete public parameter/return documentation and made strict Doxygen
+  extraction enforce undocumented and incomplete API comments.
+- Added a CI documentation-hygiene guard for broken local links, tracked
+  prompt/report/HIL scratch output, and weakened strict-Doxygen settings.
 
 ### Changed
-- Refactored the Arduino diagnostic CLI into an explicit cooperative-job owner:
-  nonzero request IDs, absolute deadlines, one-callback `pollJob()` steps,
-  terminal identity/provenance checks, zero-I2C cancellation, and milli-unit
-  sample consumption now cover interactive reads, stress, and duration soaks.
-- Made incomplete and operator-review HIL verdicts return nonzero unless
-  `--allow-incomplete` is explicitly selected.
+- Updated the exact-pinned Arduino build platform to pioarduino
+  `platform-espressif32` `55.03.311` (Arduino-ESP32 `3.3.11`, ESP-IDF `5.5.5`)
+  and raised the CI PlatformIO Core pin to the platform's required `6.1.19`.
+- Made both framework-native diagnostic CLIs use passive `bind()` plus
+  cooperative ensure-idle startup/recovery, explicit nonzero owner identities,
+  retained terminal results, zero-I2C cancellation, and rejection of unrelated
+  commands while an owner job is active.
+- Made every CLI mutation use an exact trailing `confirm`; bus-wide reset also
+  requires one-shot arm/confirm and remains transport-disabled by default.
+- Consolidated HIL execution under `tools/run_sht3x_hil.py`; custom plans must
+  begin with `version`, cannot infer unknown commands as safe, and apply the same
+  command-word risk gates to raw reads and writes.
+- Consolidated software status in the README, physical evidence and runner
+  procedure in `docs/hardware.md`, and documentation/package policy in
+  `docs/README.md`. Generated HIL runs are disposable local output; accepted raw
+  evidence is archived outside the checkout and represented here by fingerprints.
+- Shared one framework-neutral transfer-counter type across Arduino example
+  support instead of maintaining duplicate structures and field-copy glue.
 
 ### Fixed
-- Prevented abandoned CLI measurements from surviving local cancellation or
-  being joined by a later request.
-- Prevented false HIL passes for stale firmware, short duration soaks, wrong
-  alert readbacks, implausible soak extrema, missing counter evidence, and
-  incomplete final restoration; corrected parsing of the 10 mps rate.
-- Split duration-soak evidence into fixed-buffer-safe records and parse each
-  required token independently, preventing long successful runs from losing
-  their final diagnostics to example serial-output truncation.
-- Removed unused duration-soak chunk/recovery options and their dead planner so
-  reported settings now correspond to behavior that actually runs.
+- Prevented overlong input from being split into executable fragments and
+  prevented stale/foreign/malformed results, owner-token wedges, implicit
+  cancellation, and zero-budget/cancel transfer drift in both CLIs.
+- Prevented false HIL passes for stale or wrong-framework firmware, unsafe raw
+  commands, short soaks, wrong alert readback, implausible extrema, missing
+  counters, or incomplete restoration.
+- Included the authoritative command contract beside the packaged HIL runner
+  and guarded that runtime dependency in the package manifest checks.
+- Restored generated release metadata to canonical form and aligned reported
+  runner settings with behavior that is actually implemented.
+- Installed Graphviz beside Doxygen in GitHub Actions so strict documentation
+  graph generation is available in the validation environment.
 
 ### Removed
-- Removed completed dated HIL reports and the finished suitability audit after
-  consolidating their current evidence and owner contract into evergreen
-  hardware and TunnelMonitor integration guides.
-- Removed two tracked legacy HIL artifact directories, including their full
-  serial transcripts. Generated HIL artifacts remain local and ignored.
+- Removed obsolete example adapters/facades, dead scanner/string/timing helpers,
+  superseded asynchronous stress state, redundant test setup, and an unused
+  exported CLI device accessor.
+- Removed duplicate HIL entry points, completed reports/audits/prompts, tracked
+  run artifacts, stale generated backups, and obsolete package/ignore/CI
+  configuration after retaining durable contracts and evidence fingerprints.
+
+### Validation
+- Native tests pass 118/118; ESP32-S3 and ESP32-S2 Arduino examples build with
+  pioarduino `55.03.311`; repository guards, HIL parser tests, strict Doxygen,
+  warning/portability analysis, release-package inspection, and exact-branch
+  Arduino/native-ESP-IDF GitHub Actions builds pass.
+- No post-upgrade hardware upload, live HIL, USB-CDC soak, or debugger run is
+  claimed.
 
 ## [1.8.0] - 2026-07-23
 

@@ -5,7 +5,6 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include "Log.h"
 
 namespace i2c_scanner {
 
@@ -19,15 +18,11 @@ inline const char* labelForAddress(uint8_t addr) {
   return "";
 }
 
-inline bool isValidAddress(uint8_t addr) {
-  return !(addr < 0x08U || addr > 0x77U);
-}
-
-/// Check if a specific address responds
-/// @param wire I2C bus instance
-/// @param addr I2C address to check
-/// @param timeoutMs I2C timeout in milliseconds
-/// @return true if device responds
+/// Check if a specific address responds.
+/// @param wire I2C bus instance.
+/// @param addr I2C address to check.
+/// @param timeoutMs I2C timeout in milliseconds.
+/// @return true if the address acknowledges.
 inline bool checkAddress(TwoWire& wire, uint8_t addr, uint32_t timeoutMs = 50U) {
   if (addr < 0x08U || addr > 0x77U) {
     return false;
@@ -35,7 +30,7 @@ inline bool checkAddress(TwoWire& wire, uint8_t addr, uint32_t timeoutMs = 50U) 
   const uint32_t previousTimeoutMs = wire.getTimeOut();
   wire.setTimeOut(timeoutMs);
   wire.beginTransmission(addr);
-  const bool ok = wire.endTransmission(true) == 0;
+  const bool ok = wire.endTransmission(true) == 0U;
   wire.setTimeOut(previousTimeoutMs);
   return ok;
 }
@@ -45,7 +40,7 @@ inline bool checkAddress(TwoWire& wire, uint8_t addr, uint32_t timeoutMs = 50U) 
 /// @param timeoutMs I2C timeout in milliseconds
 /// @return Number of devices found
 inline int scan(TwoWire& wire = Wire, uint32_t timeoutMs = 50U) {
-  LOGI("Scanning I2C bus...");
+  Serial.println("Scanning I2C bus...");
 
   int count = 0;
   const uint32_t previousTimeoutMs = wire.getTimeOut();
@@ -67,30 +62,13 @@ inline int scan(TwoWire& wire = Wire, uint32_t timeoutMs = 50U) {
   wire.setTimeOut(previousTimeoutMs);
 
   if (count == 0) {
-    LOGW("No I2C devices found");
+    Serial.println("No I2C devices found");
   } else {
-    LOGI("Scan complete. Found %d device(s).", count);
+    Serial.printf("Scan complete. Found %d device(s).\n", count);
   }
-  LOGI("Known: 0x44/0x45=SHT3x, 0x76/0x77=BME280/BMP280");
+  Serial.println("Known: 0x44/0x45=SHT3x, 0x76/0x77=BME280/BMP280");
 
   return count;
 }
 
 } // namespace i2c_scanner
-
-namespace i2c {
-
-/// Scan default Arduino I2C bus and print found devices.
-/// @return Number of devices found
-inline int scan() {
-  return i2c_scanner::scan(Wire);
-}
-
-/// Check if a specific address responds
-/// @param addr I2C address to check
-/// @return true if device responds
-inline bool checkAddress(uint8_t addr) {
-  return i2c_scanner::checkAddress(Wire, addr);
-}
-
-} // namespace i2c

@@ -20,11 +20,19 @@ enum class TransportCapability : uint8_t {
   BUS_ERROR = 1 << 2           ///< Transport can reliably report bus errors
 };
 
+/// Combine transport capability flags.
+/// @param a First capability flag set.
+/// @param b Second capability flag set.
+/// @return Bitwise union of both capability sets.
 inline constexpr TransportCapability operator|(TransportCapability a, TransportCapability b) {
   return static_cast<TransportCapability>(
       static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
 
+/// Test whether a transport capability set contains a flag.
+/// @param caps Capability set to inspect.
+/// @param cap Capability flag to test.
+/// @return true when @p cap is present in @p caps.
 inline constexpr bool hasCapability(TransportCapability caps, TransportCapability cap) {
   return (static_cast<uint8_t>(caps) & static_cast<uint8_t>(cap)) != 0;
 }
