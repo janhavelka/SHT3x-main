@@ -790,7 +790,7 @@ fault recovery, or production readiness until those rows have fixture evidence.
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - full release history
-- [docs/README.md](docs/README.md) - maintained guides and claim boundary
+- [docs/README.md](https://github.com/janhavelka/SHT3x-main/blob/main/docs/README.md) - maintained guides and claim boundary
 - [docs/hardware.md](docs/hardware.md) - hardware evidence status and HIL procedure
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component/example notes
 - [docs/tunnelmonitor-integration.md](docs/tunnelmonitor-integration.md) - current external-owner integration contract

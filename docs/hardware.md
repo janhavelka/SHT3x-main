@@ -34,7 +34,8 @@ below. TunnelMonitor-specific ownership and adapter rules are maintained in
 
 ## Current Curated Evidence
 
-The newest accepted run exercised the exact v1.9.0 release-candidate firmware:
+Latest maintained serial HIL evidence is the newest accepted run, which
+exercised the exact v1.9.0 release-candidate firmware:
 
 - Exact diagnostic commit: `dfff43c57dca6d204fc42a5c7a39b2b52ea8b9a4`;
   firmware identified itself as library version `1.9.0`, commit
@@ -96,9 +97,9 @@ Only their recorded fingerprints remain here; direct transcript review requires
 recovering the external archive.
 
 Together, the COM19 evidence covers the current automatic command surface and
-an earlier uninterrupted owner-safe hour. It does not validate physical ALERT
-pin behavior, calibrated humidity/temperature accuracy, safe fault injection,
-ESP32-S2 hardware, address `0x45`, or multi-day/field stability.
+an earlier uninterrupted owner-safe hour. It does not validate physical ALERT pin behavior,
+calibrated humidity/temperature accuracy, safe fault injection, ESP32-S2
+hardware, address `0x45`, or multi-day/field stability.
 
 ## Evidence Status
 
