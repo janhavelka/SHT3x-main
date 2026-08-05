@@ -42,26 +42,23 @@ Thank you for considering contributing to this project!
 
 ## Release Procedure
 
-Prepare and review the release on a branch; do not tag an unmerged branch.
+Prepare the release directly from a clean, synchronized `main`. Do not tag a
+different branch or an unpushed commit.
 
 ```bash
 git switch main
 git pull --ff-only origin main
-git switch -c agent/release-X.Y.Z
 python scripts/generate_version.py set X.Y.Z
 python scripts/generate_version.py check
 ```
 
 Move the accumulated changelog entries from `[Unreleased]` to a dated
 `[X.Y.Z]` section, update supported-version and current-version documentation,
-then run the complete README **Running Tests** matrix. Commit, push, open the
-release-prep pull request, and require all GitHub Actions jobs to pass.
-
-After that pull request is merged, tag the exact updated `main` commit:
+then run the complete README **Running Tests** matrix. Commit and push the
+release preparation to `main`, and require all GitHub Actions jobs to pass.
+Tag that exact validated `main` commit:
 
 ```bash
-git switch main
-git pull --ff-only origin main
 git status --short
 python scripts/generate_version.py check
 git tag -a vX.Y.Z -m "Release vX.Y.Z"

@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-05
 
-This guide describes the current integration boundary between SHT3x `1.9.0`
+This guide describes the current integration boundary between SHT3x `1.8.0`
 and TunnelMonitor-node. The local sibling checkout still exact-pins the
 annotated `v1.8.0` release and contains a private `Sht3xModule` plus a product-owned
 environment composition for `0x44` and `0x45`. This guide changes no

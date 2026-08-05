@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.9.0] - 2026-08-05
+## [1.8.0] - 2026-08-05
 
 ### Added
+- Added caller-selected nearest or scaled-truncating milli-unit conversion
+  while retaining nearest rounding as the default API behavior.
+- Added a bounded configurable single-shot measurement safety margin. The
+  default remains 1 ms; normal-VDD compatibility callers may explicitly select
+  zero when their owner contract requires the datasheet maximum with no margin.
 - Added one authoritative 70-row Arduino/native-ESP-IDF CLI contract covering
   help order, execution and safety classes, strict parsing, confirmation gates,
   runtime framework identity, cooperative job/result/cancel commands, and
@@ -71,22 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pioarduino `55.03.311`; repository guards, HIL parser tests, strict Doxygen,
   warning/portability analysis, release-package inspection, and exact-branch
   Arduino/native-ESP-IDF GitHub Actions builds pass.
-- Exact v1.9.0 release-candidate COM19/ESP32-S3 functional HIL on clean commit
-  `dfff43c57dca` passed 101 of 101 executed commands with no failures, including
+- Pre-release COM19/ESP32-S3 functional HIL on clean commit `dfff43c57dca`
+  (temporarily numbered `1.9.0` before the release-line correction) passed
+  101 of 101 executed commands with no failures, including
   4 and 10 mps periodic acquisition. Three selected rows were honestly skipped:
   interface reset was unsupported, general-call transport remained deliberately
   disabled on the shared bus, and physical fault injection required a fixture.
 - No post-upgrade USB-CDC soak, physical ALERT-pin capture, calibrated humidity
   fixture, ESP32-S2 hardware run, address `0x45` run, or debugger run is claimed.
-
-## [1.8.0] - 2026-07-23
-
-### Added
-- Added caller-selected nearest or scaled-truncating milli-unit conversion
-  while retaining nearest rounding as the default API behavior.
-- Added a bounded configurable single-shot measurement safety margin. The
-  default remains 1 ms; normal-VDD compatibility callers may explicitly select
-  zero when their owner contract requires the datasheet maximum with no margin.
 
 ## [1.7.0] - 2026-07-22
 
@@ -420,8 +417,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive Doxygen documentation in public headers
 - MIT License
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.9.0...HEAD
-[1.9.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...v1.9.0
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...HEAD
 [1.8.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1

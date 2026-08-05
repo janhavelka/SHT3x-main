@@ -136,7 +136,7 @@ single-address device handle is not a bus-wide general-call transport.
 
 The repository defines pinned ESP-IDF 5.4.2 CI builds for ESP32-S2 and ESP32-S3
 and keeps the example/CLI contract under repository checks. Both pure ESP-IDF
-targets passed for the merged `1.9.0` implementation baseline. The release-prep
+targets passed for the merged `1.8.0` implementation baseline. The release
 commit must pass the same jobs before tagging, and pure ESP-IDF hardware
 validation remains open.
 

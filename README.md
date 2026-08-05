@@ -15,7 +15,7 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-This tree contains the `1.9.0` owner-safe API. The repository validation matrix
+This tree contains the `1.8.0` owner-safe API. The repository validation matrix
 covers the 118-test native fault/boundary suite, strict framework-neutral core
 compilation and Doxygen, repository contracts, package inspection, pinned
 Arduino PlatformIO builds for ESP32-S3/S2, and native ESP-IDF example builds.
@@ -65,7 +65,7 @@ release tag:
 
 ```ini
 lib_deps =
-  https://github.com/janhavelka/SHT3x-main.git#v1.9.0
+  https://github.com/janhavelka/SHT3x-main.git#v1.8.0
 ```
 
 ### Manual
