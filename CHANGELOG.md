@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and guarded that runtime dependency in the package manifest checks.
 - Restored generated release metadata to canonical form and aligned reported
   runner settings with behavior that is actually implemented.
+- Installed Graphviz beside Doxygen in GitHub Actions so strict documentation
+  graph generation is available in the validation environment.
 
 ### Removed
 - Removed obsolete example adapters/facades, dead scanner/string/timing helpers,
@@ -65,9 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Validation
 - Native tests pass 118/118; ESP32-S3 and ESP32-S2 Arduino examples build with
   pioarduino `55.03.311`; repository guards, HIL parser tests, strict Doxygen,
-  warning/portability analysis, and release-package inspection pass.
-- No post-upgrade hardware upload, live HIL, USB-CDC soak, debugger run, or
-  exact-commit native ESP-IDF CI result is claimed for the unpushed worktree.
+  warning/portability analysis, release-package inspection, and exact-branch
+  Arduino/native-ESP-IDF GitHub Actions builds pass.
+- No post-upgrade hardware upload, live HIL, USB-CDC soak, or debugger run is
+  claimed.
 
 ## [1.8.0] - 2026-07-23
 

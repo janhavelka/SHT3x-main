@@ -135,10 +135,10 @@ single-address device handle is not a bus-wide general-call transport.
 ## Validation
 
 The repository defines pinned ESP-IDF 5.4.2 CI builds for ESP32-S2 and ESP32-S3
-and keeps the example/CLI contract under repository checks. The last main-branch
-workflow is not evidence for unpushed changes: pure ESP-IDF software validation
-requires passing jobs for the exact commit, and pure ESP-IDF hardware validation
-remains open.
+and keeps the example/CLI contract under repository checks. Both pure ESP-IDF
+targets pass for the current feature branch. Future source or release-metadata
+changes still require passing jobs for their exact commit, and pure ESP-IDF
+hardware validation remains open.
 
 The following maintenance commands require a full repository checkout:
 

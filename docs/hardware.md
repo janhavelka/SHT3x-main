@@ -24,8 +24,8 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 | --- | --- | --- |
 | Native tests | PASS, 118/118 on the current source. | Repeat on a future changed core. |
 | Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
-| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally with pioarduino `55.03.311`; CI is configured with the required PlatformIO Core `6.1.19`. | Observe the exact-commit CI run; physical ESP32-S2 execution remains open. |
-| Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions for the tested baseline. | Physical pure-IDF execution remains open. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally and for the current feature branch with pioarduino `55.03.311` and PlatformIO Core `6.1.19`. | Repeat after release-metadata changes; physical ESP32-S2 execution remains open. |
+| Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions for the current feature branch. | Repeat after release-metadata changes; physical pure-IDF execution remains open. |
 | Documentation/package validation | Strict Doxygen and package validation pass locally and in GitHub Actions. | Repeat for the final publication artifact. |
 
 These software results do not expand the boundaries of the physical evidence
