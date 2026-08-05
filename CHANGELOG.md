@@ -76,9 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pioarduino `55.03.311`; repository guards, HIL parser tests, strict Doxygen,
   warning/portability analysis, release-package inspection, and exact-branch
   Arduino/native-ESP-IDF GitHub Actions builds pass.
-- Pre-release COM19/ESP32-S3 functional HIL on clean commit `dfff43c57dca`
-  (temporarily numbered `1.9.0` before the release-line correction) passed
-  101 of 101 executed commands with no failures, including
+- Exact v1.8.0 main release-candidate COM19/ESP32-S3 functional HIL on clean
+  commit `e156047e392d` passed 101 of 101 executed commands with no failures,
+  including
   4 and 10 mps periodic acquisition. Three selected rows were honestly skipped:
   interface reset was unsupported, general-call transport remained deliberately
   disabled on the shared bus, and physical fault injection required a fixture.

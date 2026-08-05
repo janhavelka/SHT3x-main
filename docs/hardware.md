@@ -24,9 +24,9 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 | --- | --- | --- |
 | Native tests | PASS, 118/118 on the current source. | Repeat on a future changed core. |
 | Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
-| Arduino PlatformIO ESP32-S3/S2 builds | PASS for the current implementation with pioarduino `55.03.311` and PlatformIO Core `6.1.19`. | Repeat after the release-number correction; physical ESP32-S2 execution remains open. |
-| Pure ESP-IDF ESP32-S3/S2 builds | PASS for the current implementation in GitHub Actions. | Repeat after the release-number correction; physical pure-IDF execution remains open. |
-| Documentation/package validation | Strict Doxygen and package validation pass for the current implementation. | Repeat after the release-number correction. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally on the exact v1.8.0 main release candidate with pioarduino `55.03.311` and PlatformIO Core `6.1.19`. | Require main-branch CI before tagging; physical ESP32-S2 execution remains open. |
+| Pure ESP-IDF ESP32-S3/S2 builds | PASS for the current implementation in GitHub Actions. | Require main-branch CI before tagging; physical pure-IDF execution remains open. |
+| Documentation/package validation | Strict Doxygen and package validation pass locally on the exact v1.8.0 release candidate. | Require main-branch CI before tagging. |
 
 These software results do not expand the boundaries of the physical evidence
 below. TunnelMonitor-specific ownership and adapter rules are maintained in
@@ -34,13 +34,12 @@ below. TunnelMonitor-specific ownership and adapter rules are maintained in
 
 ## Current Curated Evidence
 
-Latest maintained serial HIL evidence is the newest accepted pre-release run.
-It exercised the current implementation before its release number was corrected
-from temporary `1.9.0` to `1.8.0`:
+Latest maintained serial HIL evidence is the exact v1.8.0 main release-candidate
+run:
 
-- Exact diagnostic commit: `dfff43c57dca6d204fc42a5c7a39b2b52ea8b9a4`;
-  firmware identified itself as library version `1.9.0`, commit
-  `dfff43c57dca`, and clean.
+- Exact diagnostic commit: `e156047e392df25b7af1e153dfdbe01f3ce9a8d9`;
+  firmware identified itself as library version `1.8.0`, commit
+  `e156047e392d`, and clean.
 - Fixture: COM19 at 115200 baud, ESP32-S3, Arduino PlatformIO `esp32s3dev`,
   Arduino-ESP32 `3.3.11`, ESP-IDF `5.5.5`, SHT3x at `0x44`, and serial/EIC
   `0x29075EB0`. Other ACK addresses were `0x3C`, `0x41`, `0x50`, and `0x51`.
@@ -54,22 +53,22 @@ from temporary `1.9.0` to `1.8.0`:
   periodic fetch at 0.5/1/2/4/10 mps; ART; CRC-protected measurement, status,
   and EIC paths; status restore/clear; alert vectors and write/readback cleanup;
   heater on/status/off; soft reset, restoration, self-test, and recovery.
-- The 4 mps and 10 mps fetches returned 26.33 C/45.97 %RH and
-  26.28 C/45.95 %RH respectively. Final health was `READY`, online, with 86
+- The 4 mps and 10 mps fetches returned 26.16 C/45.07 %RH and
+  26.10 C/45.06 %RH respectively. Final health was `READY`, online, with 86
   successful logical operations, zero logical failures, single-shot mode,
   high repeatability, clock stretching disabled, heater off, and alerts
   disabled. No new soak was requested for this release smoke test.
 
-Recorded SHA-256 fingerprints for the pre-release run:
+Recorded SHA-256 fingerprints for the v1.8.0 run:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| Pre-release `summary.json` | `e93d5305cbc4d6813c6161812fcfb93223c87e83603076cba9517ea908b2ca4e` |
-| Pre-release `serial_transcript.txt` | `1af774ca80abfe64026a44c40460d806199e3920021977b6559aa5bb343e15f3` |
-| Pre-release `progress.jsonl` | `a73d48570ced462a31eddbb6ac5f49c4af6795452a13c453b028e589f16ad4e2` |
+| Release-candidate `summary.json` | `0aef8d6938173dc1ce043e97cc6e03acc5e28153f28d17df072deee23546e588` |
+| Release-candidate `serial_transcript.txt` | `3d8447f4ec843c0ad6fb12260c2458569aafd918b9fca0a3ee66ab10e5cab049` |
+| Release-candidate `progress.jsonl` | `a2c60d5c5264c612177d5e5483fe5044cef212a63431d20dc39faea2984a832d` |
 
-The raw pre-release artifacts are archived outside the checkout under the run ID
-`sht3x_20260805T153619Z`; only the durable result and fingerprints are
+The raw v1.8.0 artifacts are archived outside the checkout under the run ID
+`sht3x_20260805T160254Z`; only the durable result and fingerprints are
 maintained here.
 
 Earlier one-hour stability evidence was collected with v1.7.0 commit
@@ -106,21 +105,21 @@ hardware, address `0x45`, or multi-day/field stability.
 
 | Area | Current result | Evidence |
 | --- | --- | --- |
-| Address probe `0x44` | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
+| Address probe `0x44` | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
 | Address probe `0x45` | Not run | Needs serial log |
-| Single-shot low/medium/high no-stretch | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Single-shot clock stretching | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Periodic fetch 0.5/1/2 mps | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Periodic fetch 4/10 mps | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| ART mode | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Status read/status restore | PASS on COM19 ESP32-S3, without induced ALERT | 2026-08-05 pre-release run above |
-| Status clear | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Alert read and encode/decode vectors | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Alert write/read round trip | PASS on COM19 ESP32-S3 with exact readback and cleanup | 2026-08-05 pre-release run above |
+| Single-shot low/medium/high no-stretch | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Single-shot clock stretching | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Periodic fetch 0.5/1/2 mps | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Periodic fetch 4/10 mps | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| ART mode | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Status read/status restore | PASS on COM19 ESP32-S3, without induced ALERT | 2026-08-05 v1.8.0 run above |
+| Status clear | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Alert read and encode/decode vectors | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Alert write/read round trip | PASS on COM19 ESP32-S3 with exact readback and cleanup | 2026-08-05 v1.8.0 run above |
 | Physical ALERT pin | Not run | Needs GPIO or logic-analyzer evidence |
-| Heater status read | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
-| Heater enable/disable command/status | PASS on COM19 ESP32-S3; controlled self-heating not measured | 2026-08-05 pre-release run above |
-| Soft reset/recover/restore | PASS on COM19 ESP32-S3 | 2026-08-05 pre-release run above |
+| Heater status read | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
+| Heater enable/disable command/status | PASS on COM19 ESP32-S3; controlled self-heating not measured | 2026-08-05 v1.8.0 run above |
+| Soft reset/recover/restore | PASS on COM19 ESP32-S3 | 2026-08-05 v1.8.0 run above |
 | Interface reset | Unsupported by current firmware callback | 2026-08-05 explicit `SKIP_UNSUPPORTED` |
 | General-call reset | Arm gate PASS; transport-disabled confirmation skipped because other devices share the bus | Needs isolated bus evidence and an application-supplied bus-wide transport |
 | ESP32-S2 hardware smoke | Not run | Needs ESP32-S2 serial log |
