@@ -24,9 +24,9 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 | --- | --- | --- |
 | Native tests | PASS, 118/118 on the current source. | Repeat on a future changed core. |
 | Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
-| Arduino PlatformIO ESP32-S3/S2 builds | PASS on the v1.9.0 release candidate with pioarduino `55.03.311` and PlatformIO Core `6.1.19`. | Physical ESP32-S2 execution remains open. |
-| Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions for the merged v1.9 implementation baseline. | Repeat on the exact release branch; physical pure-IDF execution remains open. |
-| Documentation/package validation | Strict Doxygen and package validation pass on the v1.9.0 release candidate. | Repeat on the exact release branch in GitHub Actions. |
+| Arduino PlatformIO ESP32-S3/S2 builds | PASS locally and in exact v1.9.0 release-branch CI with pioarduino `55.03.311` and PlatformIO Core `6.1.19`. | Physical ESP32-S2 execution remains open. |
+| Pure ESP-IDF ESP32-S3/S2 builds | PASS in exact v1.9.0 release-branch GitHub Actions. | Physical pure-IDF execution remains open. |
+| Documentation/package validation | Strict Doxygen and package validation pass locally and in exact v1.9.0 release-branch GitHub Actions. | Repeat for any changed publication artifact. |
 
 These software results do not expand the boundaries of the physical evidence
 below. TunnelMonitor-specific ownership and adapter rules are maintained in
