@@ -1858,6 +1858,21 @@ void test_wire_adapter_rejects_invalid_buffers_and_timeout() {
   TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
 
+void test_wire_adapter_initialization_reports_begin_failure() {
+  Wire.setClock(100000U);
+  Wire.setTimeOut(77U);
+  Wire._setBeginResult(false);
+
+  TEST_ASSERT_FALSE(transport::initWire(8, 9, 400000U, 50U));
+  TEST_ASSERT_EQUAL_UINT32(100000U, Wire.getClock());
+  TEST_ASSERT_EQUAL_UINT32(77U, Wire.getTimeOut());
+
+  Wire._setBeginResult(true);
+  TEST_ASSERT_TRUE(transport::initWire(8, 9, 400000U, 50U));
+  TEST_ASSERT_EQUAL_UINT32(400000U, Wire.getClock());
+  TEST_ASSERT_EQUAL_UINT32(50U, Wire.getTimeOut());
+}
+
 void test_i2c_scanner_restores_timeout() {
   Wire.setTimeOut(77);
 
@@ -5048,6 +5063,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_drains_partial_read);
   RUN_TEST(test_wire_adapter_rejects_invalid_buffers_and_timeout);
+  RUN_TEST(test_wire_adapter_initialization_reports_begin_failure);
   RUN_TEST(test_i2c_scanner_restores_timeout);
   RUN_TEST(test_cache_updates_only_on_success);
   RUN_TEST(test_write_alert_limit_rejects_nan);

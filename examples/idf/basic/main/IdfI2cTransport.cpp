@@ -6,6 +6,12 @@
 
 namespace {
 
+void incrementSaturated(uint32_t& value) {
+  if (value != std::numeric_limits<uint32_t>::max()) {
+    ++value;
+  }
+}
+
 int timeoutToIdf(uint32_t timeoutMs) {
   constexpr uint32_t MAX_TIMEOUT_MS =
       static_cast<uint32_t>(std::numeric_limits<int>::max());
@@ -65,6 +71,8 @@ SHT3x::Status idfI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
   }
 
   IdfI2cContext* ctx = static_cast<IdfI2cContext*>(user);
+  incrementSaturated(ctx->writeTransfers);
+  incrementSaturated(ctx->totalTransfers);
   return mapEspError(i2c_master_transmit(ctx->device, data, len, timeoutToIdf(timeoutMs)),
                      "IDF I2C write failed");
 }
@@ -90,6 +98,8 @@ SHT3x::Status idfI2cWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
   }
 
   IdfI2cContext* ctx = static_cast<IdfI2cContext*>(user);
+  incrementSaturated(ctx->readTransfers);
+  incrementSaturated(ctx->totalTransfers);
   return mapEspError(i2c_master_receive(ctx->device, rxData, rxLen,
                                         timeoutToIdf(timeoutMs)),
                      "IDF I2C read failed");

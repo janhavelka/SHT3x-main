@@ -105,6 +105,9 @@ jobs:
       - name: Run HIL parser tests
         run: python tools/test_run_sht3x_hil_parser.py
 
+      - name: Enforce documentation hygiene
+        run: python tools/check_docs_contract.py
+
       - name: Validate generated version header
         run: python scripts/generate_version.py check
 

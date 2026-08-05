@@ -1,6 +1,8 @@
 #include "Sht3xCli.h"
 
 #include <cctype>
+#include <cerrno>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -8,12 +10,17 @@
 #include <limits>
 
 namespace sht3x_cli {
+
+static SHT3x::Status cancelPending(void);
+
 namespace {
 
 static constexpr size_t MAX_STRING_LEN = 160U;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 static constexpr uint32_t I2C_SOAK_MAX_SECONDS = 24UL * 60UL * 60UL;
 static constexpr uint32_t MEASUREMENT_JOB_TIMEOUT_MS = 500U;
+static constexpr uint32_t MANUAL_JOB_TIMEOUT_MS = 5000U;
+static constexpr size_t MAX_CLI_ARGS = 8U;
 
 static constexpr const char* LOG_COLOR_RESET = "\033[0m";
 static constexpr const char* LOG_COLOR_RED = "\033[31m";
@@ -38,7 +45,7 @@ Platform platform;
 class CliString {
 public:
   CliString() { _buf[0] = '\0'; }
-  CliString(const char* value) { assign(value); }
+  explicit CliString(const char* value) { assign(value); }
 
   const char* c_str() const { return _buf; }
   size_t length() const { return std::strlen(_buf); }
@@ -103,14 +110,6 @@ public:
     return out;
   }
 
-  long toInt() const {
-    return std::strtol(_buf, nullptr, 10);
-  }
-
-  float toFloat() const {
-    return std::strtof(_buf, nullptr);
-  }
-
   bool operator==(const char* rhs) const {
     return rhs != nullptr && std::strcmp(_buf, rhs) == 0;
   }
@@ -134,6 +133,200 @@ private:
 
   char _buf[MAX_STRING_LEN] = {};
 };
+
+struct ParsedArgs {
+  char storage[MAX_STRING_LEN] = {};
+  const char* values[MAX_CLI_ARGS] = {};
+  size_t count = 0U;
+  bool tooMany = false;
+};
+
+void parseArguments(const CliString& command, ParsedArgs& out) {
+  out = ParsedArgs{};
+  std::strncpy(out.storage, command.c_str(), sizeof(out.storage) - 1U);
+  char* cursor = out.storage;
+  while (*cursor != '\0') {
+    while (*cursor != '\0' &&
+           std::isspace(static_cast<unsigned char>(*cursor)) != 0) {
+      ++cursor;
+    }
+    if (*cursor == '\0') {
+      break;
+    }
+    if (out.count >= MAX_CLI_ARGS) {
+      out.tooMany = true;
+      out.count = 0U;
+      return;
+    }
+    out.values[out.count++] = cursor;
+    while (*cursor != '\0' &&
+           std::isspace(static_cast<unsigned char>(*cursor)) == 0) {
+      ++cursor;
+    }
+    if (*cursor != '\0') {
+      *cursor++ = '\0';
+    }
+  }
+}
+
+bool tokenEquals(const ParsedArgs& args, size_t index, const char* value) {
+  return index < args.count && value != nullptr &&
+         std::strcmp(args.values[index], value) == 0;
+}
+
+bool countIs(const ParsedArgs& args, size_t first, size_t second = 0U) {
+  return args.count == first || (second != 0U && args.count == second);
+}
+
+bool isOneOf(const char* value, const char* const* choices, size_t count) {
+  if (value == nullptr) {
+    return false;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (std::strcmp(value, choices[i]) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool validCommandArity(const ParsedArgs& args, bool& knownCommand) {
+  knownCommand = true;
+  if (args.count == 0U) {
+    return true;
+  }
+  const char* command = args.values[0];
+  static constexpr const char* NO_ARG_COMMANDS[] = {
+      "help", "?", "version", "ver", "scan", "request", "fetch",
+      "result", "cancel", "xfer_reset", "xfer_stats", "read", "raw",
+      "comp", "meastime", "cfg", "settings", "start_art",
+      "stop_periodic", "status", "status_raw", "online", "stats", "begin",
+      "end", "drv", "state", "probe"};
+  if (isOneOf(command, NO_ARG_COMMANDS,
+              sizeof(NO_ARG_COMMANDS) / sizeof(NO_ARG_COMMANDS[0]))) {
+    return args.count == 1U;
+  }
+  if (std::strcmp(command, "job") == 0) {
+    if (args.count == 1U) return true;
+    if (args.count == 2U) {
+      return tokenEquals(args, 1U, "current") || tokenEquals(args, 1U, "last") ||
+             tokenEquals(args, 1U, "cancel");
+    }
+    return args.count == 3U && tokenEquals(args, 1U, "step");
+  }
+  if (std::strcmp(command, "xfer_assert") == 0) return args.count == 4U;
+  if (std::strcmp(command, "command") == 0) {
+    if (tokenEquals(args, 1U, "write")) {
+      return args.count == 3U || (args.count == 4U && tokenEquals(args, 3U, "confirm"));
+    }
+    if (tokenEquals(args, 1U, "write_data") || tokenEquals(args, 1U, "read")) {
+      return args.count == 4U || (args.count == 5U && tokenEquals(args, 4U, "confirm"));
+    }
+    return args.count == 2U;
+  }
+  if (std::strcmp(command, "mode") == 0 || std::strcmp(command, "repeat") == 0 ||
+      std::strcmp(command, "rate") == 0 || std::strcmp(command, "stretch") == 0 ||
+      std::strcmp(command, "serial") == 0 || std::strcmp(command, "verbose") == 0 ||
+      std::strcmp(command, "stress") == 0 || std::strcmp(command, "stress_mix") == 0) {
+    return countIs(args, 1U, 2U);
+  }
+  if (std::strcmp(command, "single") == 0 ||
+      std::strcmp(command, "i2c_soak") == 0) return args.count == 2U;
+  if (std::strcmp(command, "periodic") == 0) {
+    return tokenEquals(args, 1U, "start") ? args.count == 4U : args.count == 2U;
+  }
+  if (std::strcmp(command, "art") == 0) return args.count == 2U;
+  if (std::strcmp(command, "start_periodic") == 0) return args.count == 3U;
+  if (std::strcmp(command, "status_restore") == 0 ||
+      std::strcmp(command, "clearstatus") == 0 ||
+      std::strcmp(command, "clear_status") == 0 ||
+      std::strcmp(command, "reset") == 0 || std::strcmp(command, "defaults") == 0 ||
+      std::strcmp(command, "restore") == 0 ||
+      std::strcmp(command, "iface_reset") == 0 ||
+      std::strcmp(command, "recover") == 0 ||
+      std::strcmp(command, "selftest") == 0) {
+    return args.count == 1U || (args.count == 2U && tokenEquals(args, 1U, "confirm"));
+  }
+  if (std::strcmp(command, "heater") == 0) {
+    if (tokenEquals(args, 1U, "on")) {
+      return args.count == 2U || (args.count == 3U && tokenEquals(args, 2U, "confirm"));
+    }
+    return countIs(args, 1U, 2U);
+  }
+  if (std::strcmp(command, "alert") == 0) {
+    if (tokenEquals(args, 1U, "show")) return args.count == 2U;
+    if (tokenEquals(args, 1U, "read") || tokenEquals(args, 1U, "decode")) {
+      return args.count == 3U;
+    }
+    if (tokenEquals(args, 1U, "encode")) return args.count == 4U;
+    if (tokenEquals(args, 1U, "disable")) {
+      return args.count == 2U || (args.count == 3U && tokenEquals(args, 2U, "confirm"));
+    }
+    if (tokenEquals(args, 1U, "set") || tokenEquals(args, 1U, "write")) {
+      return args.count == 5U || (args.count == 6U && tokenEquals(args, 5U, "confirm"));
+    }
+    if (tokenEquals(args, 1U, "raw") && tokenEquals(args, 2U, "read")) {
+      return args.count == 4U;
+    }
+    if (tokenEquals(args, 1U, "raw") && tokenEquals(args, 2U, "write")) {
+      return args.count == 5U || (args.count == 6U && tokenEquals(args, 5U, "confirm"));
+    }
+    return args.count == 2U;
+  }
+  if (std::strcmp(command, "convert") == 0) return args.count == 3U;
+  if (std::strcmp(command, "greset") == 0) {
+    return args.count == 2U &&
+           (tokenEquals(args, 1U, "arm") || tokenEquals(args, 1U, "disarm") ||
+            tokenEquals(args, 1U, "confirm"));
+  }
+
+  knownCommand = false;
+  return true;
+}
+
+const char* confirmationEffect(const ParsedArgs& args) {
+  if (args.count == 0U) return nullptr;
+  const char* command = args.values[0];
+  if (std::strcmp(command, "command") == 0) return "issue an unrestricted raw sensor command";
+  if (std::strcmp(command, "status_restore") == 0) return "interrupt and restore the active acquisition mode";
+  if (std::strcmp(command, "clearstatus") == 0 || std::strcmp(command, "clear_status") == 0) return "clear sticky sensor status flags";
+  if (std::strcmp(command, "heater") == 0 && tokenEquals(args, 1U, "on")) return "enable the sensor heater";
+  if (std::strcmp(command, "alert") == 0 && args.count > 1U) {
+    if (tokenEquals(args, 1U, "set") || tokenEquals(args, 1U, "write") ||
+        tokenEquals(args, 1U, "disable") ||
+        (tokenEquals(args, 1U, "raw") && tokenEquals(args, 2U, "write"))) {
+      return "change persistent alert-limit state";
+    }
+  }
+  if (std::strcmp(command, "reset") == 0 || std::strcmp(command, "defaults") == 0 ||
+      std::strcmp(command, "restore") == 0 || std::strcmp(command, "iface_reset") == 0) {
+    return "reset or reconfigure sensor hardware state";
+  }
+  if (std::strcmp(command, "recover") == 0) return "run a sensor recovery sequence";
+  if (std::strcmp(command, "selftest") == 0) return "run a diagnostic that includes reset and restore operations";
+  return nullptr;
+}
+
+bool requireConfirmation(CliString& command, const ParsedArgs& args,
+                         const char* effect) {
+  if (effect == nullptr) return true;
+  const bool confirmed = args.count > 0U && tokenEquals(args, args.count - 1U, "confirm");
+  if (!confirmed) {
+    logWarn("Would %s", effect);
+    logWarn("Confirmation required before any command parameters are applied");
+    logWarn("Use exactly: %s confirm", command.c_str());
+    return false;
+  }
+  const size_t length = command.length();
+  size_t tokenStart = length;
+  while (tokenStart > 0U &&
+         std::isspace(static_cast<unsigned char>(command.c_str()[tokenStart - 1U])) == 0) {
+    --tokenStart;
+  }
+  command = command.substring(0, static_cast<int>(tokenStart));
+  command.trim();
+  return true;
+}
 
 struct OutputProxy {
   void printf(const char* fmt, ...) const {
@@ -161,7 +354,6 @@ struct OutputProxy {
 };
 
 struct StressStats {
-  bool active = false;
   uint32_t startMs = 0;
   uint32_t endMs = 0;
   uint32_t successBefore = 0;
@@ -187,11 +379,17 @@ SHT3x::SHT3x deviceInstance;
 SHT3x::Config configInstance;
 bool configIsReady = false;
 bool verboseMode = false;
-bool pendingRead = false;
+bool ownerJobActive = false;
+bool manualJobControl = false;
+SHT3x::JobType pendingJobType = SHT3x::JobType::NONE;
+const char* pendingTerminalLabel = "job";
 uint32_t pendingStartMs = 0;
 uint32_t pendingRequestId = 0;
 uint32_t nextRequestId = 1;
-int stressRemaining = 0;
+bool lastJobValid = false;
+SHT3x::PollJobResult lastJobResult;
+SHT3x::Status lastJobPollStatus = SHT3x::Status::Ok();
+bool generalCallArmed = false;
 StressStats stressStats;
 
 uint32_t millis() {
@@ -402,6 +600,12 @@ const char* statusKindToStr(const SHT3x::Status& st) {
   if (st.inProgress()) {
     return "IN_PROGRESS";
   }
+  if (st.code == SHT3x::Err::CANCELLED) {
+    return "CANCELLED";
+  }
+  if (st.code == SHT3x::Err::TIMEOUT) {
+    return "TIMEOUT";
+  }
   return "ERR";
 }
 
@@ -565,9 +769,10 @@ void printHealthDiff(const HealthSnapshot<DriverT>& before,
   }
 }
 
-void printConfig() {
+void printConfig(bool readSensorStatus = false) {
   SHT3x::SettingsSnapshot snap;
-  SHT3x::Status st = deviceInstance.getSettings(snap);
+  SHT3x::Status st = readSensorStatus ? deviceInstance.readSettings(snap)
+                                      : deviceInstance.getSettings(snap);
   if (!st.ok()) {
     printStatus(st);
     return;
@@ -660,7 +865,6 @@ void printVerboseState() {
 
 void resetStressStats(int target) {
   stressStats = StressStats{};
-  stressStats.active = true;
   stressStats.startMs = millis();
   stressStats.successBefore = deviceInstance.totalSuccess();
   stressStats.failBefore = deviceInstance.totalFailures();
@@ -700,7 +904,6 @@ void updateStressStats(const SHT3x::Measurement& m) {
 }
 
 void finishStressStats() {
-  stressStats.active = false;
   stressStats.endMs = millis();
   const uint32_t successDelta = deviceInstance.totalSuccess() - stressStats.successBefore;
   const uint32_t failDelta = deviceInstance.totalFailures() - stressStats.failBefore;
@@ -789,6 +992,132 @@ bool isExpectedMeasurementTerminal(const SHT3x::PollJobResult& result,
          result.type == SHT3x::JobType::MEASUREMENT;
 }
 
+void clearPendingOwner() {
+  ownerJobActive = false;
+  manualJobControl = false;
+  pendingRequestId = 0U;
+  pendingJobType = SHT3x::JobType::NONE;
+  pendingTerminalLabel = "job";
+}
+
+void quarantinePendingOwner() {
+  SHT3x::PollJobResult ignored;
+  (void)deviceInstance.cancelJob(SHT3x::CancelReason::REQUESTED, ignored);
+  lastJobValid = false;
+  clearPendingOwner();
+}
+
+SHT3x::Status validateOwnedResult(const SHT3x::PollJobResult& result,
+                                  uint8_t maxInstructions,
+                                  const SHT3x::Status& callStatus) {
+  if (!ownerJobActive || pendingRequestId == 0U ||
+      result.requestId != pendingRequestId || result.type != pendingJobType) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "CLI owner job identity mismatch");
+  }
+  const uint8_t instructionLimit = maxInstructions == 0U ? 0U : 1U;
+  if (result.instructionsUsed > instructionLimit) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "CLI owner job exceeded transfer budget");
+  }
+  if (result.status.code != callStatus.code ||
+      result.status.detail != callStatus.detail) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "CLI owner call/result status mismatch");
+  }
+  if (!result.terminal) {
+    return result.active && !result.completed &&
+                   result.outcome == SHT3x::JobOutcome::ACTIVE &&
+                   result.status.code == SHT3x::Err::IN_PROGRESS
+               ? SHT3x::Status::Ok()
+               : SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                      "Invalid active CLI owner result");
+  }
+  if (result.active || result.outcome == SHT3x::JobOutcome::NONE ||
+      result.outcome == SHT3x::JobOutcome::ACTIVE) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "Invalid terminal CLI owner result");
+  }
+  if (result.outcome == SHT3x::JobOutcome::SUCCEEDED) {
+    const bool measurementValid =
+        result.type == SHT3x::JobType::MEASUREMENT && result.completed &&
+        result.effect == SHT3x::JobEffect::NONE;
+    const bool ensureValid =
+        result.type == SHT3x::JobType::ENSURE_IDLE && !result.completed &&
+        result.effect == SHT3x::JobEffect::DEVICE_STATE_CHANGED;
+    if (!result.status.ok() || (!measurementValid && !ensureValid)) {
+      return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                  "Invalid successful CLI owner result");
+    }
+  } else if (result.completed) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "Failed CLI owner result completed a sample");
+  } else if (result.outcome == SHT3x::JobOutcome::CANCELLED &&
+             result.status.code != SHT3x::Err::CANCELLED) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "Cancelled CLI owner status mismatch");
+  } else if (result.outcome == SHT3x::JobOutcome::TIMED_OUT &&
+             result.status.code != SHT3x::Err::TIMEOUT &&
+             result.status.code != SHT3x::Err::I2C_TIMEOUT) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "Timed-out CLI owner status mismatch");
+  } else if (result.outcome == SHT3x::JobOutcome::FAILED && result.status.ok()) {
+    return SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                "Failed CLI owner result has OK status");
+  }
+  return SHT3x::Status::Ok();
+}
+
+bool rejectActiveOwnerJob(const char* label) {
+  if (!ownerJobActive) {
+    return false;
+  }
+  printLabeledStatus(
+      label,
+      SHT3x::Status::Error(
+          SHT3x::Err::BUSY,
+          "Complete or explicitly cancel the active owner job"));
+  return true;
+}
+
+void rememberJobResult(const SHT3x::Status& pollStatus,
+                       const SHT3x::PollJobResult& result) {
+  if (result.requestId == 0U && !result.terminal) {
+    return;
+  }
+  lastJobPollStatus = pollStatus;
+  lastJobResult = result;
+  lastJobValid = true;
+}
+
+void printJobResult(const char* label, const SHT3x::Status& pollStatus,
+                    const SHT3x::PollJobResult& result) {
+  Serial.printf(
+      "%s: request=%lu type=%u phase=%u outcome=%u effect=%u active=%u "
+      "completed=%u terminal=%u instructions=%u status=%s code=%u detail=%ld\n",
+      label,
+      static_cast<unsigned long>(result.requestId),
+      static_cast<unsigned>(result.type),
+      static_cast<unsigned>(result.phase),
+      static_cast<unsigned>(result.outcome),
+      static_cast<unsigned>(result.effect),
+      result.active ? 1U : 0U,
+      result.completed ? 1U : 0U,
+      result.terminal ? 1U : 0U,
+      static_cast<unsigned>(result.instructionsUsed),
+      statusKindToStr(pollStatus),
+      static_cast<unsigned>(pollStatus.code),
+      static_cast<long>(pollStatus.detail));
+}
+
+void printLastJobResult() {
+  if (!lastJobValid) {
+    Serial.println("result: none");
+    return;
+  }
+  printJobResult("result", lastJobPollStatus, lastJobResult);
+}
+
 SHT3x::Status readTerminalMeasurementMilli(const SHT3x::PollJobResult& result,
                                            uint32_t requestId,
                                            SHT3x::MeasurementMilli& out) {
@@ -870,9 +1199,7 @@ SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
 }
 
 void runStress(int count) {
-  const SHT3x::Status prepareStatus = cancelPending();
-  if (!prepareStatus.ok()) {
-    printStatus(prepareStatus);
+  if (rejectActiveOwnerJob("stress")) {
     return;
   }
   resetStressStats(count);
@@ -889,7 +1216,6 @@ void runStress(int count) {
       noteStressError(st);
     }
     stressStats.attempts++;
-    stressRemaining = count - i - 1;
     printStressProgress(static_cast<uint32_t>(stressStats.attempts),
                         static_cast<uint32_t>(stressStats.target),
                         static_cast<uint32_t>(stressStats.success),
@@ -897,14 +1223,11 @@ void runStress(int count) {
     yield();
   }
 
-  stressRemaining = 0;
   finishStressStats();
 }
 
 void runI2cSoak(uint32_t durationS) {
-  const SHT3x::Status prepareStatus = cancelPending();
-  if (!prepareStatus.ok()) {
-    printStatus(prepareStatus);
+  if (rejectActiveOwnerJob("i2c_soak")) {
     return;
   }
   const uint32_t durationMs = durationS * 1000UL;
@@ -1016,9 +1339,7 @@ void runStressMix(int count) {
   };
   const int opCount = static_cast<int>(sizeof(stats) / sizeof(stats[0]));
 
-  const SHT3x::Status prepareStatus = cancelPending();
-  if (!prepareStatus.ok()) {
-    printStatus(prepareStatus);
+  if (rejectActiveOwnerJob("stress_mix")) {
     return;
   }
   HealthSnapshot<SHT3x::SHT3x> healthBefore;
@@ -1198,9 +1519,7 @@ void runSelfTest() {
   };
 
   Serial.println("=== SHT3x selftest (safe commands) ===");
-  const SHT3x::Status prepareStatus = cancelPending();
-  if (!prepareStatus.ok()) {
-    printStatus(prepareStatus);
+  if (rejectActiveOwnerJob("selftest")) {
     Serial.println("Selftest result: pass=0 fail=1 skip=0");
     return;
   }
@@ -1292,60 +1611,70 @@ void runSelfTest() {
                 skipCountColor(result.skip), static_cast<unsigned long>(result.skip), LOG_COLOR_RESET);
 }
 
-SHT3x::Status scheduleMeasurement() {
+SHT3x::Status scheduleMeasurement(bool manual = false) {
   const uint32_t startMs = millis();
   const uint32_t requestId = allocateRequestId();
   SHT3x::JobRequest request;
   request.requestId = requestId;
-  request.deadlineMs = startMs + MEASUREMENT_JOB_TIMEOUT_MS;
+  request.deadlineMs =
+      startMs + (manual ? MANUAL_JOB_TIMEOUT_MS : MEASUREMENT_JOB_TIMEOUT_MS);
   request.hasDeadline = true;
   SHT3x::Status st = deviceInstance.requestMeasurement(request);
   if (st.code == SHT3x::Err::IN_PROGRESS) {
-    pendingRead = true;
+    ownerJobActive = true;
+    manualJobControl = manual;
+    pendingJobType = SHT3x::JobType::MEASUREMENT;
     pendingStartMs = startMs;
     pendingRequestId = requestId;
-    if (verboseMode && !stressStats.active) {
-      Serial.printf("Measurement requested at %lu ms\n",
-                    static_cast<unsigned long>(pendingStartMs));
-    }
+    Serial.printf("request: IN_PROGRESS request=%lu deadline_ms=%lu scheduled_ms=%lu\n",
+                  static_cast<unsigned long>(pendingRequestId),
+                  static_cast<unsigned long>(request.deadlineMs),
+                  static_cast<unsigned long>(pendingStartMs));
+  }
+  return st;
+}
+
+SHT3x::Status scheduleEnsureIdle(const char* terminalLabel,
+                                 bool manual = false) {
+  if (ownerJobActive) {
+    return SHT3x::Status::Error(SHT3x::Err::BUSY, "CLI owner job already active");
+  }
+  const uint32_t startMs = millis();
+  const uint32_t requestId = allocateRequestId();
+  SHT3x::JobRequest request;
+  request.requestId = requestId;
+  request.deadlineMs = startMs + MANUAL_JOB_TIMEOUT_MS;
+  request.hasDeadline = true;
+  const SHT3x::Status st = deviceInstance.requestEnsureIdle(request);
+  if (st.code == SHT3x::Err::IN_PROGRESS) {
+    ownerJobActive = true;
+    manualJobControl = manual;
+    pendingJobType = SHT3x::JobType::ENSURE_IDLE;
+    pendingTerminalLabel = terminalLabel != nullptr ? terminalLabel : "ensure_idle";
+    pendingStartMs = startMs;
+    pendingRequestId = requestId;
+    Serial.printf("ensure_idle: IN_PROGRESS request=%lu deadline_ms=%lu scheduled_ms=%lu\n",
+                  static_cast<unsigned long>(pendingRequestId),
+                  static_cast<unsigned long>(request.deadlineMs),
+                  static_cast<unsigned long>(pendingStartMs));
   }
   return st;
 }
 
 void handleMeasurementTerminal(const SHT3x::PollJobResult& result) {
-  if (!pendingRead || !result.terminal) {
+  if (!ownerJobActive || !result.terminal) {
     return;
   }
 
   SHT3x::MeasurementMilli milli;
   const SHT3x::Status st =
       readTerminalMeasurementMilli(result, pendingRequestId, milli);
-  pendingRead = false;
-  pendingRequestId = 0;
+  rememberJobResult(result.status, result);
+  clearPendingOwner();
 
   if (!st.ok()) {
-    if (stressStats.active) {
-      noteStressError(st);
-      stressStats.attempts++;
-      if (stressRemaining > 0) {
-        stressRemaining--;
-      }
-      printStressProgress(static_cast<uint32_t>(stressStats.attempts),
-                          static_cast<uint32_t>(stressStats.target),
-                          static_cast<uint32_t>(stressStats.success),
-                          stressStats.errors);
-      if (stressRemaining == 0 && stressStats.active) {
-        finishStressStats();
-      }
-    } else {
-      printStatus(st);
-      Serial.printf("job: request=%lu phase=%u outcome=%u effect=%u instructions=%u\n",
-                    static_cast<unsigned long>(result.requestId),
-                    static_cast<unsigned>(result.phase),
-                    static_cast<unsigned>(result.outcome),
-                    static_cast<unsigned>(result.effect),
-                    static_cast<unsigned>(result.instructionsUsed));
-    }
+    printStatus(st);
+    printJobResult("job terminal", result.status, result);
     return;
   }
 
@@ -1353,23 +1682,8 @@ void handleMeasurementTerminal(const SHT3x::PollJobResult& result) {
   m.temperatureC = static_cast<float>(milli.temperatureMilliCelsius) / 1000.0f;
   m.humidityPct = static_cast<float>(milli.humidityMilliPercent) / 1000.0f;
 
-  if (stressStats.active) {
-    updateStressStats(m);
-    stressStats.attempts++;
-    if (stressRemaining > 0) {
-      stressRemaining--;
-    }
-    printStressProgress(static_cast<uint32_t>(stressStats.attempts),
-                        static_cast<uint32_t>(stressStats.target),
-                        static_cast<uint32_t>(stressStats.success),
-                        stressStats.errors);
-    if (stressRemaining == 0 && stressStats.active) {
-      finishStressStats();
-    }
-    return;
-  }
-
   printMeasurement(m);
+  printJobResult("job terminal", result.status, result);
 }
 
 bool parseRepeatability(const CliString& token, SHT3x::Repeatability& out) {
@@ -1450,15 +1764,50 @@ bool parseAlertKind(const CliString& token, SHT3x::AlertLimitKind& out) {
 
 bool parseU16(const CliString& token, uint16_t& out) {
   const char* str = token.c_str();
+  if (str[0] == '\0' || str[0] == '-' || str[0] == '+') {
+    return false;
+  }
   char* end = nullptr;
+  errno = 0;
   unsigned long value = std::strtoul(str, &end, 0);
-  if (end == str || *end != '\0') {
+  if (errno == ERANGE || end == str || *end != '\0') {
     return false;
   }
   if (value > 0xFFFFUL) {
     return false;
   }
   out = static_cast<uint16_t>(value);
+  return true;
+}
+
+bool parseU32(const CliString& token, uint32_t& out) {
+  const char* str = token.c_str();
+  if (str[0] == '\0' || str[0] == '-' || str[0] == '+') {
+    return false;
+  }
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long value = std::strtoul(str, &end, 0);
+  if (errno == ERANGE || end == str || *end != '\0' ||
+      value > static_cast<unsigned long>(std::numeric_limits<uint32_t>::max())) {
+    return false;
+  }
+  out = static_cast<uint32_t>(value);
+  return true;
+}
+
+bool parseFiniteFloat(const CliString& token, float& out) {
+  const char* str = token.c_str();
+  if (str[0] == '\0') {
+    return false;
+  }
+  char* end = nullptr;
+  errno = 0;
+  const float value = std::strtof(str, &end);
+  if (errno == ERANGE || end == str || *end != '\0' || !std::isfinite(value)) {
+    return false;
+  }
+  out = value;
   return true;
 }
 
@@ -1513,9 +1862,7 @@ void startPeriodicFromArgs(const CliString& args, const char* label) {
 }
 
 void requestMeasurementCommand(const char* label) {
-  const SHT3x::Status prepareStatus = cancelPending();
-  if (!prepareStatus.ok()) {
-    printLabeledStatus(label, prepareStatus);
+  if (rejectActiveOwnerJob(label)) {
     return;
   }
   const SHT3x::Status st = scheduleMeasurement();
@@ -1529,9 +1876,7 @@ void singleShotCommand(const CliString& arg) {
     return;
   }
 
-  const SHT3x::Status prepareStatus = cancelPending();
-  if (!prepareStatus.ok()) {
-    printStatus(prepareStatus);
+  if (rejectActiveOwnerJob("single")) {
     return;
   }
   SHT3x::Status st = deviceInstance.setMode(SHT3x::Mode::SINGLE_SHOT);
@@ -1551,6 +1896,84 @@ void singleShotCommand(const CliString& arg) {
   }
   st = scheduleMeasurement();
   printLabeledStatus("single request", st);
+}
+
+void pollJobCommand(uint8_t budget, const char* label) {
+  if (!ownerJobActive || pendingRequestId == 0U) {
+    Serial.printf("%s: none\n", label);
+    return;
+  }
+  SHT3x::PollJobResult result;
+  const SHT3x::Status st = deviceInstance.pollJob(millis(), budget, result);
+  const SHT3x::Status validation = validateOwnedResult(result, budget, st);
+  if (!validation.ok()) {
+    printLabeledStatus(
+        "job_validation", validation);
+    quarantinePendingOwner();
+    return;
+  }
+  if (result.terminal) {
+    if (result.type == SHT3x::JobType::MEASUREMENT) {
+      handleMeasurementTerminal(result);
+    } else {
+      const char* terminalLabel = pendingTerminalLabel;
+      rememberJobResult(st, result);
+      clearPendingOwner();
+      printJobResult(label, st, result);
+      printLabeledStatus(terminalLabel, result.status);
+    }
+    return;
+  }
+  printJobResult(label, st, result);
+}
+
+TransferStats transferStatsSnapshot() {
+  return platform.getTransferStats != nullptr
+             ? platform.getTransferStats(platform.user)
+             : TransferStats{};
+}
+
+void printTransferStats() {
+  if (platform.getTransferStats == nullptr) {
+    logWarn("Transfer counters are not available");
+    return;
+  }
+  const TransferStats stats = transferStatsSnapshot();
+  const uint32_t total =
+      (std::numeric_limits<uint32_t>::max() - stats.readCallbacks < stats.writeCallbacks)
+          ? std::numeric_limits<uint32_t>::max()
+          : stats.readCallbacks + stats.writeCallbacks;
+  Serial.printf("xfer_stats: read=%lu write=%lu total=%lu ok=%lu fail=%lu tx_bytes=%lu rx_bytes=%lu\n",
+                static_cast<unsigned long>(stats.readCallbacks),
+                static_cast<unsigned long>(stats.writeCallbacks),
+                static_cast<unsigned long>(total),
+                static_cast<unsigned long>(stats.successes),
+                static_cast<unsigned long>(stats.failures),
+                static_cast<unsigned long>(stats.txBytes),
+                static_cast<unsigned long>(stats.rxBytes));
+}
+
+void assertTransferStats(uint32_t expectedRead, uint32_t expectedWrite,
+                         uint32_t expectedTotal) {
+  if (platform.getTransferStats == nullptr) {
+    logWarn("Transfer counters are not available");
+    return;
+  }
+  const TransferStats stats = transferStatsSnapshot();
+  const uint32_t total =
+      (std::numeric_limits<uint32_t>::max() - stats.readCallbacks < stats.writeCallbacks)
+          ? std::numeric_limits<uint32_t>::max()
+          : stats.readCallbacks + stats.writeCallbacks;
+  const bool passed = stats.readCallbacks == expectedRead &&
+                      stats.writeCallbacks == expectedWrite && total == expectedTotal;
+  Serial.printf("xfer_assert: %s expected_read=%lu actual_read=%lu expected_write=%lu actual_write=%lu expected_total=%lu actual_total=%lu\n",
+                passed ? "PASS" : "FAIL",
+                static_cast<unsigned long>(expectedRead),
+                static_cast<unsigned long>(stats.readCallbacks),
+                static_cast<unsigned long>(expectedWrite),
+                static_cast<unsigned long>(stats.writeCallbacks),
+                static_cast<unsigned long>(expectedTotal),
+                static_cast<unsigned long>(total));
 }
 
 namespace cli {
@@ -1581,6 +2004,29 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
+  ParsedArgs parsed;
+  parseArguments(cmd, parsed);
+  const bool gresetControl = cmd == "greset arm" || cmd == "greset disarm" ||
+                             cmd == "greset confirm";
+  if (generalCallArmed && !gresetControl) {
+    generalCallArmed = false;
+    Serial.println("greset armed=0 zero_i2c=1 reason=intervening_command");
+  }
+  if (parsed.tooMany) {
+    logWarn("Too many arguments (maximum %u)", static_cast<unsigned>(MAX_CLI_ARGS));
+    return;
+  }
+  bool knownCommand = false;
+  if (!validCommandArity(parsed, knownCommand)) {
+    logWarn("Invalid command arity: %s", cmd.c_str());
+    logWarn("Use 'help' for the exact command synopsis");
+    return;
+  }
+  const char* effect = confirmationEffect(parsed);
+  if (!requireConfirmation(cmd, parsed, effect)) {
+    return;
+  }
+
   if (cmd == "help" || cmd == "?") {
     printHelp();
     return;
@@ -1596,10 +2042,81 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
+  if (cmd == "request") {
+    const SHT3x::Status st = scheduleMeasurement(true);
+    printLabeledStatus("request", st);
+    return;
+  }
+
+  if (cmd == "fetch") {
+    pollJobCommand(1U, "fetch");
+    return;
+  }
+
+  if (cmd == "job" || cmd == "job current") {
+    pollJobCommand(0U, "job current");
+    return;
+  }
+
+  if (cmd == "job last" || cmd == "result") {
+    printLastJobResult();
+    return;
+  }
+
+  if (cmd.startsWith("job step ")) {
+    uint32_t budget = 0U;
+    if (!parseU32(cmd.substring(9), budget) || budget > 255U) {
+      logWarn("Usage: job step <0..255>");
+      return;
+    }
+    pollJobCommand(static_cast<uint8_t>(budget), "job step");
+    return;
+  }
+
+  if (cmd == "job cancel" || cmd == "cancel") {
+    if (!ownerJobActive || pendingRequestId == 0U) {
+      Serial.println("job cancel: none");
+      return;
+    }
+    const SHT3x::Status st = cancelPending();
+    printLabeledStatus("job cancel", st);
+    if (lastJobValid) {
+      printLastJobResult();
+    }
+    return;
+  }
+
+  if (cmd == "xfer_reset") {
+    if (platform.resetTransferStats == nullptr) {
+      logWarn("Transfer counter reset is not available");
+    } else {
+      platform.resetTransferStats(platform.user);
+      Serial.println("xfer_reset: OK");
+    }
+    return;
+  }
+
+  if (cmd == "xfer_stats") {
+    printTransferStats();
+    return;
+  }
+
+  if (cmd.startsWith("xfer_assert ")) {
+    uint32_t expectedRead = 0U;
+    uint32_t expectedWrite = 0U;
+    uint32_t expectedTotal = 0U;
+    if (!parseU32(CliString(parsed.values[1]), expectedRead) ||
+        !parseU32(CliString(parsed.values[2]), expectedWrite) ||
+        !parseU32(CliString(parsed.values[3]), expectedTotal)) {
+      logWarn("Usage: xfer_assert <read> <write> <total>");
+      return;
+    }
+    assertTransferStats(expectedRead, expectedWrite, expectedTotal);
+    return;
+  }
+
   if (cmd == "read") {
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
+    if (rejectActiveOwnerJob("read")) {
       return;
     }
     const SHT3x::Status st = scheduleMeasurement();
@@ -1719,8 +2236,13 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
-  if (cmd == "cfg" || cmd == "settings") {
-    printConfig();
+  if (cmd == "cfg") {
+    printConfig(false);
+    return;
+  }
+
+  if (cmd == "settings") {
+    printConfig(true);
     return;
   }
 
@@ -1752,9 +2274,7 @@ void processCommandString(const CliString& cmdLine) {
       return;
     }
 
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
+    if (rejectActiveOwnerJob("mode")) {
       return;
     }
     SHT3x::Status st = deviceInstance.setMode(mode);
@@ -1891,7 +2411,7 @@ void processCommandString(const CliString& cmdLine) {
 
   if (cmd == "stretch") {
     SHT3x::SettingsSnapshot snap;
-    SHT3x::Status st = deviceInstance.readSettings(snap);
+    SHT3x::Status st = deviceInstance.getSettings(snap);
     if (!st.ok()) {
       printStatus(st);
       return;
@@ -1989,7 +2509,7 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
-  if (cmd.startsWith("serial")) {
+  if (cmd == "serial" || cmd.startsWith("serial ")) {
     SHT3x::ClockStretching stretch = SHT3x::ClockStretching::STRETCH_DISABLED;
     if (cmd.length() > 6U) {
       CliString arg = cmd.substring(6);
@@ -1998,6 +2518,9 @@ void processCommandString(const CliString& cmdLine) {
         stretch = SHT3x::ClockStretching::STRETCH_ENABLED;
       } else if (arg == "nostretch") {
         stretch = SHT3x::ClockStretching::STRETCH_DISABLED;
+      } else {
+        logWarn("Usage: serial [stretch|nostretch]");
+        return;
       }
     }
     uint32_t sn = 0;
@@ -2118,8 +2641,12 @@ void processCommandString(const CliString& cmdLine) {
         return;
       }
 
-      const float tempC = tempStr.toFloat();
-      const float rh = rhStr.toFloat();
+      float tempC = 0.0f;
+      float rh = 0.0f;
+      if (!parseFiniteFloat(tempStr, tempC) || !parseFiniteFloat(rhStr, rh)) {
+        logWarn("Temperature and humidity must be finite whole-token numbers");
+        return;
+      }
       SHT3x::Status st = deviceInstance.writeAlertLimit(kind, tempC, rh);
       printStatus(st);
       return;
@@ -2131,8 +2658,13 @@ void processCommandString(const CliString& cmdLine) {
         logWarn("Usage: alert encode <T> <RH>");
         return;
       }
-      const float tempC = rest.substring(0, split2).toFloat();
-      const float rh = rest.substring(split2 + 1).toFloat();
+      float tempC = 0.0f;
+      float rh = 0.0f;
+      if (!parseFiniteFloat(rest.substring(0, split2), tempC) ||
+          !parseFiniteFloat(rest.substring(split2 + 1), rh)) {
+        logWarn("Temperature and humidity must be finite whole-token numbers");
+        return;
+      }
       const uint16_t raw = SHT3x::SHT3x::encodeAlertLimit(tempC, rh);
       Serial.printf("Alert encoded: 0x%04X\n", static_cast<unsigned>(raw));
       return;
@@ -2193,9 +2725,7 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "reset") {
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
+    if (rejectActiveOwnerJob("reset")) {
       return;
     }
     SHT3x::Status st = deviceInstance.softReset();
@@ -2204,9 +2734,7 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "defaults") {
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
+    if (rejectActiveOwnerJob("defaults")) {
       return;
     }
     SHT3x::Status st = deviceInstance.resetToDefaults();
@@ -2215,9 +2743,7 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "restore") {
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
+    if (rejectActiveOwnerJob("restore")) {
       return;
     }
     SHT3x::Status st = deviceInstance.resetAndRestore();
@@ -2231,9 +2757,36 @@ void processCommandString(const CliString& cmdLine) {
     return;
   }
 
+  if (cmd == "greset arm") {
+    generalCallArmed = true;
+    logWarn("General-call reset armed for one confirmed broadcast command");
+    Serial.println("greset armed=1 zero_i2c=1");
+    return;
+  }
+
+  if (cmd == "greset disarm") {
+    generalCallArmed = false;
+    logInfo("General-call reset disarmed");
+    Serial.println("greset armed=0 zero_i2c=1");
+    return;
+  }
+
   if (cmd == "greset") {
+    logWarn("General-call reset is bus-wide and may affect every compatible device");
+    logWarn("Use 'greset arm', then 'greset confirm'");
+    return;
+  }
+
+  if (cmd == "greset confirm") {
+    if (!generalCallArmed) {
+      logWarn("General-call reset is not armed; use 'greset arm' first");
+      return;
+    }
+    generalCallArmed = false;
+    Serial.println("greset armed=0 zero_i2c=1");
     SHT3x::Status st = deviceInstance.generalCallReset();
     printStatus(st);
+    logInfo("General-call reset disarmed");
     return;
   }
 
@@ -2248,24 +2801,15 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "begin") {
-    if (!configIsReady) {
-      logWarn("Config not ready");
-      return;
-    }
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
-      return;
-    }
-    SHT3x::Status st = deviceInstance.begin(configInstance);
-    printStatus(st);
+    printLabeledStatus("begin", beginOwnerSafe());
     return;
   }
 
   if (cmd == "end") {
-    const SHT3x::Status prepareStatus = cancelPending();
-    if (!prepareStatus.ok()) {
-      printStatus(prepareStatus);
+    if (ownerJobActive) {
+      printLabeledStatus("end", SHT3x::Status::Error(
+                                    SHT3x::Err::BUSY,
+                                    "Active owner job must be cancelled explicitly"));
       return;
     }
     deviceInstance.end();
@@ -2298,16 +2842,8 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "recover") {
-    logInfo("Attempting recovery...");
-    HealthSnapshot<SHT3x::SHT3x> before;
-    before.capture(deviceInstance);
-    SHT3x::Status st = deviceInstance.recover();
-    printStatus(st);
-    HealthSnapshot<SHT3x::SHT3x> after;
-    after.capture(deviceInstance);
-    Serial.println("  Health changes:");
-    printHealthDiff(before, after);
-    printDriverHealth();
+    const SHT3x::Status st = scheduleEnsureIdle("recover", false);
+    printLabeledStatus("recover", st);
     return;
   }
 
@@ -2317,8 +2853,12 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd.startsWith("verbose ")) {
-    const int val = static_cast<int>(cmd.substring(8).toInt());
-    verboseMode = (val != 0);
+    uint32_t val = 0U;
+    if (!parseU32(cmd.substring(8), val) || val > 1U) {
+      logWarn("Usage: verbose [0|1]");
+      return;
+    }
+    verboseMode = val != 0U;
     logInfo("Verbose mode: %s%s%s",
             onOffColor(verboseMode),
             verboseMode ? "ON" : "OFF",
@@ -2332,12 +2872,13 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd.startsWith("i2c_soak ")) {
-    const long seconds = cmd.substring(9).toInt();
-    if (seconds <= 0 || seconds > static_cast<long>(I2C_SOAK_MAX_SECONDS)) {
+    uint32_t seconds = 0U;
+    if (!parseU32(cmd.substring(9), seconds) || seconds == 0U ||
+        seconds > I2C_SOAK_MAX_SECONDS) {
       logWarn("Invalid i2c_soak seconds");
       return;
     }
-    runI2cSoak(static_cast<uint32_t>(seconds));
+    runI2cSoak(seconds);
     return;
   }
 
@@ -2347,26 +2888,24 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd.startsWith("stress_mix ")) {
-    int count = static_cast<int>(cmd.substring(11).toInt());
-    if (count <= 0 || count > 100000) {
+    uint32_t count = 0U;
+    if (!parseU32(cmd.substring(11), count) || count == 0U || count > 100000U) {
       logWarn("Invalid stress_mix count");
       return;
     }
-    runStressMix(count);
+    runStressMix(static_cast<int>(count));
     return;
   }
 
-  if (cmd.startsWith("stress")) {
-    int count = 10;
-    if (cmd.length() > 6U) {
-      count = static_cast<int>(cmd.substring(6).toInt());
-    }
-    if (count <= 0) {
+  if (cmd == "stress" || cmd.startsWith("stress ")) {
+    uint32_t count = 10U;
+    if (cmd.length() > 6U &&
+        (!parseU32(cmd.substring(6), count) || count == 0U || count > 100000U)) {
       logWarn("Invalid stress count");
       return;
     }
 
-    runStress(count);
+    runStress(static_cast<int>(count));
     return;
   }
 
@@ -2375,16 +2914,25 @@ void processCommandString(const CliString& cmdLine) {
 
 }  // namespace
 
-SHT3x::SHT3x& device() {
-  return deviceInstance;
-}
-
 SHT3x::Config& config() {
   return configInstance;
 }
 
 bool& configReady() {
   return configIsReady;
+}
+
+SHT3x::Status beginOwnerSafe() {
+  if (!configIsReady) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG,
+                                "CLI config is not ready");
+  }
+  if (ownerJobActive) {
+    return SHT3x::Status::Error(SHT3x::Err::BUSY,
+                                "Active owner job must be cancelled explicitly");
+  }
+  const SHT3x::Status bindStatus = deviceInstance.bind(configInstance);
+  return bindStatus.ok() ? scheduleEnsureIdle("begin", false) : bindStatus;
 }
 
 void setPlatform(const Platform& nextPlatform) {
@@ -2400,77 +2948,100 @@ void printHelp() {
   cli::printHelpHeader("SHT3x CLI Help");
   cli::printHelpSection("Common");
   cli::printHelpItem("help / ?", "Show this help");
-  cli::printHelpItem("version / ver", "Print firmware and library version info");
-  cli::printHelpItem("scan", "Scan I2C bus");
-  cli::printHelpItem("read", "Request measurement (single-shot or periodic)");
-  cli::printHelpItem("raw", "Print last raw sample");
-  cli::printHelpItem("comp", "Print last compensated sample");
+  cli::printHelpItem("version / ver", "Print runtime framework and firmware/library provenance");
+  cli::printHelpItem("scan", "Scan I2C ACKs; an ACK is not SHT3x identity");
+  cli::printHelpItem("read", "Run one bounded owner-safe measurement job");
+  cli::printHelpItem("request", "Schedule an owner-safe measurement without I2C");
+  cli::printHelpItem("fetch", "Advance the active owner job by at most one I2C transfer");
+  cli::printHelpItem("raw", "Print the last cached raw sample");
+  cli::printHelpItem("comp", "Print the last cached compensated sample");
   cli::printHelpItem("meastime", "Show estimated measurement time");
+  cli::printHelpItem("job [current|last]", "Show active zero-I2C progress or the retained terminal result");
+  cli::printHelpItem("job step <0..255>", "Poll once with an explicit I2C-transfer budget");
+  cli::printHelpItem("job cancel / cancel", "Cancel the active job locally with zero I2C");
+  cli::printHelpItem("result", "Show the retained terminal job result");
 
   cli::printHelpSection("Operating Mode");
   cli::printHelpItem("mode [single|periodic|art]", "Set or show operating mode");
   cli::printHelpItem("single <low|medium|high>", "Run one no-stretch single-shot measurement");
-  cli::printHelpItem("periodic start <rate> <rep>", "Alias for start_periodic");
-  cli::printHelpItem("periodic fetch", "Fetch next periodic sample");
-  cli::printHelpItem("periodic stop", "Alias for stop_periodic");
-  cli::printHelpItem("art start", "Alias for start_art");
-  cli::printHelpItem("art fetch", "Fetch next ART sample");
+  cli::printHelpItem("periodic start <rate> <rep>", "Start periodic mode");
+  cli::printHelpItem("periodic fetch", "Run one bounded periodic fetch job");
+  cli::printHelpItem("periodic stop", "Stop periodic or ART mode");
+  cli::printHelpItem("art start", "Start ART mode");
+  cli::printHelpItem("art fetch", "Run one bounded ART fetch job");
   cli::printHelpItem("art stop", "Stop ART mode");
-  cli::printHelpItem("start_periodic <rate> <rep>", "Start periodic mode");
-  cli::printHelpItem("start_art", "Start ART mode");
-  cli::printHelpItem("stop_periodic", "Stop periodic or ART mode");
+  cli::printHelpItem("start_periodic <rate> <rep>", "Alias for periodic start");
+  cli::printHelpItem("start_art", "Alias for art start");
+  cli::printHelpItem("stop_periodic", "Alias for periodic/art stop");
   cli::printHelpItem("repeat [low|med|high]", "Set or show repeatability");
   cli::printHelpItem("rate [0.5|1|2|4|10]", "Set or show periodic rate");
   cli::printHelpItem("stretch [0|1]", "Set or show clock stretching");
 
   cli::printHelpSection("Status And Alerts");
-  cli::printHelpItem("status", "Read status register");
-  cli::printHelpItem("status_restore", "Read status with periodic/ART restore snapshot");
-  cli::printHelpItem("status_raw", "Read raw status (16-bit)");
-  cli::printHelpItem("clearstatus", "Clear status flags");
-  cli::printHelpItem("clear_status", "Alias for clearstatus");
-  cli::printHelpItem("heater [on|off|status]", "Control heater");
-  cli::printHelpItem("serial [stretch|nostretch]", "Read serial number");
-  cli::printHelpItem("command write <hex>", "Issue a raw 16-bit command");
-  cli::printHelpItem("command write_data <cmd> <data>", "Issue a command with a packed data word");
-  cli::printHelpItem("command read <cmd> <len>", "Issue a command and read raw response bytes");
+  cli::printHelpItem("status", "Read decoded status while idle");
+  cli::printHelpItem("status_restore confirm", "Interrupt active acquisition, read status, and restore mode");
+  cli::printHelpItem("status_raw", "Read raw status while idle");
+  cli::printHelpItem("clearstatus confirm", "Clear sticky status flags");
+  cli::printHelpItem("clear_status confirm", "Alias for clearstatus");
+  cli::printHelpItem("heater [status|off|on confirm]", "Inspect or control the heater; enabling requires confirmation");
+  cli::printHelpItem("serial [stretch|nostretch]", "Read the CRC-protected serial number");
+  cli::printHelpItem("command write <hex> confirm", "Issue an arbitrary raw 16-bit command");
+  cli::printHelpItem("command write_data <cmd> <data> confirm", "Issue an arbitrary command with packed data");
+  cli::printHelpItem("command read <cmd> <len> confirm", "Issue an arbitrary command and raw read");
   cli::printHelpItem("alert show", "Read all alert limits");
-  cli::printHelpItem("alert set <kind> <T> <RH>", "Alias for alert write");
-  cli::printHelpItem("alert read <hs|hc|lc|ls>", "Read alert limit");
-  cli::printHelpItem("alert write <kind> <T> <RH>", "Write alert limit");
-  cli::printHelpItem("alert raw read <kind>", "Read raw alert limit word");
-  cli::printHelpItem("alert raw write <kind> <hex>", "Write raw alert limit word");
-  cli::printHelpItem("alert encode <T> <RH>", "Encode alert limit word");
-  cli::printHelpItem("alert decode <hex>", "Decode alert limit word");
-  cli::printHelpItem("alert disable", "Disable alerts (LowSet > HighSet)");
-  cli::printHelpItem("convert <rawT> <rawRH>", "Convert raw values");
+  cli::printHelpItem("alert set <kind> <T> <RH> confirm", "Write an alert limit");
+  cli::printHelpItem("alert read <hs|hc|lc|ls>", "Read an alert limit");
+  cli::printHelpItem("alert write <kind> <T> <RH> confirm", "Alias for alert set");
+  cli::printHelpItem("alert raw read <kind>", "Read a raw packed alert word");
+  cli::printHelpItem("alert raw write <kind> <hex> confirm", "Write a raw packed alert word");
+  cli::printHelpItem("alert encode <T> <RH>", "Encode an alert word without I2C");
+  cli::printHelpItem("alert decode <hex>", "Decode an alert word without I2C");
+  cli::printHelpItem("alert disable confirm", "Disable alerts by writing limits");
+  cli::printHelpItem("convert <rawT> <rawRH>", "Convert measurement words without I2C");
 
   cli::printHelpSection("Lifecycle And Diagnostics");
-  cli::printHelpItem("reset", "Soft reset device");
-  cli::printHelpItem("defaults", "Reset command-mode defaults");
-  cli::printHelpItem("restore", "Reset sensor and restore cached settings");
-  cli::printHelpItem("iface_reset", "Interface reset (SCL pulse)");
-  cli::printHelpItem("greset", "General-call reset (bus-wide)");
-  cli::printHelpItem("stats", "Runtime counters and cached settings");
-  cli::printHelpItem("cfg / settings", "Show current config");
+  cli::printHelpItem("reset confirm", "Soft-reset the sensor");
+  cli::printHelpItem("defaults confirm", "Reset command-mode defaults");
+  cli::printHelpItem("restore confirm", "Reset the sensor and restore cached settings");
+  cli::printHelpItem("iface_reset confirm", "Run the injected interface-reset callback");
+  cli::printHelpItem("greset arm / greset disarm", "Arm or disarm one bus-wide general-call reset; no I2C");
+  cli::printHelpItem("greset confirm", "Attempt one armed bus-wide reset when application transport enables it");
+  cli::printHelpItem("stats", "Show runtime counters and cached settings");
+  cli::printHelpItem("cfg / settings", "Show current config; settings also reads status");
   cli::printHelpItem("drv", "Show driver state and health");
   cli::printHelpItem("online", "Show online state");
-  cli::printHelpItem("begin", "Re-initialize device");
-  cli::printHelpItem("end", "End driver session");
+  cli::printHelpItem("begin", "Owner-safe bind and bounded ensure-idle reconciliation");
+  cli::printHelpItem("end", "End the local driver session; rejects an active job");
   cli::printHelpItem("state", "Show compact one-line health summary");
-  cli::printHelpItem("probe", "Probe device (no health tracking)");
-  cli::printHelpItem("recover", "Manual recovery attempt");
-  cli::printHelpItem("verbose [0|1]", "Enable/disable verbose output");
-  cli::printHelpItem("i2c_soak <seconds>", "Run low-USB I2C measurement soak");
-  cli::printHelpItem("stress [N]", "Run N measurement cycles");
-  cli::printHelpItem("stress_mix [N]", "Run N mixed-operation cycles");
-  cli::printHelpItem("selftest", "Run safe command self-test report");
+  cli::printHelpItem("probe", "Probe the sensor without health tracking");
+  cli::printHelpItem("recover confirm", "Run bounded owner-safe ensure-idle recovery");
+  cli::printHelpItem("verbose [0|1]", "Show or set verbose output");
+  cli::printHelpItem("stress [N]", "Run N bounded measurement jobs");
+  cli::printHelpItem("stress_mix [N]", "Run N mixed operations");
+  cli::printHelpItem("i2c_soak <seconds>", "Run a bounded low-output measurement soak");
+  cli::printHelpItem("xfer_reset", "Reset example-owned transport counters");
+  cli::printHelpItem("xfer_stats", "Show example-owned transport counters");
+  cli::printHelpItem("xfer_assert <read> <write> <total>", "Assert exact transport callback totals");
+  cli::printHelpItem("selftest confirm", "Run diagnostic I2C self-test commands");
+  Serial.println("\nSafety: run a guarded command without 'confirm' to preview its exact confirmed form.");
 }
 
 void printVersionInfo() {
   const char* date = platform.buildDate != nullptr ? platform.buildDate : __DATE__;
   const char* time = platform.buildTime != nullptr ? platform.buildTime : __TIME__;
+  Serial.printf("framework=%s target=%s arduino_core=%s idf_version=%s\n",
+                platform.framework ? platform.framework : "unknown",
+                platform.buildTarget ? platform.buildTarget : "unknown",
+                platform.arduinoCoreVersion ? platform.arduinoCoreVersion : "unknown",
+                platform.espIdfVersion ? platform.espIdfVersion : "unknown");
   Serial.println("=== Version Info ===");
+  Serial.printf("  Framework: %s\n", platform.framework ? platform.framework : "unknown");
+  Serial.printf("  Arduino-ESP32: %s\n",
+                platform.arduinoCoreVersion ? platform.arduinoCoreVersion : "unknown");
+  Serial.printf("  ESP-IDF: %s\n",
+                platform.espIdfVersion ? platform.espIdfVersion : "unknown");
+  Serial.printf("  Build target: %s\n",
+                platform.buildTarget ? platform.buildTarget : "unknown");
   Serial.printf("  Example firmware build: %s %s\n", date, time);
   Serial.printf("  SHT3x library version: %s\n", SHT3x::VERSION);
   Serial.printf("  SHT3x library full: %s\n", SHT3x::VERSION_FULL);
@@ -2548,76 +3119,65 @@ void processCommand(const char* line) {
 }
 
 void tick() {
-  if (pendingRead) {
+  if (ownerJobActive && !manualJobControl) {
     SHT3x::PollJobResult result;
     const SHT3x::Status st = deviceInstance.pollJob(millis(), 1, result);
-    if (result.terminal) {
-      handleMeasurementTerminal(result);
-    } else if (st.code != SHT3x::Err::IN_PROGRESS) {
-      pendingRead = false;
-      pendingRequestId = 0;
-      printStatus(st);
-    }
-  }
-
-  if (stressStats.active && stressRemaining > 0 && !pendingRead) {
-    const SHT3x::Status st = scheduleMeasurement();
-    if (st.code != SHT3x::Err::IN_PROGRESS && st.code != SHT3x::Err::BUSY) {
-      noteStressError(st);
-      stressStats.attempts++;
-      stressRemaining--;
-      printStressProgress(static_cast<uint32_t>(stressStats.attempts),
-                          static_cast<uint32_t>(stressStats.target),
-                          static_cast<uint32_t>(stressStats.success),
-                          stressStats.errors);
-      if (stressRemaining == 0) {
-        finishStressStats();
+    const SHT3x::Status validation = validateOwnedResult(result, 1U, st);
+    if (!validation.ok()) {
+      printLabeledStatus("job_validation", validation);
+      quarantinePendingOwner();
+    } else if (result.terminal) {
+      if (result.type == SHT3x::JobType::MEASUREMENT) {
+        handleMeasurementTerminal(result);
+      } else {
+        const char* terminalLabel = pendingTerminalLabel;
+        rememberJobResult(st, result);
+        clearPendingOwner();
+        printJobResult("job terminal", st, result);
+        printLabeledStatus(terminalLabel, result.status);
       }
+    } else if (st.code != SHT3x::Err::IN_PROGRESS) {
+      clearPendingOwner();
+      printStatus(st);
     }
   }
 
 }
 
-SHT3x::Status cancelPending() {
-  stressRemaining = 0;
-  stressStats.active = false;
-
-  if (!pendingRead || pendingRequestId == 0U) {
+static SHT3x::Status cancelPending() {
+  if (!ownerJobActive || pendingRequestId == 0U) {
     return SHT3x::Status::Ok();
   }
 
   SHT3x::PollJobResult current;
   SHT3x::Status st = deviceInstance.pollJob(millis(), 0, current);
+  const SHT3x::Status currentValidation = validateOwnedResult(current, 0U, st);
+  if (!currentValidation.ok()) {
+    quarantinePendingOwner();
+    return currentValidation;
+  }
   if (current.terminal) {
-    const uint32_t requestId = pendingRequestId;
-    handleMeasurementTerminal(current);
-    if (!isExpectedMeasurementTerminal(current, requestId)) {
-      return SHT3x::Status::Error(SHT3x::Err::BUSY,
-                                  "CLI does not own terminal job result");
+    if (current.type == SHT3x::JobType::MEASUREMENT) {
+      handleMeasurementTerminal(current);
+    } else {
+      rememberJobResult(st, current);
+      clearPendingOwner();
     }
     return st;
   }
-  if (current.requestId != pendingRequestId ||
-      current.type != SHT3x::JobType::MEASUREMENT) {
-    return SHT3x::Status::Error(SHT3x::Err::BUSY,
-                                "CLI does not own active job");
-  }
-  if (current.effect != SHT3x::JobEffect::NONE) {
-    return SHT3x::Status::Error(
-        SHT3x::Err::BUSY,
-        "Measurement has physical effect; wait for terminal result");
-  }
-
   SHT3x::PollJobResult cancelled;
   st = deviceInstance.cancelJob(SHT3x::CancelReason::REQUESTED, cancelled);
-  if (!isExpectedMeasurementTerminal(cancelled, pendingRequestId) ||
-      cancelled.outcome != SHT3x::JobOutcome::CANCELLED ||
-      cancelled.effect != SHT3x::JobEffect::NONE) {
-    return SHT3x::Status::Error(SHT3x::Err::BUSY,
-                                "Unexpected cancellation result");
+  const SHT3x::Status cancelValidation = validateOwnedResult(cancelled, 0U, st);
+  if (!cancelValidation.ok() ||
+      cancelled.outcome != SHT3x::JobOutcome::CANCELLED) {
+    quarantinePendingOwner();
+    return cancelValidation.ok()
+               ? SHT3x::Status::Error(SHT3x::Err::COMMAND_FAILED,
+                                      "Unexpected cancellation outcome")
+               : cancelValidation;
   }
-  pendingRead = false;
-  pendingRequestId = 0;
+  rememberJobResult(st, cancelled);
+  clearPendingOwner();
   return st.code == SHT3x::Err::CANCELLED ? SHT3x::Status::Ok() : st;
 }
 

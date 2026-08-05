@@ -18,11 +18,11 @@ inline const char* labelForAddress(uint8_t addr) {
   return "";
 }
 
-/// Check if a specific address responds
-/// @param wire I2C bus instance
-/// @param addr I2C address to check
-/// @param timeoutMs I2C timeout in milliseconds
-/// @return true if device responds
+/// Check if a specific address responds.
+/// @param wire I2C bus instance.
+/// @param addr I2C address to check.
+/// @param timeoutMs I2C timeout in milliseconds.
+/// @return true if the address acknowledges.
 inline bool checkAddress(TwoWire& wire, uint8_t addr, uint32_t timeoutMs = 50U) {
   if (addr < 0x08U || addr > 0x77U) {
     return false;
@@ -30,7 +30,7 @@ inline bool checkAddress(TwoWire& wire, uint8_t addr, uint32_t timeoutMs = 50U) 
   const uint32_t previousTimeoutMs = wire.getTimeOut();
   wire.setTimeOut(timeoutMs);
   wire.beginTransmission(addr);
-  const bool ok = wire.endTransmission(true) == 0;
+  const bool ok = wire.endTransmission(true) == 0U;
   wire.setTimeOut(previousTimeoutMs);
   return ok;
 }

@@ -32,6 +32,8 @@ enum class Err : uint8_t {
 };
 
 /// True for errors returned directly by an injected I2C transport callback.
+/// @param error Error code to classify.
+/// @return true when @p error belongs to the transport-error class.
 constexpr bool isTransportError(Err error) {
   return error == Err::I2C_ERROR || error == Err::I2C_NACK_ADDR ||
          error == Err::I2C_NACK_DATA || error == Err::I2C_NACK_READ ||
@@ -39,34 +41,47 @@ constexpr bool isTransportError(Err error) {
 }
 
 /// True for CRC failures or errors explicitly reported by the sensor protocol.
+/// @param error Error code to classify.
+/// @return true when @p error belongs to the protocol-error class.
 constexpr bool isProtocolError(Err error) {
   return error == Err::CRC_MISMATCH || error == Err::COMMAND_FAILED ||
          error == Err::WRITE_CRC_ERROR;
 }
 
 /// True only for a proven expected measurement-not-ready condition.
+/// @param error Error code to classify.
+/// @return true only for the expected measurement-not-ready code.
 constexpr bool isExpectedNotReady(Err error) {
   return error == Err::MEASUREMENT_NOT_READY;
 }
 
 /// True only for a presence probe that proved an address was absent.
+/// @param error Error code to classify.
+/// @return true only for the device-not-found code.
 constexpr bool isAbsent(Err error) {
   return error == Err::DEVICE_NOT_FOUND;
 }
 
 /// Status structure returned by all fallible operations
 struct Status {
-  Err code = Err::OK;
+  Err code = Err::OK;        ///< Machine-readable status code
   int32_t detail = 0;        ///< Implementation-specific detail (e.g., I2C error code)
   const char* msg = "";      ///< Static string describing the error
 
+  /// Construct a success status.
   constexpr Status() = default;
+
+  /// Construct an explicit status value.
+  /// @param c Machine-readable status code.
+  /// @param d Implementation-specific detail value.
+  /// @param m Static-lifetime diagnostic message.
   constexpr Status(Err c, int32_t d, const char* m) : code(c), detail(d), msg(m) {}
 
   /// @return true if operation succeeded
   constexpr bool ok() const { return code == Err::OK; }
 
   /// @return true if the status matches the requested error code
+  /// @param expected Error code to compare with.
   constexpr bool is(Err expected) const { return code == expected; }
 
   /// @return true if operation is scheduled but not complete
@@ -75,10 +90,15 @@ struct Status {
   /// @return true only if operation succeeded; IN_PROGRESS converts to false
   explicit constexpr operator bool() const { return ok(); }
 
-  /// Create a success status
+  /// Create a success status.
+  /// @return Status with code OK.
   static constexpr Status Ok() { return Status{Err::OK, 0, "OK"}; }
 
-  /// Create an error status
+  /// Create an error status.
+  /// @param err Machine-readable error code.
+  /// @param message Static-lifetime diagnostic message.
+  /// @param detailCode Optional implementation-specific detail value.
+  /// @return Status containing the supplied error fields.
   static constexpr Status Error(Err err, const char* message, int32_t detailCode = 0) {
     return Status{err, detailCode, message};
   }

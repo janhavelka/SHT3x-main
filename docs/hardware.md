@@ -1,17 +1,17 @@
 # SHT3x Hardware Validation And HIL
 
-Last updated: 2026-08-01
+Last updated: 2026-08-05
 
 This file is the maintained hardware evidence status and HIL procedure. Software
 tests, CI builds, dry runs, and fake transports do not prove electrical
 behavior, board layout, fixture quality, or sensor accuracy.
 
 No physical HIL validation was performed by a dry run. The exact accepted
-metrics and artifact hashes are maintained below. Raw serial transcripts are
-preservation artifacts: keep them locally or in the evidence archive and do
-not delete them during routine cleanup. Other generated run artifacts stay
-local and ignored; neither category is maintained documentation or package
-content. Dry runs remain parser/planning checks only.
+metrics and artifact hashes are maintained below. Generated HIL directories,
+serial transcripts, summaries, progress logs, and operator worksheets are not
+maintained documentation or package content. Archive deliberately accepted raw
+evidence outside the checkout, then remove local scratch runs. Dry runs remain
+parser/planning checks only.
 
 ACK alone is not chip identity. A bus scan proves only that something
 acknowledged an address. Stronger SHT3x evidence is a CRC-checked status read,
@@ -22,7 +22,7 @@ transcript. Those still do not prove humidity accuracy or ALERT pin behavior.
 
 | Area | Current status | Stronger evidence needed |
 | --- | --- | --- |
-| Native tests | PASS, 117/117 on the current source. | Repeat on a future changed core. |
+| Native tests | PASS, 118/118 on the current source. | Repeat on a future changed core. |
 | Framework-neutral core | PASS under C++17 with `-Wall -Wextra -Wpedantic -Werror`. | Repeat on a future changed core. |
 | Arduino PlatformIO ESP32-S3/S2 builds | PASS locally with pioarduino `55.03.311`; CI is configured with the required PlatformIO Core `6.1.19`. | Observe the exact-commit CI run; physical ESP32-S2 execution remains open. |
 | Pure ESP-IDF ESP32-S3/S2 builds | PASS in GitHub Actions for the tested baseline. | Physical pure-IDF execution remains open. |
@@ -132,6 +132,10 @@ Override the identity only deliberately with
 environment and summary artifacts. A failed version/commit preflight stops the
 run before optional destructive commands.
 
+The `version` response also records the runtime framework, build target, and
+Arduino-core/ESP-IDF version where applicable. This prevents a command-compatible
+but wrong framework image from being accepted as the intended target.
+
 The PlatformIO package includes the HIL runner named above.
 Parser tests, repository guards, and other maintenance-only tooling still
 require a full repository checkout.
@@ -141,6 +145,7 @@ The runner creates `hil_logs/sht3x_<UTC_TIMESTAMP>/` and writes:
 - `serial_transcript.txt`
 - `summary.md`
 - `summary.json`
+- `progress.jsonl`
 - `operator_checklist.md`
 - `environment.txt`
 
@@ -154,7 +159,9 @@ to become project evidence.
 
 The default sequence is safe by design: it avoids status clearing, heater
 enable, alert writes, resets, raw command writes, fault injection, and soak
-tests. This block is checked against `tools/run_sht3x_hil.py` by
+tests. It explicitly confirms the bounded `status_restore` interruption and
+proves that request inspection and cancellation perform zero I2C callbacks.
+This block is checked against `tools/run_sht3x_hil.py` by
 `tools/check_hil_contract.py`.
 
 <!-- BEGIN DEFAULT_HIL_COMMANDS -->
@@ -167,6 +174,13 @@ settings
 drv
 status
 status_raw
+xfer_reset
+request
+job current
+xfer_assert 0 0 0
+job cancel
+result
+xfer_assert 0 0 0
 single low
 raw
 comp
@@ -191,7 +205,7 @@ periodic start 0.5 high
 periodic fetch
 periodic stop
 periodic start 1 high
-status_restore
+status_restore confirm
 periodic fetch
 periodic stop
 periodic start 2 medium
@@ -213,14 +227,15 @@ raw, plausible single-shot measurements for low/medium/high repeatability,
 raw/comp cached samples, serial/EIC, heater OFF, alert limit reads, alert
 encode/decode vectors, periodic-mode status-restore fields, selected periodic
 start/fetch/stop paths, ART start/fetch/stop or explicit unsupported status,
-and final READY health with zero unexplained failures.
+zero-transfer request/progress/cancel/result evidence, and final READY health
+with zero unexplained failures.
 
 ## Opt-In Groups
 
 | Flag | Coverage | Evidence boundary |
 | --- | --- | --- |
-| `--include-destructive` | selftest, recover, clear status, soft reset, restore, interface reset | Alters device/status state; not part of default smoke. |
-| `--include-bus-wide-reset` | general-call reset | Requires isolated bus; can reset other supporting devices. |
+| `--include-destructive` | confirmed selftest, recover, clear status, soft reset, restore, interface reset | Alters device/status state; not part of default smoke. |
+| `--include-bus-wide-reset` | `greset arm` followed immediately by `greset confirm` | Also requires `--include-destructive` and an isolated bus. Examples keep general-call transport disabled by default, so unsupported is an honest skip unless the application deliberately supplies a bus-wide transport. |
 | `--include-soak --soak-count N` | bounded stress and mixed-operation stress | Only proves the configured count. |
 | `--include-soak --soak-duration-s N` | firmware-side low-USB `i2c_soak N` measurement loop | Only proves the configured duration when the compact summary and final health pass. |
 | `--include-clock-stretch` | stretch-enabled read and serial/EIC | Unsupported or timeout behavior must be recorded explicitly. |
@@ -241,6 +256,19 @@ groups and attached artifacts. All verdicts except `PASS` return nonzero by
 default; `--allow-incomplete` is an explicit planning-only override for
 `INCOMPLETE` or operator-review runs.
 
+Every firmware mutation in an automated plan uses the same literal `confirm`
+syntax shown by both CLIs. General-call reset additionally uses a one-shot
+`greset arm`/`greset confirm` pair; the runner disarms during cleanup if an
+armed step fails. A `--commands <file>` plan is classified before serial output
+or artifacts are created. Unknown and mutation-like commands are rejected,
+known mutations retain their required opt-in and cleanup policy, and raw
+command words cannot bypass heater, alert-write, or 4/10 mps opt-ins.
+The first executable custom-plan line must be exact `version`; no probe, read,
+or mutation is allowed before runtime framework/library identity succeeds.
+Recognized noncanonical read-only commands are accepted only with
+`--allow-custom-read-only-review`, and remain operator-review rows rather than
+automatic passes.
+
 The firmware-side duration path uses nonzero request IDs, absolute deadlines,
 one-callback `pollJob()` steps, zero-I2C cancellation, and milli-unit sample
 readout. Its compact summary passes only when the measurement loop ran for at
@@ -248,7 +276,9 @@ least the requested time, every sample succeeded, logical and transport counts
 agree, protocol/not-ready/transport failures are zero, extrema remain broadly
 plausible, and final driver state is `READY`. This validates the exercised
 sensor/transport path; it does not substitute for a consumer-specific adapter
-test.
+test. `xfer_assert` covers injected driver-adapter callbacks only and does not
+count application-owned bus traffic that bypasses that transport, such as the
+separate scanner.
 
 ## Target Record Checklist
 
@@ -260,7 +290,8 @@ Record these fields before treating a hardware run as evidence:
 - Supply voltage, bus speed, pull-ups, SDA/SCL pins, cable length, and reset/ALERT wiring.
 - Fixture details, reference sensor if used, ambient conditions, and deviations.
 - Exact build, upload, monitor, and runner commands.
-- Attached `serial_transcript.txt`, `summary.md`, `summary.json`, and `environment.txt`.
+- Attached `serial_transcript.txt`, `summary.md`, `summary.json`,
+  `progress.jsonl`, `operator_checklist.md`, and `environment.txt`.
 - Photos of board, sensor/module, wiring, and any fixture used.
 - Logic-analyzer/GPIO/scope evidence whenever ALERT, reset, bus edges, pull-ups,
   or fault behavior is claimed.
@@ -297,8 +328,8 @@ Run this after every disruptive scenario:
 ```text
 periodic stop
 heater off
-alert disable
-clear_status
+alert disable confirm
+clear_status confirm
 mode single
 stretch 0
 repeat high
@@ -311,7 +342,7 @@ run, including failure paths when serial communication remains available.
 Pass the restore step only if the final state is `READY`, `online` is true,
 settings show single-shot/high-repeatability/no-stretch, and there are no new
 unexplained failures. If a fault test leaves the sensor disconnected, reconnect
-first, run `recover`, then run the restore step.
+first, run `recover confirm`, then run the restore step.
 
 ## Ambient Humidity Test Notes
 

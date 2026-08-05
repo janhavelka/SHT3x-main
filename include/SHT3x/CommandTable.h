@@ -29,35 +29,35 @@ static constexpr uint8_t CRC_POLY = 0x31; ///< SHT3x CRC-8 polynomial
 /// @{
 
 /// Single-shot measurement commands with clock stretching enabled.
-static constexpr uint16_t CMD_SINGLE_SHOT_STRETCH_HIGH = 0x2C06;
-static constexpr uint16_t CMD_SINGLE_SHOT_STRETCH_MED = 0x2C0D;
-static constexpr uint16_t CMD_SINGLE_SHOT_STRETCH_LOW = 0x2C10;
+static constexpr uint16_t CMD_SINGLE_SHOT_STRETCH_HIGH = 0x2C06; ///< High repeatability
+static constexpr uint16_t CMD_SINGLE_SHOT_STRETCH_MED = 0x2C0D;  ///< Medium repeatability
+static constexpr uint16_t CMD_SINGLE_SHOT_STRETCH_LOW = 0x2C10;  ///< Low repeatability
 
 /// Single-shot measurement commands with clock stretching disabled.
-static constexpr uint16_t CMD_SINGLE_SHOT_NO_STRETCH_HIGH = 0x2400;
-static constexpr uint16_t CMD_SINGLE_SHOT_NO_STRETCH_MED = 0x240B;
-static constexpr uint16_t CMD_SINGLE_SHOT_NO_STRETCH_LOW = 0x2416;
+static constexpr uint16_t CMD_SINGLE_SHOT_NO_STRETCH_HIGH = 0x2400; ///< High repeatability
+static constexpr uint16_t CMD_SINGLE_SHOT_NO_STRETCH_MED = 0x240B;  ///< Medium repeatability
+static constexpr uint16_t CMD_SINGLE_SHOT_NO_STRETCH_LOW = 0x2416;  ///< Low repeatability
 
 /// Periodic measurement commands for each rate/repeatability pair.
-static constexpr uint16_t CMD_PERIODIC_0_5_HIGH = 0x2032;
-static constexpr uint16_t CMD_PERIODIC_0_5_MED = 0x2024;
-static constexpr uint16_t CMD_PERIODIC_0_5_LOW = 0x202F;
+static constexpr uint16_t CMD_PERIODIC_0_5_HIGH = 0x2032; ///< 0.5 mps, high repeatability
+static constexpr uint16_t CMD_PERIODIC_0_5_MED = 0x2024;  ///< 0.5 mps, medium repeatability
+static constexpr uint16_t CMD_PERIODIC_0_5_LOW = 0x202F;  ///< 0.5 mps, low repeatability
 
-static constexpr uint16_t CMD_PERIODIC_1_HIGH = 0x2130;
-static constexpr uint16_t CMD_PERIODIC_1_MED = 0x2126;
-static constexpr uint16_t CMD_PERIODIC_1_LOW = 0x212D;
+static constexpr uint16_t CMD_PERIODIC_1_HIGH = 0x2130; ///< 1 mps, high repeatability
+static constexpr uint16_t CMD_PERIODIC_1_MED = 0x2126;  ///< 1 mps, medium repeatability
+static constexpr uint16_t CMD_PERIODIC_1_LOW = 0x212D;  ///< 1 mps, low repeatability
 
-static constexpr uint16_t CMD_PERIODIC_2_HIGH = 0x2236;
-static constexpr uint16_t CMD_PERIODIC_2_MED = 0x2220;
-static constexpr uint16_t CMD_PERIODIC_2_LOW = 0x222B;
+static constexpr uint16_t CMD_PERIODIC_2_HIGH = 0x2236; ///< 2 mps, high repeatability
+static constexpr uint16_t CMD_PERIODIC_2_MED = 0x2220;  ///< 2 mps, medium repeatability
+static constexpr uint16_t CMD_PERIODIC_2_LOW = 0x222B;  ///< 2 mps, low repeatability
 
-static constexpr uint16_t CMD_PERIODIC_4_HIGH = 0x2334;
-static constexpr uint16_t CMD_PERIODIC_4_MED = 0x2322;
-static constexpr uint16_t CMD_PERIODIC_4_LOW = 0x2329;
+static constexpr uint16_t CMD_PERIODIC_4_HIGH = 0x2334; ///< 4 mps, high repeatability
+static constexpr uint16_t CMD_PERIODIC_4_MED = 0x2322;  ///< 4 mps, medium repeatability
+static constexpr uint16_t CMD_PERIODIC_4_LOW = 0x2329;  ///< 4 mps, low repeatability
 
-static constexpr uint16_t CMD_PERIODIC_10_HIGH = 0x2737;
-static constexpr uint16_t CMD_PERIODIC_10_MED = 0x2721;
-static constexpr uint16_t CMD_PERIODIC_10_LOW = 0x272A;
+static constexpr uint16_t CMD_PERIODIC_10_HIGH = 0x2737; ///< 10 mps, high repeatability
+static constexpr uint16_t CMD_PERIODIC_10_MED = 0x2721;  ///< 10 mps, medium repeatability
+static constexpr uint16_t CMD_PERIODIC_10_LOW = 0x272A;  ///< 10 mps, low repeatability
 
 static constexpr uint16_t CMD_FETCH_DATA = 0xE000; ///< Fetch Data command for periodic/ART readout
 

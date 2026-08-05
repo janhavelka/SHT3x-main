@@ -15,33 +15,27 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 
 ## Current State
 
-This tree contains the `1.8.0` owner-safe API. Local verification passes the
-117-test native fault/boundary suite, strict framework-neutral core compile,
-repository guards, and pinned Arduino PlatformIO builds for ESP32-S3 and
-ESP32-S2. The current COM19 ESP32-S3 evidence is described in the
-[hardware validation guide](docs/hardware.md).
+This tree contains the `1.8.0` owner-safe API. The repository validation matrix
+covers the 118-test native fault/boundary suite, strict framework-neutral core
+compilation and Doxygen, repository contracts, package inspection, pinned
+Arduino PlatformIO builds for ESP32-S3/S2, and native ESP-IDF example builds.
+Use results from the exact commit being evaluated; an older successful workflow
+does not validate a dirty checkout or an unpushed branch.
 
 GitHub Actions is configured to build the native ESP-IDF and Arduino S2/S3
 examples and to run native, package, documentation, and repository-contract
 validation. Check the exact commit's workflow result before citing CI evidence.
 
-Hardware validation has explicit boundaries. The maintained
-[hardware validation guide](docs/hardware.md) records 100 selected functional
-rows: 99 executable commands passed, zero failed, and one interface-reset row
-was explicitly unsupported. A separate strict one-hour run passed with 514,286
-measurements, 1,028,572 transfers, and zero logical, transport, protocol, or
-not-ready failures. ALERT pin behavior, calibrated accuracy, fault injection,
-ESP32-S2 hardware, and address `0x45` remain unproven.
-
-Version metadata is `1.8.0` in `library.json`, `idf_component.yml`, Doxyfile,
-and generated `include/SHT3x/Version.h`.
+Hardware validation has narrower evidence boundaries than software validation.
+The maintained [hardware validation guide](docs/hardware.md) is the sole source
+for accepted run metrics, artifact fingerprints, and remaining physical gaps.
 
 Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
 through `tools/run_sht3x_hil.py --include-soak --soak-duration-s <seconds>`.
 
 The [TunnelMonitor integration guide](docs/tunnelmonitor-integration.md)
-describes the live owner/adapter boundary. It does not claim that the consumer
-adapter is implemented or that TunnelMonitor-node was modified.
+describes the implemented owner/adapter boundary visible in the local sibling
+checkout. This repository does not modify or validate that consumer worktree.
 
 ## Installation
 
@@ -607,6 +601,9 @@ python tools/check_cli_contract.py
 python tools/check_hil_contract.py
 python tools/check_core_timing_guard.py
 python tools/check_idf_example_contract.py
+python tools/check_docs_contract.py
+python scripts/generate_version.py check
+doxygen Doxyfile
 ```
 
 Arduino firmware builds and package validation:
@@ -696,6 +693,27 @@ ESP-IDF example uses a separate native fixed-buffer command loop with the same
 driver scenarios, native `i2c_master` ownership, ESP-IDF logging, FreeRTOS
 timing, and no Arduino compatibility facades in the IDF build path.
 
+`tools/sht3x_cli_contract.py` is the authoritative ordered command contract for
+both implementations. Repository checks require identical 70-row help, strict
+whole-token parsing and arity, exact confirmation syntax, runtime
+framework/target identity, and the owner-safe `request`, `job`, `result`,
+`cancel`, `xfer_reset`, `xfer_stats`, and `xfer_assert` surface. The firmware
+implementations remain framework-native; they share the contract, not Arduino
+source or compatibility facades.
+
+Lifecycle and recovery commands in the examples use `bind()` and cooperative
+ensure-idle jobs. `request` performs no I2C; `job current` is a zero-budget
+inspection; `job cancel` is local and zero-I2C; terminal results are retained
+only after request/type/status/outcome/effect validation. Transfer counters
+cover callbacks through the injected driver adapter, not direct application
+bus operations such as `scan`. Other commands reject an active owner job rather
+than cancelling it implicitly.
+
+Hardware mutations require a literal final `confirm`. General-call reset is
+disabled by the example transports/configuration by default and additionally
+requires `greset arm` immediately followed by `greset confirm`; an intervening
+command disarms it locally without I2C.
+
 Both examples are diagnostic/bring-up CLIs. They are useful for proving wiring,
 I2C transport behavior, SHT3x protocol handling, and command parity. A
 production application should provide its own task ownership, bus serialization,
@@ -744,6 +762,12 @@ single-shot/no-stretch/high-repeatability cleanup and verification. `FAIL`,
 `--allow-incomplete` is available for planning workflows that intentionally
 leave fixture/operator rows open.
 
+Custom `--commands` plans must start with exact `version`, before any other
+command can run. The runner classifies every line against the authoritative CLI
+contract and refuses unknown or unconfirmed mutation-like commands. Raw
+`command read` words receive the same heater, alert-write, and high-periodic-rate
+opt-ins and cleanup policies as raw writes.
+
 That list describes current runner capability. A hardware `PASS` claim is
 limited to the selected commands and artifacts in a specific run summary.
 
@@ -769,8 +793,9 @@ checkout, generate the strict HTML reference from the root with:
 doxygen Doxyfile
 ```
 
-Output is written to ignored `.doxygen/html/`. CI treats malformed references,
-missing parameter documentation, and undocumented public symbols as errors.
+Output is written to ignored `.doxygen/html/`. `EXTRACT_ALL` is disabled so CI
+actually treats malformed references, missing or incomplete parameter/return
+documentation, and undocumented public symbols as errors.
 
 ## License
 

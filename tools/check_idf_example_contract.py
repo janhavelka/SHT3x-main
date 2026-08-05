@@ -5,6 +5,8 @@ import pathlib
 import re
 import sys
 
+from sht3x_cli_contract import expected_help_rows, parse_help_rows, validate_contract
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VALID_SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp"}
 VALID_IDF_SUFFIXES = VALID_SOURCE_SUFFIXES | {".txt"}
@@ -110,6 +112,10 @@ def main() -> int:
 
     check_core_boundary()
 
+    contract_errors = validate_contract()
+    if contract_errors:
+        fail("invalid authoritative CLI contract: " + "; ".join(contract_errors))
+
     idf_files = [
         idf_project,
         idf_cmake,
@@ -135,6 +141,10 @@ def main() -> int:
         "handleCommandLine",
         "char buffer[LINE_LEN]",
         "std::fgets",
+        "discardingOverflow",
+        "Input line too long; discarded",
+        "Input queue full; discarded",
+        "CLI_QUEUE_SEND_TIMEOUT_MS",
         "i2c_master_probe",
         "driver/i2c_master.h",
         "esp_timer_get_time",
@@ -142,8 +152,24 @@ def main() -> int:
         "gConfig.nowMs",
         "gConfig.nowUs",
         "gConfig.cooperativeYield",
+        "requestMeasurement(request)",
+        "pollJob(nowMs(nullptr), budget, result)",
+        "cancelOwnedJob(SHT3x::CancelReason::DEADLINE_EXPIRED",
+        "framework=native-esp-idf",
+        "xfer_assert",
+        "quarantineOwnerInvariant",
+        "instructionLimit",
     ):
         require_text(idf_main, needle)
+
+    idf_main_text = idf_main.read_text(encoding="utf-8", errors="replace")
+    if parse_help_rows(idf_main_text) != expected_help_rows():
+        fail("native ESP-IDF help rows drifted from tools/sht3x_cli_contract.py")
+    for forbidden in ("gDevice.tick(", "gDevice.begin(", "gDevice.requestMeasurement()"):
+        if forbidden in idf_main_text:
+            fail(f"native ESP-IDF CLI retains identity-losing call: {forbidden}")
+    if "xQueueSend(queue, &line, portMAX_DELAY)" in idf_main_text:
+        fail("native ESP-IDF CLI input queue send must be timeout-bounded")
 
     if "../../../common/Sht3xCli.cpp" in idf_cmake.read_text(
         encoding="utf-8", errors="replace"

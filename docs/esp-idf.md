@@ -1,6 +1,6 @@
 # SHT3x ESP-IDF Notes
 
-Last updated: 2026-08-01
+Last updated: 2026-08-05
 
 Scope: framework-neutral core component plus a native ESP-IDF diagnostic
 example. Arduino/PlatformIO support remains separate and intact.
@@ -16,6 +16,12 @@ example. Arduino/PlatformIO support remains separate and intact.
 - The ESP-IDF example owns the I2C bus/device handles, reset/bus-recovery GPIOs
   when configured, timing hooks, and CLI loop.
 - The ESP-IDF example is a diagnostic bring-up CLI, not a production task model.
+- Its CLI owns every cooperative request with a nonzero identity, validates
+  active/terminal result structure and transfer budgets, retains exactly one
+  accepted terminal result, and quarantines malformed/foreign results without
+  wedging lifecycle operations.
+- Input lines that exceed the fixed buffer are discarded through the physical
+  line terminator; fragments are never dispatched as separate commands.
 - Production bus-owner tasks should use `bind()`, `requestEnsureIdle()` or
   `requestMeasurement(JobRequest)`, and `pollJob(..., 1, ...)`; each poll uses
   zero or one transport callback and exposes deadline/identity/provenance.
@@ -112,12 +118,27 @@ idf_component_register(
 The example must not compile Arduino-only helpers from `examples/common/` into
 ESP-IDF targets.
 
+## Diagnostic CLI Contract
+
+`tools/sht3x_cli_contract.py` is the authoritative ordered command/help,
+execution, and safety contract for both native ESP-IDF and Arduino examples.
+The IDF implementation remains native and independent, while repository guards
+enforce exact help parity, strict whole-token parsing/arity, confirmation gates,
+runtime `framework=native-esp-idf`, target and IDF-version identity, and the
+same `request`/`job`/`result`/`cancel` and transfer-assertion surface.
+
+The example starts through `bind()` and a cooperative ensure-idle job; it does
+not call the synchronous compatibility `begin()` or discard results through
+`tick()`. General-call reset remains disabled by default because the example's
+single-address device handle is not a bus-wide general-call transport.
+
 ## Validation
 
 The repository defines pinned ESP-IDF 5.4.2 CI builds for ESP32-S2 and ESP32-S3
-and keeps the example/CLI contract under repository checks. Pure ESP-IDF
-software validation requires passing jobs for the exact release commit; pure
-ESP-IDF hardware validation remains open.
+and keeps the example/CLI contract under repository checks. The last main-branch
+workflow is not evidence for unpushed changes: pure ESP-IDF software validation
+requires passing jobs for the exact commit, and pure ESP-IDF hardware validation
+remains open.
 
 The following maintenance commands require a full repository checkout:
 

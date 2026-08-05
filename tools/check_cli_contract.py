@@ -1,140 +1,237 @@
 #!/usr/bin/env python3
+"""Check Arduino/native-IDF CLI parity and owner-safety invariants."""
+
 from __future__ import annotations
 
 import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+from sht3x_cli_contract import (
+    COMMAND_SPECS,
+    expected_help_rows,
+    parse_help_rows,
+    validate_contract,
+)
 
-REQUIRED_COMMON = [
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+REQUIRED_COMMON = (
     "BoardConfig.h",
     "I2cScanner.h",
     "I2cTransport.h",
     "Sht3xCli.h",
-]
-
-MANDATORY_COMMANDS = ["help", "scan", "probe", "recover", "drv", "read", "verbose", "stress"]
-MANDATORY_HELP_ITEMS = [
-    "help / ?",
-    "version / ver",
-    "mode [single|periodic|art]",
-    "single <low|medium|high>",
-    "periodic start <rate> <rep>",
-    "periodic fetch",
-    "periodic stop",
-    "art start",
-    "art fetch",
-    "art stop",
-    "start_periodic <rate> <rep>",
-    "status_restore",
-    "clear_status",
-    "repeat [low|med|high]",
-    "rate [0.5|1|2|4|10]",
-    "stretch [0|1]",
-    "command write <hex>",
-    "command write_data <cmd> <data>",
-    "command read <cmd> <len>",
-    "alert show",
-    "alert set <kind> <T> <RH>",
-    "alert raw write <kind> <hex>",
-    "cfg / settings",
-    "stress_mix [N]",
-    "selftest",
-]
+)
 
 
-def fail(msg: str) -> None:
-    print(f"CLI contract FAILED: {msg}")
+def fail(message: str) -> None:
+    print(f"CLI contract FAILED: {message}")
     raise SystemExit(1)
 
 
-def ensure_exists(path: pathlib.Path, label: str) -> None:
+def read(path: pathlib.Path, label: str) -> str:
     if not path.exists():
         fail(f"missing {label}: {path.as_posix()}")
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
-def require_text(path: pathlib.Path, text: str, needle: str) -> None:
-    if needle not in text:
-        fail(f"missing '{needle}' in {path.as_posix()}")
+def require(source: str, token: str, label: str) -> None:
+    if token not in source:
+        fail(f"{label} missing required token {token!r}")
+
+
+def require_regex(source: str, pattern: str, label: str) -> None:
+    if re.search(pattern, source, re.DOTALL) is None:
+        fail(f"{label} missing required pattern {pattern!r}")
+
+
+def compare_help(source: str, label: str) -> None:
+    actual = parse_help_rows(source)
+    expected = expected_help_rows()
+    if actual == expected:
+        return
+
+    first = min(len(actual), len(expected))
+    mismatch = next((index for index in range(first) if actual[index] != expected[index]), first)
+    expected_row = expected[mismatch] if mismatch < len(expected) else "<end>"
+    actual_row = actual[mismatch] if mismatch < len(actual) else "<end>"
+    fail(
+        f"{label} help differs from the authoritative contract at row {mismatch + 1}: "
+        f"expected {expected_row!r}, got {actual_row!r}; "
+        f"expected {len(expected)} rows, got {len(actual)}"
+    )
+
+
+def check_strict_parsing(source: str, label: str) -> None:
+    for token in ("ERANGE", "std::strtoul", "std::strtof", "std::isfinite"):
+        require(source, token, label)
+    require_regex(source, r"end\s*==\s*(?:str|text)|end\s*==\s*token", label)
+    require_regex(source, r"\*end\s*!=\s*'\\0'", label)
+
+
+def check_confirmations(source: str, label: str) -> None:
+    for spec in COMMAND_SPECS:
+        if spec.safety == "CONFIRM_MUTATION":
+            require(source, spec.synopsis, label)
+    for token in ("greset arm", "greset disarm", "greset confirm"):
+        require(source, token, label)
+    require_regex(source, r"[Gg]eneral[Cc]all(?:Reset)?Armed|generalCallResetArmed", label)
+
+
+def check_execution_metadata() -> None:
+    by_id = {spec.command_id: spec for spec in COMMAND_SPECS}
+    expected = {
+        "REQUEST": "CORE_JOB",
+        "FETCH": "CORE_JOB",
+        "CANCEL": "CACHE_ONLY",
+        "REPEAT": "BOUNDED_SYNC",
+        "RATE": "BOUNDED_SYNC",
+        "STRETCH": "CACHE_ONLY",
+        "DEFAULTS": "BOUNDED_SYNC",
+        "BEGIN": "LIFECYCLE",
+        "END": "LIFECYCLE",
+        "RECOVER": "CORE_JOB",
+        "GRESET_CONFIRM": "RAW_I2C",
+    }
+    for command_id, execution in expected.items():
+        actual = by_id[command_id].execution
+        if actual != execution:
+            fail(f"{command_id} execution class must be {execution}, got {actual}")
 
 
 def main() -> int:
-    common_dir = ROOT / "examples" / "common"
-    bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
-    shared_cli = common_dir / "Sht3xCli.cpp"
-    shared_cli_header = common_dir / "Sht3xCli.h"
-    scanner = common_dir / "I2cScanner.h"
+    contract_errors = validate_contract()
+    if contract_errors:
+        fail("invalid authoritative contract: " + "; ".join(contract_errors))
+    check_execution_metadata()
+
+    common = ROOT / "examples" / "common"
+    bringup = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
+    arduino_cli = common / "Sht3xCli.cpp"
+    arduino_header = common / "Sht3xCli.h"
+    scanner = common / "I2cScanner.h"
     idf_main = ROOT / "examples" / "idf" / "basic" / "main" / "main.cpp"
+    idf_transport_h = ROOT / "examples" / "idf" / "basic" / "main" / "IdfI2cTransport.h"
+    idf_transport_cpp = ROOT / "examples" / "idf" / "basic" / "main" / "IdfI2cTransport.cpp"
 
-    ensure_exists(common_dir, "common example directory")
-    ensure_exists(bringup_main, "bringup CLI example")
-    ensure_exists(shared_cli, "shared CLI implementation")
-    ensure_exists(shared_cli_header, "shared CLI header")
-    ensure_exists(scanner, "I2C scanner")
-    ensure_exists(idf_main, "ESP-IDF CLI example")
+    for filename in REQUIRED_COMMON:
+        read(common / filename, f"common helper {filename}")
+    bringup_text = read(bringup, "Arduino bring-up CLI")
+    arduino_text = read(arduino_cli, "Arduino CLI")
+    arduino_header_text = read(arduino_header, "Arduino CLI header")
+    scanner_text = read(scanner, "Arduino I2C scanner")
+    idf_text = read(idf_main, "native ESP-IDF CLI")
+    idf_transport_text = read(idf_transport_h, "IDF transport header") + read(
+        idf_transport_cpp, "IDF transport implementation"
+    )
 
-    for name in REQUIRED_COMMON:
-        ensure_exists(common_dir / name, f"common helper {name}")
-
-    arduino_text = bringup_main.read_text(encoding="utf-8", errors="replace")
-    idf_text = idf_main.read_text(encoding="utf-8", errors="replace")
-    text = shared_cli.read_text(encoding="utf-8", errors="replace")
-    scanner_text = scanner.read_text(encoding="utf-8", errors="replace")
-
-    if "Sht3xCli.h" not in arduino_text:
-        fail("Arduino example must use shared Sht3xCli.h")
-    for token in ("I2cScanner.h", "i2c_scanner::scan(Wire)"):
-        require_text(bringup_main, arduino_text, token)
+    require(bringup_text, "Sht3xCli.h", "Arduino bring-up")
     for token in ("cfg.nowMs", "cfg.nowUs", "cfg.cooperativeYield"):
-        require_text(bringup_main, arduino_text, token)
+        require(bringup_text, token, "Arduino bring-up")
     for token in (
         "i2c_scanner",
         "wire.setTimeOut(timeoutMs)",
         "addr < 0x08U || addr > 0x77U",
         "wire.endTransmission(true)",
-        "Scan complete. Found %d device(s).",
         "0x44/0x45=SHT3x",
     ):
-        require_text(scanner, scanner_text, token)
-    if "Sht3xCli.h" in idf_text:
-        fail("ESP-IDF example must not include shared Sht3xCli.h")
-    for token in ("gConfig.nowMs", "gConfig.nowUs", "gConfig.cooperativeYield"):
-        require_text(idf_main, idf_text, token)
-    for token in ('extern "C" void app_main(void)', "handleCommandLine", "std::fgets"):
-        if token not in idf_text:
-            fail(f"ESP-IDF native CLI token missing: {token}")
+        require(scanner_text, token, "Arduino scanner")
 
-    for cmd in MANDATORY_COMMANDS:
-        if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
-            fail(f"mandatory command '{cmd}' missing in {shared_cli.as_posix()}")
+    if "Sht3xCli.h" in idf_text:
+        fail("native ESP-IDF CLI must not include Arduino example CLI source")
+    for token in (
+        "gConfig.nowMs",
+        "gConfig.nowUs",
+        "gConfig.cooperativeYield",
+        'extern "C" void app_main(void)',
+        "handleCommandLine",
+        "std::fgets",
+    ):
+        require(idf_text, token, "native ESP-IDF CLI")
+
+    compare_help(arduino_text, "Arduino CLI")
+    compare_help(idf_text, "native ESP-IDF CLI")
+    check_strict_parsing(arduino_text, "Arduino CLI")
+    check_strict_parsing(idf_text, "native ESP-IDF CLI")
+    check_confirmations(arduino_text, "Arduino CLI")
+    check_confirmations(idf_text, "native ESP-IDF CLI")
 
     for token in (
         "requestMeasurement(request)",
         "pollJob(nowMs, 1, result)",
         "cancelJob(SHT3x::CancelReason::REQUESTED",
         "getMeasurementMilli(out)",
-        "owner_api=pollJob milli=1",
-        "current.requestId != pendingRequestId",
-        "current.effect != SHT3x::JobEffect::NONE",
-        "Measurement has physical effect; wait for terminal result",
+        "result.requestId != pendingRequestId",
+        "requestEnsureIdle(request)",
+        "beginOwnerSafe()",
+        "deviceInstance.bind(configInstance)",
+        "validateOwnedResult(cancelled, 0U, st)",
+        "framework=",
+        "idf_version=",
+        "xfer_assert:",
+        "Input line too long",
+        "validCommandArity",
+        "manualJobControl",
+        "MANUAL_JOB_TIMEOUT_MS",
+        "greset armed=1 zero_i2c=1",
+        "greset armed=0 zero_i2c=1",
+        "SHT3X_BUILD_TARGET",
     ):
-        require_text(shared_cli, text, token)
-    if "deviceInstance.tick(" in text:
-        fail("Arduino CLI must retain PollJobResult instead of discarding it through tick()")
-    if text.count('"i2c_soak:') < 4:
-        fail("duration-soak evidence must use bounded multi-record output")
+        require(arduino_text + arduino_header_text + bringup_text, token, "Arduino CLI")
+    for forbidden in ("deviceInstance.tick(", "deviceInstance.begin("):
+        if forbidden in arduino_text:
+            fail(f"Arduino CLI retains owner-unsafe lifecycle call {forbidden!r}")
+    require_regex(arduino_text, r"if \(cmd == \"recover\"\).*?scheduleEnsureIdle\(\"recover\", false\)", "Arduino CLI")
+    require_regex(arduino_text, r"if \(!ownerJobActive \|\| pendingRequestId == 0U\)\s*\{\s*Serial\.printf\(\"%s: none", "Arduino CLI")
+    require_regex(arduino_text, r"validCommandArity\(parsed, knownCommand\).*?confirmationEffect\(parsed\).*?requireConfirmation\(cmd, parsed, effect\).*?if \(cmd == \"help\"", "Arduino CLI")
+    require_regex(arduino_text, r"if \(cmd == \"settings\"\)\s*\{\s*printConfig\(true\)", "Arduino CLI")
+    if arduino_text.count("cancelPending()") != 2:
+        fail("Arduino CLI may cancel an owner job only from explicit job cancel/cancel dispatch")
+    if arduino_text.count('"i2c_soak:') < 4:
+        fail("Arduino duration-soak evidence must use bounded multi-record output")
 
-    for item in MANDATORY_HELP_ITEMS:
-        if item not in text:
-            fail(f"mandatory help item '{item}' missing in {shared_cli.as_posix()}")
-        if item not in idf_text:
-            fail(f"mandatory help item '{item}' missing in ESP-IDF native CLI")
+    for token in (
+        "SHT3x::JobRequest request",
+        "request.requestId",
+        "requestMeasurement(request)",
+        "pollJob(nowMs(nullptr), budget, result)",
+        "cancelOwnedJob(SHT3x::CancelReason::DEADLINE_EXPIRED",
+        "result.requestId != requestId",
+        "result.type != type",
+        "result.effect",
+        "framework=native-esp-idf",
+        "esp_get_idf_version()",
+        "CONFIG_IDF_TARGET",
+        "xfer_assert",
+        "validCommandArity",
+        "Input line too long; discarded",
+        "discardingOverflow",
+        "Input queue full; discarded",
+        "CLI_QUEUE_SEND_TIMEOUT_MS",
+        "quarantineOwnerInvariant",
+        "instructionLimit",
+        "result.status.code != callStatus.code",
+    ):
+        require(idf_text, token, "native ESP-IDF CLI")
+    for forbidden in ("gDevice.tick(", "gDevice.begin(", "gDevice.requestMeasurement()"):
+        if forbidden in idf_text:
+            fail(f"native ESP-IDF CLI retains identity-losing call {forbidden!r}")
+    require_regex(idf_text, r"validCommandArity\(cmd, parsedArgs, knownCommand\).*?if \(std::strcmp\(cmd, \"help\"\)", "native ESP-IDF CLI")
+    require_regex(idf_text, r"if \(!gOwner\.active\)\s*\{\s*std::puts\(\"fetch: ERR no_active_job=1\"\)", "native ESP-IDF CLI")
+    if idf_text.count("hasExactConfirmation(") < 9:
+        fail("native ESP-IDF CLI lost exact confirmation dispatch gates")
 
-    if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
-        fail("either 'cfg' or 'settings' command must be present")
+    for token in (
+        "readTransfers",
+        "writeTransfers",
+        "totalTransfers",
+        "incrementSaturated",
+        "resetTransferCounters",
+        "assertTransferCounters",
+    ):
+        require(idf_transport_text + idf_text, token, "native ESP-IDF transport")
 
-    print("CLI contract PASSED")
+    print(f"CLI contract PASSED ({len(COMMAND_SPECS)} authoritative help rows)")
     return 0
 
 

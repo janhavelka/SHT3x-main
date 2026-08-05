@@ -65,7 +65,8 @@
       "docs/tunnelmonitor-integration.md",
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
-      "tools/run_sht3x_hil.py"
+      "tools/run_sht3x_hil.py",
+      "tools/sht3x_cli_contract.py"
     ],
     "exclude": [
       "examples/idf/basic/build/**",
