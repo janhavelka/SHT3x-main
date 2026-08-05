@@ -71,11 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pioarduino `55.03.311`; repository guards, HIL parser tests, strict Doxygen,
   warning/portability analysis, release-package inspection, and exact-branch
   Arduino/native-ESP-IDF GitHub Actions builds pass.
-- Post-upgrade COM19/ESP32-S3 functional HIL on merged source commit
-  `fe29f7bf4165` passed every selected executable command, including 4 and
-  10 mps periodic acquisition. Interface reset remained unsupported, the
-  disabled general-call transport refused a bus-wide reset without I2C, and
-  physical fault injection remained fixture-blocked.
+- Exact v1.9.0 release-candidate COM19/ESP32-S3 functional HIL on clean commit
+  `dfff43c57dca` passed 101 of 101 executed commands with no failures, including
+  4 and 10 mps periodic acquisition. Three selected rows were honestly skipped:
+  interface reset was unsupported, general-call transport remained deliberately
+  disabled on the shared bus, and physical fault injection required a fixture.
 - No post-upgrade USB-CDC soak, physical ALERT-pin capture, calibrated humidity
   fixture, ESP32-S2 hardware run, address `0x45` run, or debugger run is claimed.
 
