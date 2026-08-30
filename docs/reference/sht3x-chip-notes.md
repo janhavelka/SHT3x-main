@@ -1,11 +1,11 @@
 # SHT3x Chip Notes
 
-Last updated: 2026-06-16
+Datasheet-level facts the driver depends on, extracted from the Sensirion
+sources in `vendor/`. Protocol facts come from the SHT3x-DIS datasheet unless
+another source is named. Units use ASCII forms (`degC`, `uA`, `+/-`, `kOhm`).
 
-This file preserves the original compact chip-documentation notes that were
-previously split across `00` through `08` Markdown files. Main protocol facts
-come from the SHT3x-DIS datasheet unless another Sensirion source is named.
-Units use ASCII forms such as `degC`, `uA`, `+/-`, and `kOhm`.
+Where two vendor documents disagree, the conflict is recorded rather than
+silently resolved. See "Known Vendor Inconsistencies" at the end.
 
 ## Source Inventory
 
@@ -17,26 +17,10 @@ Units use ASCII forms such as `degC`, `uA`, `+/-`, and `kOhm`.
 | `vendor/SHT3x_membrane_option_datasheet.pdf` | Variant option datasheet | Version 4.1, March 2025 | 4 | PTFE membrane option, protection, orderable variants. |
 | `vendor/Sensirion_Humidity_Sensors_Testing_at_Ambient_Conditions.pdf` | Test guidance | Version 3, October 2022 | 10 | Ambient-condition fixture guidance for SHT3x verification after assembly; no I2C command additions. |
 | `vendor/Sensirion_AppNotes_Humidity_Sensors_at_a_Glance.pdf` | Supplemental humidity formulas | May 2025 | 3 | Dew point and humidity formulas for application code; no SHT3x command/register additions. |
+| `vendor/HT_AlertMode_BitConversion.xlsx` | Alert-limit conversion workbook | Vendor spreadsheet | - | The only closed-form alert-limit encode/decode arithmetic Sensirion publishes; the application note gives a worked binary procedure instead. |
 
-The previous `00_document_inventory.md` also listed generated raw Markdown
-extracts under `docs/reference/extracted/vendor/`. Those generated dumps were
-removed from the active docs tree; the vendor PDFs above are the retained
-authoritative sources. Inspect the PDFs when exact vendor wording, legal
-notices, figures, or mechanical drawings matter.
-
-## Original Compact Note Map
-
-| Original file | Purpose preserved here |
-| --- | --- |
-| `00_document_inventory.md` | Source inventory, scope notes, and original note map. |
-| `01_chip_overview.md` | Sensor family, outputs, accuracy anchors, and package. |
-| `02_pinout_and_signals.md` | 8-pin DFN pinout, address selection, ALERT, reset, and pull-ups. |
-| `03_electrical_and_timing.md` | Supply, current, reset/measurement timing, I2C limits, and absolute ratings. |
-| `04_protocol_commands_and_transactions.md` | I2C command framing, data readout, command table, CRC, and conversions. |
-| `05_register_map.md` | Command/status pseudo-register map for the command-based device. |
-| `06_modes_interrupts_status_and_faults.md` | Single-shot, periodic, ART, ALERT, heater, status, and CRC faults. |
-| `07_initialization_reset_and_operational_notes.md` | Startup, reset, measurement sequences, serial number, validation, and handling notes. |
-| `08_variant_differences_and_open_questions.md` | SHT30/SHT31/SHT35 and membrane-option differences plus open questions. |
+Inspect the PDFs directly when exact vendor wording, legal notices, figures, or
+mechanical drawings matter.
 
 ## Chip Overview
 
@@ -128,7 +112,7 @@ The I2C timing table lists `fSCL` max 1000 kHz, SDA setup min 100 ns,
 rise/fall max 300 ns, and SDA valid time max 0.9 us. Absolute max `VDD` is
 -0.3 V to 6 V; pin voltages on SDA/ADDR/ALERT/SCL/nRESET are -0.3 V to
 `VDD + 0.3 V`; input current on any pin is +/-100 mA. Source: datasheet,
-pp. 7-8, 21.
+pp. 7-8, 14 (Table 21).
 
 ## Protocol Commands And Transactions
 
@@ -149,8 +133,12 @@ compensated. Source: datasheet, p. 14.
 
 | Output | Conversion |
 | --- | --- |
-| Temperature | `T_degC = -45 + 175 * rawT / (2^16 - 1)` |
+| Temperature (Celsius) | `T_degC = -45 + 175 * rawT / (2^16 - 1)` |
+| Temperature (Fahrenheit) | `T_degF = -49 + 315 * rawT / (2^16 - 1)` |
 | Relative humidity | `RH_percent = 100 * rawRH / (2^16 - 1)` |
+
+The driver implements the Celsius form only; `degF = degC * 9/5 + 32`
+reproduces the datasheet Fahrenheit formula exactly.
 
 | Operation | Bytes after address phase | Notes | Source |
 | --- | ---: | --- | --- |
@@ -221,13 +209,33 @@ datasheet, pp. 9-14; alert note, pp. 1-2; serial-number note, p. 1.
 | Low clear | `0xE109` | `0x610B` | 22 %RH / -9 degC | `0x3869` | Alert note, p. 2 |
 | Low set | `0xE102` | `0x6100` | 20 %RH / -10 degC | `0x3466` | Alert note, p. 2 |
 
-SHT3x alert-limit storage uses reduced precision: 7 bits for humidity and
-9 bits for temperature. Approximate limit resolution is 1 %RH and 0.5 degC.
-The 16-bit alert limit word packs humidity and temperature thresholds as
-`RH[6:0]` and `T[8:0]`; the application note shows the initial high-set limit
-`80 %RH / 60 degC` as `0xCD33`. Convert physical thresholds with the alert-note
-equations before writing the reduced value and its CRC. Source: alert note,
-pp. 1-3.
+SHT3x alert-limit storage uses reduced precision: the *most significant* 7 bits
+of the 16-bit humidity word and the *most significant* 9 bits of the 16-bit
+temperature word. Approximate limit resolution is 1 %RH and 0.5 degC.
+
+Packing, in the 16-bit limit word:
+
+| Bits | Content |
+| --- | --- |
+| 15:9 | `rawRH[15:9]` - top 7 bits of the 16-bit humidity word |
+| 8:0 | `rawT[15:7]` - top 9 bits of the 16-bit temperature word |
+
+The application note shows the initial high-set limit `80 %RH / 60 degC` as
+`0xCD33`. It contains no closed-form equations; section 2.4 is a worked binary
+procedure and points at the companion workbook. The authoritative arithmetic is
+in `vendor/HT_AlertMode_BitConversion.xlsx`:
+
+```text
+encode: rh7 = clamp(round(rawRH / 2^9), 0, 127)
+        t9  = clamp(round(rawT  / 2^7), 0, 511)
+        word = (rh7 << 9) | t9
+decode: rawRH = rh7 << 9,  rawT = t9 << 7, then the normal conversion formulas
+```
+
+Note that the workbook **rounds** to the nearest reduced code. Truncating
+instead biases every threshold low by half a code (about 0.39 %RH / 0.17 degC)
+and mis-encodes the published `20 %RH / -10 degC` default. Source: alert note,
+pp. 1-3; `HT_AlertMode_BitConversion.xlsx` cells `D8`/`F8`.
 
 ## Modes, Interrupts, Status, And Faults
 
@@ -325,3 +333,36 @@ Open implementation questions:
 - The supplemental humidity-formula note provides dew point and
   absolute-humidity application equations; it adds no SHT3x-DIS I2C command,
   status-bit, or alert-limit definitions.
+
+## Known Vendor Inconsistencies
+
+These are real disagreements between Sensirion documents in `vendor/`. They are
+recorded here so nobody has to rediscover them, and so the driver's choices are
+traceable.
+
+| # | Conflict | Sources | What the driver does |
+| --- | --- | --- | --- |
+| 1 | **Status bit 4 trigger set.** The datasheet says `reset detected (hard reset, soft reset command or supply fail)`. The alert note says `reset detected (hard reset, general call reset or supply fail)` - i.e. it omits the soft reset. The alert note's own revision history (v3.1, Nov 2023) says "Corrected when a system reset is detected in Table 5", so the newer document implies a soft reset does *not* set bit 4. | Datasheet p. 13 Table 18; alert note p. 3 Table 5 and p. 4 | Nothing. The driver never makes a decision on bit 4; it only reports it as `StatusRegister::resetDetected`. Do not use that bit alone to decide whether a `softReset()` took effect. |
+| 2 | **Reserved bits 9:5 reset value.** The datasheet gives the default as `xxxxx` (undefined). The alert note gives `00000`. | Datasheet p. 13 Table 18; alert note p. 3 Table 5 | Treat them as undefined. Never compare the raw status word for equality against `0x8010`; test individual bits. The driver never masks `StatusRegister::raw`. |
+| 3 | **High-clear alert default `0xC92D`.** The alert note prints `79 %RH / 58 degC -> 0xC92D`, but `0xC92D` decodes to 78.13 %RH, and Sensirion's own workbook computes `0xCB2D` for that pair. The two artifacts differ by one humidity code. | Alert note p. 2 Table 1; `HT_AlertMode_BitConversion.xlsx` cells `D9`/`E9` | Follows the printed word. `encodeAlertLimit(58, 79)` returns `0xC92D` because the PDF describes the device's power-up state, while the workbook is a calculator. This is the one point where the encoder is not the plain arithmetic. |
+| 4 | **Alert note section 2.4 step 5a hex typo.** The worked example prints `1100'1101'0011'0011 = 0xE699`. The binary is correct and equals `0xCD33`, matching Table 1; `0xE699` is wrong. | Alert note p. 2 | Uses `0xCD33`. Read the binary, not the hex, if you follow the worked example. |
+
+## Facts The Datasheet States That The Driver Does Not Model
+
+Recorded so the gaps are deliberate rather than accidental.
+
+- **Power-up time `tPU`** (typ 0.5 ms, max 1 ms at 2.4-5.5 V; max 1.5 ms below
+  2.4 V, datasheet p. 7). The driver has no power-up wait: the application owns
+  the delay between VDD reaching `VPOR` and the first `bind()`/`begin()` call.
+- **Fahrenheit conversion** (datasheet p. 14). Celsius only; convert in the
+  application.
+- **Dynamic `ADDR` switching** (datasheet p. 8). `Config::i2cAddress` is fixed
+  per `bind()`.
+- **I2C bus timing and clock rate** (datasheet pp. 8, 14). Owned by the injected
+  transport; the driver never configures the bus.
+- **`nRESET` pulse width** (min 1 us, datasheet p. 7). Owned by the application's
+  `Config::hardReset` callback.
+- **ART conversion time.** The datasheet states the 4 Hz ART output rate but not
+  the per-conversion duration, so the driver's first-fetch estimate for ART
+  reuses the single-shot repeatability timing. That is an assumption, not a
+  datasheet fact; an early fetch simply reports not-ready and retries.

@@ -13,33 +13,25 @@ Deterministic SHT3x (SHT30/SHT31/SHT35) I2C driver for ESP32 (Arduino/PlatformIO
 - **Health monitoring** - logical-operation and transfer diagnostics with selectable admission policy
 - **Deterministic behavior** - no unbounded loops, no heap allocations
 
-## Current State
+## Scope
 
-This tree contains the `1.8.0` owner-safe API. The repository validation matrix
-covers the 118-test native fault/boundary suite, strict framework-neutral core
-compilation and Doxygen, repository contracts, package inspection, pinned
-Arduino PlatformIO builds for ESP32-S3/S2, and native ESP-IDF example builds.
-Use results from the exact commit being evaluated; an older successful workflow
-does not validate a dirty checkout or an unpushed branch.
+The driver is framework-neutral C++17. It owns SHT3x protocol, CRC, command
+spacing, acquisition modes, and chip-local diagnostics — nothing else. The I2C
+bus, pins, scheduler, and recovery policy stay with the application, which
+injects them as callbacks through `SHT3x::Config`.
 
-GitHub Actions is configured to build the native ESP-IDF and Arduino S2/S3
-examples and to run native, package, documentation, and repository-contract
-validation. Check the exact commit's workflow result before citing CI evidence.
+Two ways to use it:
 
-Hardware validation has narrower evidence boundaries than software validation.
-The maintained [hardware validation guide](docs/hardware.md) is the sole source
-for accepted run metrics, artifact fingerprints, and remaining physical gaps.
-The post-pioarduino COM19 runs cover the Arduino ESP32-S3 command surface,
-including 0.5/1/2/4/10 mps periodic acquisition, ART, clock stretching,
-alert-limit read/write cleanup, heater control, owner-safe job cancellation,
-and recovery/reset paths without a long soak.
+- **Bench bring-up.** Flash one of the diagnostic CLI examples and drive the
+  device over serial. See [docs/hardware.md](docs/hardware.md).
+- **As a component in a larger firmware.** Bind it inside your own I2C-owner
+  task and drive it with cooperative jobs. See
+  [docs/integration.md](docs/integration.md).
 
-Long HIL runs use the low-USB `i2c_soak <seconds>` firmware command
-through `tools/run_sht3x_hil.py --include-soak --soak-duration-s <seconds>`.
-
-The [TunnelMonitor integration guide](docs/tunnelmonitor-integration.md)
-describes the implemented owner/adapter boundary visible in the local sibling
-checkout. This repository does not modify or validate that consumer worktree.
+CI builds the Arduino ESP32-S3/S2 and native ESP-IDF S2/S3 examples and runs the
+native test suite, package inspection, strict Doxygen, and the repository
+contract gates. Hardware coverage is narrower than software coverage and is
+tracked separately in [docs/hardware.md](docs/hardware.md).
 
 ## Installation
 
@@ -60,13 +52,8 @@ lib_deps =
   https://github.com/janhavelka/SHT3x-main.git#<reviewed-full-commit-sha>
 ```
 
-After the release tag is published, consumers may instead pin the immutable
-release tag:
-
-```ini
-lib_deps =
-  https://github.com/janhavelka/SHT3x-main.git#v1.8.0
-```
+A release tag is only equivalent to a commit pin once you have confirmed which
+commit the tag actually points at.
 
 ### Manual
 
@@ -439,10 +426,9 @@ write+read with repeated-start for SHT3x flows.
 With Wire, a 0-byte `requestFrom()` must be treated as an ambiguous error
 (return `Err::I2C_ERROR`), not a read-header NACK.
 Wire cannot prove read-header NACK, so expected-NACK semantics are disabled.
-`timeoutMs` passed to callbacks is a requested bound; in a managed bus the I2CManager
-owns the actual Wire timeout and may ignore per-call changes.
-I2CManager owns Wire clock/timeout configuration; library code must not mutate global
-Wire settings.
+`timeoutMs` passed to callbacks is a requested bound. On a shared bus the bus
+owner owns the actual Wire clock and timeout and may ignore per-call changes;
+library code never mutates global Wire settings.
 
 ## Expected NACK Semantics
 
@@ -531,7 +517,7 @@ leaves a single-shot local baseline on success:
 3. Hard reset (`hardReset` callback), then probe
 4. General call reset (only if `allowGeneralCallReset` is `true`), then probe
 
-Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`--the orchestrator triggers it.
+Recovery uses `recoverBackoffMs` to avoid bus thrashing and does **not** run automatically inside `tick()`; the orchestrator triggers it.
 
 With `HealthPolicy::LATCH_OFFLINE`, normal public I2C operations return `BUSY`
 after the threshold and do not touch the bus until recovery or the cooperative
@@ -744,10 +730,6 @@ python tools/run_sht3x_hil.py --dry-run --expect-address 0x44 --board esp32s3 --
 python tools/run_sht3x_hil.py --port COMx --baud 115200 --expect-address 0x44 --board esp32s3 --target-name desk --operator <name>
 ```
 
-The PlatformIO package includes this runner. Live
-commit/worktree identity checks and the surrounding parser/guard test tooling
-require a full repository checkout.
-
 Default runner groups cover safe smoke, single-shot low/medium/high,
 status/status_restore, serial/EIC, heater status, alert read/encode/decode,
 selected periodic rates, and ART. Optional groups are gated by
@@ -780,23 +762,15 @@ contract and refuses unknown or unconfirmed mutation-like commands. Raw
 `command read` words receive the same heater, alert-write, and high-periodic-rate
 opt-ins and cleanup policies as raw writes.
 
-That list describes current runner capability. A hardware `PASS` claim is
-limited to the selected commands and artifacts in a specific run summary.
-
-Do not extend the accepted one-hour result into claims of multi-day/field
-stability, physical ALERT validation, calibrated humidity accuracy, real-bus
-fault recovery, or production readiness until those rows have fixture evidence.
-
 ## Documentation
 
-- [CHANGELOG.md](CHANGELOG.md) - full release history
-- [docs/README.md](https://github.com/janhavelka/SHT3x-main/blob/main/docs/README.md) - maintained guides and claim boundary
-- [docs/hardware.md](docs/hardware.md) - hardware evidence status and HIL procedure
-- [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component/example notes
-- [docs/tunnelmonitor-integration.md](docs/tunnelmonitor-integration.md) - current external-owner integration contract
-- [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - compact SHT3x source-document notes
-- Repository-only reference material includes vendor PDFs and the alert
-  bit-conversion spreadsheet.
+- [CHANGELOG.md](CHANGELOG.md) - release history
+- [docs/README.md](docs/README.md) - documentation index
+- [docs/integration.md](docs/integration.md) - embedding the driver in a larger firmware
+- [docs/hardware.md](docs/hardware.md) - hardware coverage and the HIL runbook
+- [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component and example notes
+- [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - datasheet facts, with the known vendor inconsistencies
+- `docs/reference/vendor/` - the Sensirion PDFs and alert spreadsheet (repository only)
 
 Public API Doxygen comments live in `include/SHT3x/`. In a full repository
 checkout, generate the strict HTML reference from the root with:

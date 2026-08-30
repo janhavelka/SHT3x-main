@@ -8,3 +8,18 @@ targets:
   - esp32s3
 dependencies:
   idf: ">=5.4"
+files:
+  exclude:
+    - "test/**"
+    - "tools/**"
+    - "scripts/**"
+    - "docs/reference/vendor/**"
+    - "hil_logs/**"
+    - ".pio/**"
+    - ".github/**"
+    - "examples/idf/basic/build/**"
+    - "examples/idf/basic/sdkconfig"
+    - "examples/idf/basic/sdkconfig.old"
+    - "examples/idf/basic/dependencies.lock"
+    - "examples/idf/basic/managed_components/**"
+    - "examples/idf/basic/compile_commands.json"

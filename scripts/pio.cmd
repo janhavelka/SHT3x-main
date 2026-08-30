@@ -4,7 +4,7 @@ setlocal
 set "PIO_EXE=%USERPROFILE%\.platformio\penv\Scripts\pio.exe"
 
 if not exist "%PIO_EXE%" (
-    >&2 echo VS Code-managed PlatformIO was not found at: "%PIO_EXE%". Stop and report the missing installation; do not install another PlatformIO Core.
+    >&2 echo PlatformIO Core was not found at "%PIO_EXE%". Install the PlatformIO IDE extension, or run "pio" / "python -m platformio" directly if Core is on PATH.
     exit /b 1
 )
 

@@ -611,8 +611,10 @@ void configureDriver() {
   gConfig.i2cTimeoutMs = 50;
   gConfig.mode = SHT3x::Mode::SINGLE_SHOT;
   gConfig.clockStretching = SHT3x::ClockStretching::STRETCH_DISABLED;
-  gConfig.transportCapabilities = SHT3x::TransportCapability::TIMEOUT |
-                                  SHT3x::TransportCapability::BUS_ERROR;
+  // Only TIMEOUT is provable here: mapEspError() maps ESP_ERR_TIMEOUT exactly,
+  // but routes every other unrecognized esp_err_t to I2C_BUS as a catch-all,
+  // so this adapter cannot claim it reliably distinguishes bus errors.
+  gConfig.transportCapabilities = SHT3x::TransportCapability::TIMEOUT;
   gConfig.offlineThreshold = 5;
 }
 

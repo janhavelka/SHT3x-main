@@ -1,45 +1,45 @@
-# AGENTS.md - SHT3x Production Embedded Guidelines
+# SHT3x Engineering Guidelines
 
-## Role and Target
-You are a professional embedded software engineer building a production-grade SHT3x (SHT30/SHT31/SHT35) environmental sensor library.
+Binding conventions for changes to this repository. They apply to human and
+automated contributors alike. Workflow, commit format, and the release
+procedure live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
-- Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
-- These rules are binding.
+## Target And Goals
 
----
-
-## PlatformIO
-
-Before editing, fetch remotes and fast-forward the newest intended working
-branch to its upstream. Stop and report dirty, divergent, or conflicted state;
-never overwrite work to force a sync.
-
-On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
-VS Code-managed installation. Never install another PlatformIO Core; if the
-wrapper cannot find it, stop and report the missing installation.
+- Framework-neutral C++17 core, delivered as a PlatformIO library and an
+  ESP-IDF component.
+- Validated on ESP32-S2 / ESP32-S3 under both Arduino and native ESP-IDF; the
+  core itself has no framework dependency.
+- Goals: deterministic behavior, long-term stability, clean API contracts,
+  portability, no surprises in the field.
 
 ---
 
 ## Repository Model (Single Library)
 
 ```
-include/SHT3x/         - Public API headers only (Doxygen)
-  CommandTable.h        - Command definitions and bit masks
-  Status.h
-  Config.h
-  SHT3x.h
-  Version.h             - Auto-generated (do not edit)
-src/                    - Implementation (.cpp)
+include/SHT3x/    Public API headers only (Doxygen-documented)
+  CommandTable.h    Command words and bit masks
+  Config.h          Config struct, callback typedefs, enums
+  Status.h          Err codes and Status
+  SHT3x.h           Driver class
+  Version.h         Auto-generated from library.json - do not edit
+src/              Implementation
+test/             Native Unity test suite plus Arduino/Wire stubs
 examples/
-  01_*/
-  common/               - Example-only helpers (BoardConfig.h, I2cTransport.h,
-                          I2cScanner.h, Sht3xCli.h/.cpp)
-platformio.ini
-library.json
-README.md
-CHANGELOG.md
-AGENTS.md
+  01_basic_bringup_cli/   Arduino diagnostic CLI
+  common/                 Example-only helpers: BoardConfig.h, I2cTransport.h,
+                          I2cScanner.h, TransferStats.h, Sht3xCli.h/.cpp
+  idf/basic/              Native ESP-IDF diagnostic CLI
+docs/             Maintained guides and vendor reference material
+tools/            Repository contract gates and the host-side HIL runner
+scripts/          generate_version.py
+.github/          CI workflow
+platformio.ini    Arduino/native build environments
+library.json      PlatformIO manifest and the single source of version truth
+idf_component.yml ESP-IDF component manifest (generated version field)
+CMakeLists.txt    ESP-IDF component registration
+Doxyfile          Strict API documentation build
 ```
 
 Rules:
@@ -59,8 +59,6 @@ Rules:
 - Prefer extending existing owners, modules, APIs, and contracts over creating parallel abstractions.
 - Add a new service, class, file, interface, manager, registry, or abstraction only for a concrete current need with a clear caller or test.
 - Do not add placeholder classes, future stubs, empty managers, broad frameworks, plugin systems, registries, generic layers, or speculative extension points unless the current task explicitly requires them.
-- Keep changes tightly scoped to the user's request.
-- Preserve dirty user changes and never revert unrelated work unless the user explicitly asks for that revert.
 - Deterministic: no unbounded loops/waits; all timeouts via deadlines, never `delay()` in library code.
 - Owner-safe lifecycle: zero-I2C `bind(const Config&)`, zero-I2C request/cancel,
   one-callback `pollJob(nowMs, budget, result)`, and local `end()`. `begin()` is
@@ -97,17 +95,6 @@ Rules:
 - Multi-step operations must either be proven rollback-safe or expose/document possible partial hardware state.
 - Examples must be labeled honestly as diagnostic, bring-up, or production-style.
 - Do not claim hardware validation, ALERT validation, or pure ESP-IDF validation unless the commands/builds actually ran.
-
-## Hardening review focus areas
-
-- Re-check datasheet and local extracted docs for status, ALERT, periodic, ART,
-  and command-validity facts without inferring undocumented behavior.
-- Inspect public API and core implementation for framework neutrality, timing,
-  health/admission behavior, copy/move semantics, and thread/ISR contracts.
-- Inspect native tests and fake transports for focused public API and
-  partial-transaction coverage.
-- Inspect the ESP-IDF example, component metadata, guard scripts, and CI gaps
-  before claiming pure ESP-IDF validation.
 
 ---
 
@@ -168,7 +155,8 @@ struct Status {
 - Alert mode support:
   - Read/write all four alert limits
   - Encode/decode limit words (RH7/T9 packing)
-  - Helper to disable alerts (LowSet > HighSet)
+  - Helper to disable alerts by setting the low set point above the high set
+    point, which is the vendor-documented deactivation rule
 - Serial number (EIC) readout (both stretch and no-stretch commands).
 - Measurement time calculation based on repeatability and VDD range.
 
@@ -268,11 +256,13 @@ SemVer:
 - MINOR: new backward-compatible features or error codes (append only).
 - PATCH: bug fixes, refactors, docs.
 
-Release steps:
-1. Update `library.json`.
-2. Update `CHANGELOG.md` (Added/Changed/Fixed/Removed).
-3. Update `README.md` if API or examples changed.
-4. Commit and tag: `Release vX.Y.Z`.
+`scripts/generate_version.py` propagates the version from `library.json` into
+`Version.h`, `idf_component.yml`, and `Doxyfile`; `generate_version.py check`
+enforces it in CI. Prose that repeats the version string is not generated and
+should be avoided.
+
+The release procedure is in [CONTRIBUTING.md](CONTRIBUTING.md); do not duplicate
+it here.
 
 ---
 

@@ -62,7 +62,7 @@
       "docs/README.md",
       "docs/hardware.md",
       "docs/esp-idf.md",
-      "docs/tunnelmonitor-integration.md",
+      "docs/integration.md",
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
       "tools/run_sht3x_hil.py",

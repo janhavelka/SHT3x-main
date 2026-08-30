@@ -955,9 +955,9 @@ private:
   // Command Access
   // =========================================================================
 
-  Status _writeCommand(uint16_t cmd, bool tracked, bool logicalComplete = true);
-  Status _writeCommandNoDelay(uint16_t cmd, bool tracked, bool logicalComplete = true);
-  Status _writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked,
+  Status _writeCommand(uint16_t command, bool tracked, bool logicalComplete = true);
+  Status _writeCommandNoDelay(uint16_t command, bool tracked, bool logicalComplete = true);
+  Status _writeCommandWithData(uint16_t command, uint16_t data, bool tracked,
                                bool logicalComplete = true);
   Status _readAfterCommand(uint8_t* buf, size_t len, bool tracked,
                            bool allowNoData = false, bool logicalComplete = true);

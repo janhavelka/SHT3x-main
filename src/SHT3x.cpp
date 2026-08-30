@@ -26,19 +26,27 @@ static constexpr uint32_t MAX_RECOVER_BACKOFF_MS = 600000;
 static constexpr uint16_t MAX_SINGLE_SHOT_MARGIN_MS = 1000;
 static constexpr float ALERT_DEFAULT_MATCH_EPSILON = 0.001f;
 
+// Reduced alert-limit packing: humidity in bits 15:9, temperature in bits 8:0.
+static constexpr uint16_t ALERT_T_CODE_BITS = 9;
+static constexpr uint16_t ALERT_RH_CODE_MAX = 127;   // 7 bits
+static constexpr uint16_t ALERT_T_CODE_MAX = 511;    // 9 bits
+
 struct AlertDefaultVector {
   float temperatureC;
   float humidityPct;
   uint16_t word;
 };
 
-// The app note labels reset defaults with rounded RH/T values. Preserve the
-// published words exactly before applying generic reduced-format quantization.
+// Sensirion's own alert-limit workbook (HT_AlertMode_BitConversion.xlsx) rounds
+// to the nearest reduced RH7/T9 code. encodeAlertLimit() implements that rule, so
+// three of the four published reset defaults fall out of the generic arithmetic.
+//
+// The fourth does not: the alert application note prints 79 %RH / 58 degC as
+// 0xC92D, but 0xC92D decodes to 78.13 %RH and Sensirion's own workbook computes
+// 0xCB2D for that pair. The two vendor artifacts disagree by one humidity code.
+// The printed word describes the device's power-up state, so it wins here.
 static constexpr AlertDefaultVector ALERT_APP_NOTE_DEFAULTS[] = {
-    {60.0f, 80.0f, 0xCD33},
     {58.0f, 79.0f, 0xC92D},
-    {-9.0f, 22.0f, 0x3869},
-    {-10.0f, 20.0f, 0x3466},
 };
 
 class ScopedOfflineI2cAllowance {
@@ -1702,11 +1710,11 @@ Status SHT3x::readSerialNumber(uint32_t& serial, ClockStretching stretch) {
     return Status::Error(Err::INVALID_PARAM, "Invalid clock stretching");
   }
 
-  const uint16_t cmd = (stretch == ClockStretching::STRETCH_ENABLED)
+  const uint16_t command = (stretch == ClockStretching::STRETCH_ENABLED)
       ? cmd::CMD_SERIAL_STRETCH
       : cmd::CMD_SERIAL_NO_STRETCH;
 
-  Status st = _writeCommand(cmd, true, false);
+  Status st = _writeCommand(command, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -1744,12 +1752,12 @@ Status SHT3x::readAlertLimitRaw(AlertLimitKind kind, uint16_t& value) {
     return Status::Error(Err::BUSY, "Stop periodic mode before reading alert limits");
   }
 
-  const uint16_t cmd = _commandForAlertRead(kind);
-  if (cmd == 0) {
+  const uint16_t command = _commandForAlertRead(kind);
+  if (command == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid alert limit kind");
   }
 
-  Status st = _writeCommand(cmd, true, false);
+  Status st = _writeCommand(command, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -1792,12 +1800,12 @@ Status SHT3x::writeAlertLimitRaw(AlertLimitKind kind, uint16_t value) {
     return Status::Error(Err::BUSY, "Stop periodic mode before writing alert limits");
   }
 
-  const uint16_t cmd = _commandForAlertWrite(kind);
-  if (cmd == 0) {
+  const uint16_t command = _commandForAlertWrite(kind);
+  if (command == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid alert limit kind");
   }
 
-  Status st = _writeCommandWithData(cmd, value, true, false);
+  Status st = _writeCommandWithData(command, value, true, false);
   if (!st.ok()) {
     return st;
   }
@@ -1866,27 +1874,31 @@ uint16_t SHT3x::encodeAlertLimit(float temperatureC, float humidityPct) {
     return appNoteWord;
   }
 
-  const float rawRhF = humidityPct * 65535.0f / 100.0f;
-  const float rawTF = (temperatureC + 45.0f) * 65535.0f / 175.0f;
+  // Alert limits keep only the 7 most significant humidity bits and the 9 most
+  // significant temperature bits. Round to the nearest reduced code rather than
+  // truncating: truncation biases every threshold low by half a code on average
+  // (-0.39 %RH / -0.17 degC) and mis-encodes the published 20 %RH / -10 degC
+  // reset default as 0x3266 instead of 0x3466.
+  const float rh7F = humidityPct * 65535.0f / 100.0f / 512.0f;
+  const float t9F = (temperatureC + 45.0f) * 65535.0f / 175.0f / 128.0f;
 
-  uint32_t rawRh = static_cast<uint32_t>(rawRhF + 0.5f);
-  uint32_t rawT = static_cast<uint32_t>(rawTF + 0.5f);
+  uint32_t rh7 = static_cast<uint32_t>(rh7F + 0.5f);
+  uint32_t t9 = static_cast<uint32_t>(t9F + 0.5f);
 
-  if (rawRh > 65535U) {
-    rawRh = 65535U;
+  if (rh7 > ALERT_RH_CODE_MAX) {
+    rh7 = ALERT_RH_CODE_MAX;
   }
-  if (rawT > 65535U) {
-    rawT = 65535U;
+  if (t9 > ALERT_T_CODE_MAX) {
+    t9 = ALERT_T_CODE_MAX;
   }
 
-  const uint16_t rh7 = static_cast<uint16_t>(rawRh >> 9);
-  const uint16_t t9 = static_cast<uint16_t>(rawT >> 7);
-  return static_cast<uint16_t>((rh7 << 9) | (t9 & 0x01FF));
+  return static_cast<uint16_t>((rh7 << ALERT_T_CODE_BITS) | t9);
 }
 
 void SHT3x::decodeAlertLimit(uint16_t limit, float& temperatureC, float& humidityPct) {
-  const uint16_t rh7 = static_cast<uint16_t>((limit >> 9) & 0x7F);
-  const uint16_t t9 = static_cast<uint16_t>(limit & 0x01FF);
+  const uint16_t rh7 =
+      static_cast<uint16_t>((limit >> ALERT_T_CODE_BITS) & ALERT_RH_CODE_MAX);
+  const uint16_t t9 = static_cast<uint16_t>(limit & ALERT_T_CODE_MAX);
 
   const uint32_t rawRh = static_cast<uint32_t>(rh7) << 9;
   const uint32_t rawT = static_cast<uint32_t>(t9) << 7;
@@ -1951,13 +1963,9 @@ bool SHT3x::_singleShotMeasurementPending() const {
 }
 
 uint32_t SHT3x::_allocateJobId() {
-  uint32_t id = _nextJobId++;
-  if (id == 0) {
-    id = _nextJobId++;
-  }
-  if (_nextJobId == 0) {
-    _nextJobId = 1;
-  }
+  // Identities are nonzero; wrap back to 1 instead of handing out zero.
+  const uint32_t id = _nextJobId;
+  _nextJobId = (id == std::numeric_limits<uint32_t>::max()) ? 1U : (id + 1U);
   return id;
 }
 
@@ -2391,24 +2399,24 @@ Status SHT3x::_offlineStatus() const {
   return Status::Error(Err::BUSY, "Driver is offline; call recover()");
 }
 
-Status SHT3x::_writeCommand(uint16_t cmd, bool tracked, bool logicalComplete) {
+Status SHT3x::_writeCommand(uint16_t command, bool tracked, bool logicalComplete) {
   Status st = _ensureCommandDelay();
   if (!st.ok()) {
     return st;
   }
 
-  return _writeCommandNoDelay(cmd, tracked, logicalComplete);
+  return _writeCommandNoDelay(command, tracked, logicalComplete);
 }
 
-Status SHT3x::_writeCommandNoDelay(uint16_t cmd, bool tracked,
+Status SHT3x::_writeCommandNoDelay(uint16_t command, bool tracked,
                                    bool logicalComplete) {
-  uint8_t buf[2] = {static_cast<uint8_t>(cmd >> 8), static_cast<uint8_t>(cmd & 0xFF)};
+  uint8_t buf[2] = {static_cast<uint8_t>(command >> 8), static_cast<uint8_t>(command & 0xFF)};
   Status st = tracked ? _i2cWriteTracked(buf, sizeof(buf), logicalComplete)
                       : _i2cWriteRaw(buf, sizeof(buf));
   return st;
 }
 
-Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked,
+Status SHT3x::_writeCommandWithData(uint16_t command, uint16_t data, bool tracked,
                                     bool logicalComplete) {
   Status st = _ensureCommandDelay();
   if (!st.ok()) {
@@ -2416,8 +2424,8 @@ Status SHT3x::_writeCommandWithData(uint16_t cmd, uint16_t data, bool tracked,
   }
 
   uint8_t payload[MAX_WRITE_LEN] = {};
-  payload[0] = static_cast<uint8_t>(cmd >> 8);
-  payload[1] = static_cast<uint8_t>(cmd & 0xFF);
+  payload[0] = static_cast<uint8_t>(command >> 8);
+  payload[1] = static_cast<uint8_t>(command & 0xFF);
   payload[2] = static_cast<uint8_t>(data >> 8);
   payload[3] = static_cast<uint8_t>(data & 0xFF);
   payload[4] = _crc8(&payload[2], 2);
@@ -2639,17 +2647,17 @@ Status SHT3x::_enterPeriodic(PeriodicRate rate, Repeatability rep, bool art) {
     }
   }
 
-  uint16_t cmd = 0;
+  uint16_t command = 0;
   if (art) {
-    cmd = cmd::CMD_ART;
+    command = cmd::CMD_ART;
   } else {
-    cmd = _commandForPeriodic(rep, rate);
+    command = _commandForPeriodic(rep, rate);
   }
-  if (cmd == 0) {
+  if (command == 0) {
     return Status::Error(Err::INVALID_PARAM, "Invalid periodic command");
   }
 
-  Status st = _writeCommand(cmd, true);
+  Status st = _writeCommand(command, true);
   if (!st.ok()) {
     return st;
   }
