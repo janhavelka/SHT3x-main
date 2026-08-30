@@ -362,6 +362,11 @@ public:
   ///       issues a soft reset even if the ladder's initial probe was sufficient,
   ///       then resets the local restore cache to sensor defaults. This ensures
   ///       heater and alert-limit hardware state is reset, not only the cache.
+  /// @note If an admitted attempt fails after recovery begins, recovery may
+  ///       already have changed acquisition state or the final reset may have
+  ///       reached the sensor. The restore cache is left unchanged and
+  ///       hardwareStateValid() is false, so callers must treat the physical
+  ///       state as partial/indeterminate.
   /// @return OK after a recovered default single-shot state, or the first
   ///         recovery/reset failure.
   Status resetToDefaults();

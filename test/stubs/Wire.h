@@ -28,7 +28,13 @@ public:
     }
     return len;
   }
-  uint8_t endTransmission(bool stop = true) { _lastStop = stop; return 0; }
+  uint8_t endTransmission(bool stop = true) {
+    _lastStop = stop;
+    if (_useAckAddress) {
+      return _addr == _ackAddress ? 0U : 2U;
+    }
+    return 0U;
+  }
   
   size_t requestFrom(uint8_t addr, size_t len) { 
     (void)addr;
@@ -66,6 +72,11 @@ public:
 
   void _setBeginResult(bool result) { _beginResult = result; }
 
+  void _setAckAddress(uint8_t address) {
+    _useAckAddress = true;
+    _ackAddress = address;
+  }
+
   bool _lastStopWasTrue() const { return _lastStop; }
   uint32_t _readCallCount() const { return _readCalls; }
   void _clearReadCallCount() { _readCalls = 0; }
@@ -85,6 +96,8 @@ private:
   bool _useRequestFromOverride = false;
   size_t _requestFromResult = 0;
   bool _beginResult = true;
+  bool _useAckAddress = false;
+  uint8_t _ackAddress = 0;
 };
 
 extern TwoWire Wire;

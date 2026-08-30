@@ -5,8 +5,6 @@ import pathlib
 import re
 import sys
 
-from sht3x_cli_contract import expected_help_rows, parse_help_rows, validate_contract
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VALID_SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp"}
 VALID_IDF_SUFFIXES = VALID_SOURCE_SUFFIXES | {".txt"}
@@ -88,8 +86,6 @@ def check_core_boundary() -> None:
 
 
 def main() -> int:
-    shared_cli = ROOT / "examples" / "common" / "Sht3xCli.cpp"
-    shared_cli_h = ROOT / "examples" / "common" / "Sht3xCli.h"
     idf_main = ROOT / "examples" / "idf" / "basic" / "main" / "main.cpp"
     idf_project = ROOT / "examples" / "idf" / "basic" / "CMakeLists.txt"
     idf_cmake = ROOT / "examples" / "idf" / "basic" / "main" / "CMakeLists.txt"
@@ -99,8 +95,6 @@ def main() -> int:
     idf_manifest = ROOT / "idf_component.yml"
 
     for path in (
-        shared_cli,
-        shared_cli_h,
         idf_main,
         idf_project,
         idf_cmake,
@@ -113,29 +107,6 @@ def main() -> int:
             fail(f"missing required file: {path.as_posix()}")
 
     check_core_boundary()
-
-    shared_cli_text = shared_cli.read_text(encoding="utf-8", errors="replace")
-    shared_cli_header_text = shared_cli_h.read_text(
-        encoding="utf-8", errors="replace"
-    )
-    shared_cli_code = strip_non_code(shared_cli_text + shared_cli_header_text)
-    for token in (
-        "Arduino.h",
-        "Wire.h",
-        "TwoWire",
-        "Serial",
-        "ArduinoCompat",
-        "IdfArduinoCompat",
-        "driver/i2c_master.h",
-        "esp_timer.h",
-        "freertos/",
-    ):
-        if re.search(rf"\b{re.escape(token)}\b", shared_cli_code) is not None:
-            fail(f"shared CLI uses framework-specific token: {token}")
-
-    contract_errors = validate_contract()
-    if contract_errors:
-        fail("invalid authoritative CLI contract: " + "; ".join(contract_errors))
 
     idf_files = [
         idf_project,
@@ -187,16 +158,6 @@ def main() -> int:
         require_text(idf_main, needle)
 
     idf_main_text = idf_main.read_text(encoding="utf-8", errors="replace")
-    if parse_help_rows(shared_cli_text) != expected_help_rows():
-        fail("shared CLI help rows drifted from tools/sht3x_cli_contract.py")
-    for forbidden in (
-        "handleCommandLine",
-        "validCommandArity",
-        "printHelpItem",
-        "SHT3x::SHT3x gDevice",
-    ):
-        if forbidden in idf_main_text:
-            fail(f"native ESP-IDF glue duplicates shared CLI token: {forbidden}")
     if "xQueueSend(queue, &line, portMAX_DELAY)" in idf_main_text:
         fail("native ESP-IDF CLI input queue send must be timeout-bounded")
 
@@ -216,20 +177,6 @@ def main() -> int:
     if re.search(r"(?m)^targets\s*:", idf_manifest_text) is not None:
         fail("framework-neutral component manifest must not restrict ESP-IDF targets")
     require_text(idf_manifest, 'idf: ">=5.4"')
-
-    for command in (
-        "command read <cmd> <len>",
-        "alert raw write <kind> <hex>",
-        "stress_mix [N]",
-        "selftest",
-        "probe",
-        "recover",
-        "status_restore",
-        "periodic start <rate> <rep>",
-        "art fetch",
-        "alert show",
-    ):
-        require_text(shared_cli, command)
 
     print("IDF example contract PASSED")
     return 0

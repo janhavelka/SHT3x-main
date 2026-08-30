@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added focused native regressions for periodic no-data bounds/re-arming,
   OFFLINE recovery, missed-output remainder accounting, serial and alert CRCs,
   sample age, heater verification, and isolated test clocks/transports.
+- Added direct regressions for exact periodic retry timing, full microsecond
+  wrap, callback/deadline admission, active-mode probe rejection, selective
+  scanner ACKs, public alert-limit readback, and heater-status readback.
 - Added a finding-by-finding code-audit remediation report.
 
 ### Changed
@@ -28,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Widened package compatibility by removing unnecessary PlatformIO framework/
   platform and ESP-IDF target allow-lists. Intentional export filters and the
   packaged HIL tooling remain unchanged.
+- Removed duplicate shared-CLI checks from the ESP-IDF example guard and
+  obsolete alternate-output branches from the unified-CLI HIL runner.
 
 ### Fixed
 - Bounded periodic proven and inferred no-data streaks with an automatic
@@ -46,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made `probe()` reject active periodic/ART acquisition, made heater changes
   verify status and the applied heater bit before caching, and made
   `resetToDefaults()` issue a physical soft reset before committing defaults.
+- Documented that a failed, admitted `resetToDefaults()` attempt can leave
+  partially changed physical state even though the local cache is not committed.
 - Corrected local-state handling in `readSettings()` and measurement request
   validation, validated transport-capability bits, accumulated partial native
   ESP-IDF console input safely, documented diagnostic pull-up limits, and

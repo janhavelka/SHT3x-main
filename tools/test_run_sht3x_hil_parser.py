@@ -315,7 +315,11 @@ def test_scan_parser_ignores_known_address_documentation() -> None:
 
 def test_configured_address_mismatch_fails() -> None:
     spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "settings")
-    result, notes, parsed = classify(spec, "state=READY initialized=1 online=1 addr=0x45 timeout=25\nmode=single\n")
+    result, notes, parsed = classify(
+        spec,
+        "=== Config ===\n  Initialized: true\n  State: READY\n"
+        "  I2C address: 0x45\n  Mode: SINGLE_SHOT\n",
+    )
     assert parsed["configured_i2c_address"] == "0x45"
     assert result == hil.RESULT_FAIL
     assert "configured I2C address 0x45 != expected 0x44" in notes
@@ -323,7 +327,11 @@ def test_configured_address_mismatch_fails() -> None:
 
 def test_configured_address_missing_fails() -> None:
     spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "settings")
-    result, notes, _ = classify(spec, "state=READY initialized=1 online=1 timeout=25\nmode=single\n")
+    result, notes, _ = classify(
+        spec,
+        "=== Config ===\n  Initialized: true\n  State: READY\n"
+        "  Mode: SINGLE_SHOT\n",
+    )
     assert result == hil.RESULT_FAIL
     assert "configured I2C address not parsed" in notes
 
@@ -476,23 +484,6 @@ def test_status_restore_snapshot_parses() -> None:
     assert result == hil.RESULT_PASS, notes
     assert parsed["status_restore"]["restored"] == 1
     assert parsed["status_restore_statuses"]["statusReadStatus"]["kind"] == "OK"
-
-
-def test_status_restore_boolean_snapshot_parses() -> None:
-    spec = next(item for item in hil.DEFAULT_COMMAND_SEQUENCE if item.command == "status_restore confirm")
-    text = (
-        "status_restore:\n"
-        "result: OK code=0 detail=0 msg=\n"
-        "initialMode=periodic finalMode=periodic modeInterrupted=true statusValid=1 restored=true\n"
-        "stopStatus: OK code=0 detail=0 msg=\n"
-        "statusReadStatus: OK code=0 detail=0 msg=\n"
-        "restoreStatus: OK code=0 detail=0 msg=\n"
-    )
-    result, notes, parsed = classify(spec, text)
-    assert result == hil.RESULT_PASS, notes
-    assert parsed["status_restore"]["modeInterrupted"] == 1
-    assert parsed["status_restore"]["statusValid"] == 1
-    assert parsed["status_restore"]["restored"] == 1
 
 
 def test_missing_status_restore_snapshot_fails() -> None:
@@ -989,7 +980,7 @@ def test_health_commands_wait_for_prompt_before_completion() -> None:
     spec = hil.CommandSpec(
         "settings",
         "config snapshot",
-        expected_any=("=== Config ===", "state=", "mode="),
+        expected_any=("=== Config ===",),
         validators=("driver_ready", "configured_address"),
         timeout_s=1.0,
     )
@@ -1011,7 +1002,7 @@ def test_health_command_accepts_complete_validators_without_prompt() -> None:
     spec = hil.CommandSpec(
         "drv",
         "health snapshot",
-        expected_any=("Driver Health", "state=", "online="),
+        expected_any=("Driver Health",),
         validators=("driver_ready", "zero_failures"),
         timeout_s=1.0,
     )
@@ -1283,7 +1274,6 @@ def test_raw_command_words_cannot_bypass_feature_specific_opt_ins() -> None:
         "--include-heater",
     )
     assert specs[0].recovery_command == "heater off"
-    assert "command read: OK" in specs[0].expected_any
     assert "Command 0x" in specs[0].expected_any
 
 

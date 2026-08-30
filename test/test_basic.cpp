@@ -361,17 +361,20 @@ void test_command_delay_guard() {
   TEST_ASSERT_EQUAL(Err::TIMEOUT, st.code);
 }
 
-void test_command_delay_allows_long_idle_after_microsecond_half_range() {
+void test_command_delay_uses_milliseconds_after_full_microsecond_wrap() {
   SHT3xDevice device;
   device._initialized = true;
   device._config.commandDelayMs = 1;
   device._config.i2cTimeoutMs = 1;
   installTimingHooks(device);
-  gMicros = 0x80001000U;
+  // The microsecond clock appears only 500 us past the previous command after
+  // a full wrap, but the millisecond companion proves a long idle interval.
+  gMicros = 0x000000F4U;
   gMicrosStep = 0;
-  gMillis = 0;
+  gMillis = 5000U;
   gMillisStep = 0;
-  device._lastCommandUs = 0;
+  device._lastCommandUs = 0xFFFFFF00U;
+  device._lastCommandMs = 100U;
   device._lastCommandValid = true;
 
   Status st = device._ensureCommandDelay();
@@ -765,6 +768,7 @@ static Status frameWrite(uint8_t addr, const uint8_t* data, size_t len,
       ctx->lastAlertWriteCommand = command;
       ctx->lastAlertWriteValue = static_cast<uint16_t>((data[2] << 8) | data[3]);
       ctx->lastAlertWriteCrc = data[4];
+      ctx->alertReadRaw = ctx->lastAlertWriteValue;
     }
   }
   if (ctx->failCommand != 0 && command == ctx->failCommand) {
@@ -1061,6 +1065,19 @@ void test_write_alert_limit_uses_app_note_encoder_vectors() {
         static_cast<uint8_t>(ctx.lastAlertWriteValue & 0xFF),
     };
     TEST_ASSERT_EQUAL_HEX8(SHT3xDevice::_crc8(data, 2), ctx.lastAlertWriteCrc);
+
+    AlertLimit readBack;
+    const Status readSt = device.readAlertLimit(vector.kind, readBack);
+    TEST_ASSERT_TRUE_MESSAGE(readSt.ok(), readSt.msg);
+    TEST_ASSERT_EQUAL_HEX16(vector.word, readBack.raw);
+    float expectedTemperatureC = 0.0f;
+    float expectedHumidityPct = 0.0f;
+    SHT3xDevice::decodeAlertLimit(vector.word, expectedTemperatureC,
+                                 expectedHumidityPct);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, expectedTemperatureC,
+                             readBack.temperatureC);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, expectedHumidityPct,
+                             readBack.humidityPct);
   }
 }
 
@@ -1502,6 +1519,30 @@ void test_single_shot_pending_blocks_unrelated_commands() {
 
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.writes);
   TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+}
+
+void test_probe_rejects_periodic_and_art_without_i2c() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Status st = device.begin(makeFrameConfig(ctx));
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  st = device.startPeriodic(PeriodicRate::MPS_1,
+                            Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  uint32_t callbacks = ctx.writes + ctx.reads;
+  st = device.probe();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_UINT32(callbacks, ctx.writes + ctx.reads);
+
+  st = device.stopPeriodic();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startArt();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  callbacks = ctx.writes + ctx.reads;
+  st = device.probe();
+  TEST_ASSERT_EQUAL(Err::BUSY, st.code);
+  TEST_ASSERT_EQUAL_UINT32(callbacks, ctx.writes + ctx.reads);
 }
 
 void test_low_level_command_helpers_write_and_read() {
@@ -1953,6 +1994,17 @@ void test_periodic_fetch_expected_nack_no_failure() {
   TEST_ASSERT_TRUE(device._notReadyStartValid);
   TEST_ASSERT_EQUAL_UINT32(1u, device._notReadyCount);
   TEST_ASSERT_EQUAL_UINT8(0u, device.consecutiveFailures());
+  const uint32_t retryBaseMs = ctx.nowMs;
+  const uint32_t fetchMarginMs = device._periodicFetchMarginMs();
+  TEST_ASSERT_EQUAL_UINT32(retryBaseMs + fetchMarginMs,
+                           device._measurementReadyMs);
+  TEST_ASSERT_NOT_EQUAL(retryBaseMs + device._periodMs + fetchMarginMs,
+                        device._measurementReadyMs);
+  device._config.commandDelayMs =
+      static_cast<uint16_t>(fetchMarginMs + 1U);
+  TEST_ASSERT_EQUAL_UINT32(retryBaseMs + fetchMarginMs + 1U,
+                           device._periodicRetryMs(retryBaseMs));
+  device._config.commandDelayMs = cfg.commandDelayMs;
 
   ctx.readStatus = Status::Ok();
   ctx.readAdvanceMs = 5;
@@ -2089,15 +2141,19 @@ void test_wire_adapter_initialization_reports_begin_failure() {
 
 void test_i2c_scanner_restores_timeout() {
   Wire.setTimeOut(77);
+  Wire._setAckAddress(0x44U);
 
   TEST_ASSERT_TRUE(i2c_scanner::checkAddress(Wire, 0x44, 12));
+  TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
+
+  TEST_ASSERT_FALSE(i2c_scanner::checkAddress(Wire, 0x45, 12));
   TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
 
   TEST_ASSERT_FALSE(i2c_scanner::checkAddress(Wire, 0x07, 12));
   TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
 
   const int count = i2c_scanner::scan(Wire, 14);
-  TEST_ASSERT_EQUAL(112, count);
+  TEST_ASSERT_EQUAL(1, count);
   TEST_ASSERT_EQUAL_UINT32(77u, Wire.getTimeOut());
 }
 
@@ -2145,6 +2201,27 @@ void test_heater_readback_mismatch_is_one_protocol_health_failure() {
   TEST_ASSERT_EQUAL_UINT32(3u, device.transportSuccess());
   TEST_ASSERT_EQUAL(DriverState::DEGRADED, device.state());
   TEST_ASSERT_TRUE(device.hardwareStateValid());
+}
+
+void test_read_heater_status_observes_commanded_state() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Status st = device.begin(makeFrameConfig(ctx));
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  st = device.setHeater(true);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  bool enabled = false;
+  st = device.readHeaterStatus(enabled);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(enabled);
+
+  st = device.setHeater(false);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  enabled = true;
+  st = device.readHeaterStatus(enabled);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_FALSE(enabled);
 }
 
 void test_write_alert_limit_rejects_nan() {
@@ -3792,6 +3869,38 @@ void test_job_deadlines_before_work_inside_callback_and_across_wrap() {
     TEST_ASSERT_EQUAL_HEX16(0xAAAA, afterLateRead.rawTemperature);
     TEST_ASSERT_EQUAL_HEX16(0xBBBB, afterLateRead.rawHumidity);
   }
+}
+
+void test_ensure_idle_status_read_admitted_before_deadline_is_retained() {
+  PreciseTimingTransport ctx;
+  ctx.nowMs = 100u;
+  ctx.nowUs = 100000u;
+  ctx.readAdvanceMs = 2u;
+  ctx.readAdvanceUs = 2000u;
+  SHT3xDevice device;
+  Status st = device.bind(makePreciseTimingConfig(ctx));
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+
+  JobRequest request;
+  request.requestId = 416u;
+  request.hasDeadline = true;
+  request.deadlineMs = 105u;
+  st = device.requestEnsureIdle(request);
+  TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
+
+  PollJobResult result;
+  st = runEnsureIdleToStatusResult(device, ctx, result);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_TRUE(result.terminal);
+  TEST_ASSERT_EQUAL_UINT32(416u, result.requestId);
+  TEST_ASSERT_EQUAL(JobPhase::ENSURE_STATUS_READ, result.phase);
+  TEST_ASSERT_EQUAL(JobOutcome::SUCCEEDED, result.outcome);
+  TEST_ASSERT_EQUAL_UINT8(1u, result.instructionsUsed);
+  TEST_ASSERT_TRUE(SHT3xDevice::_timeElapsed(ctx.nowMs, request.deadlineMs));
+  TEST_ASSERT_TRUE(device.hardwareStateValid());
+  TEST_ASSERT_EQUAL_UINT32(3u, ctx.writes);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
+  TEST_ASSERT_EQUAL_UINT32(1u, device.totalSuccess());
 }
 
 void test_periodic_not_ready_callback_crossing_deadline_terminates_once() {
@@ -5538,9 +5647,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_alert_limit_quantized_roundtrip_edges);
   RUN_TEST(test_time_elapsed_wrap);
   RUN_TEST(test_command_delay_guard);
-  RUN_TEST(test_command_delay_allows_long_idle_after_microsecond_half_range);
+  RUN_TEST(test_command_delay_uses_milliseconds_after_full_microsecond_wrap);
   RUN_TEST(test_begin_rejects_oversized_timing_config);
   RUN_TEST(test_single_shot_pending_blocks_unrelated_commands);
+  RUN_TEST(test_probe_rejects_periodic_and_art_without_i2c);
   RUN_TEST(test_low_level_command_helpers_write_and_read);
   RUN_TEST(test_low_level_command_helpers_map_expected_nack);
   RUN_TEST(test_low_level_command_helpers_block_pending_measurement);
@@ -5560,6 +5670,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_i2c_scanner_restores_timeout);
   RUN_TEST(test_cache_updates_only_on_success);
   RUN_TEST(test_heater_readback_mismatch_is_one_protocol_health_failure);
+  RUN_TEST(test_read_heater_status_observes_commanded_state);
   RUN_TEST(test_write_alert_limit_rejects_nan);
   RUN_TEST(test_reset_to_defaults_clears_cache);
   RUN_TEST(test_reset_and_restore_applies_cached_settings);
@@ -5599,6 +5710,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_cancel_before_and_after_command_is_zero_i2c_and_preserves_sample);
   RUN_TEST(test_cancel_periodic_read_is_zero_i2c_and_preserves_cached_sample);
   RUN_TEST(test_job_deadlines_before_work_inside_callback_and_across_wrap);
+  RUN_TEST(test_ensure_idle_status_read_admitted_before_deadline_is_retained);
   RUN_TEST(test_periodic_not_ready_callback_crossing_deadline_terminates_once);
   RUN_TEST(test_request_ensure_idle_is_staged_and_one_callback_bounded);
   RUN_TEST(test_ensure_idle_stage_failures_report_phase_and_effect);

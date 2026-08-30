@@ -110,18 +110,18 @@ def version_step() -> CommandSpec:
 DEFAULT_COMMAND_SEQUENCE: tuple[CommandSpec, ...] = (
     version_step(),
     CommandSpec("help", "Capture CLI command surface.", expected_any=("SHT3x CLI Help",), completion=("selftest",)),
-    CommandSpec("scan", "I2C address ACK scan.", expected_any=("0x44", "0x45", "Scan complete", "scan:", "found 0x"), validators=("expected_address",), notes="ACK alone is not chip identity."),
-    CommandSpec("probe", "Driver probe using SHT3x status-frame path.", expected_any=("Status: OK", "probe: OK", "probe: OK code=0"), failures=("DEVICE_NOT_FOUND", "I2C_NACK_ADDR", "I2C_TIMEOUT")),
-    CommandSpec("settings", "Record configuration and state.", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready", "configured_address")),
-    CommandSpec("drv", "Record health and last-error state.", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready",)),
-    CommandSpec("status", "Read parsed status bits without clearing them.", expected_any=("status: raw=0x", "raw=0x"), validators=("status_word",)),
-    CommandSpec("status_raw", "Read raw status word.", expected_any=("Status raw:", "status=0x"), validators=("status_word",)),
+    CommandSpec("scan", "I2C address ACK scan.", expected_any=("0x44", "0x45", "Scan complete"), validators=("expected_address",), notes="ACK alone is not chip identity."),
+    CommandSpec("probe", "Driver probe using SHT3x status-frame path.", expected_any=("Status: OK",), failures=("DEVICE_NOT_FOUND", "I2C_NACK_ADDR", "I2C_TIMEOUT")),
+    CommandSpec("settings", "Record configuration and state.", expected_any=("=== Config ===",), validators=("driver_ready", "configured_address")),
+    CommandSpec("drv", "Record health and last-error state.", expected_any=("Driver Health",), validators=("driver_ready",)),
+    CommandSpec("status", "Read parsed status bits without clearing them.", expected_any=("status: raw=0x",), validators=("status_word",)),
+    CommandSpec("status_raw", "Read raw status word.", expected_any=("Status raw:",), validators=("status_word",)),
     CommandSpec("xfer_reset", "Reset example-owned transfer counters.", expected_any=("xfer_reset: OK",)),
-    CommandSpec("request", "Schedule a measurement with zero I2C.", expected_any=("request: IN_PROGRESS", "job scheduled")),
-    CommandSpec("job current", "Inspect active job progress with zero I2C.", expected_any=("job current:", "job active=1", "job active=1 terminal=0")),
+    CommandSpec("request", "Schedule a measurement with zero I2C.", expected_any=("request: IN_PROGRESS",)),
+    CommandSpec("job current", "Inspect active job progress with zero I2C.", expected_any=("job current:",)),
     CommandSpec("xfer_assert 0 0 0", "Prove request and progress inspection performed zero transfers.", expected_any=("xfer_assert: PASS",)),
-    CommandSpec("job cancel", "Cancel the active job locally with zero I2C.", expected_any=("result:", "job_cancel", "cancel:")),
-    CommandSpec("result", "Read retained cancellation provenance.", expected_any=("result:", "job last available=1", "job_last")),
+    CommandSpec("job cancel", "Cancel the active job locally with zero I2C.", expected_any=("job cancel:",)),
+    CommandSpec("result", "Read retained cancellation provenance.", expected_any=("result:",)),
     CommandSpec("xfer_assert 0 0 0", "Prove cancellation and terminal-result inspection performed zero transfers.", expected_any=("xfer_assert: PASS",)),
     CommandSpec("single low", "Run low-repeatability no-stretch measurement.", expected_any=("Temp:",), validators=("measurement_plausible",), timeout_s=12.0, failures=("CRC_MISMATCH", "MEASUREMENT_NOT_READY")),
     CommandSpec("raw", "Read cached raw sample.", expected_any=("Raw:",), validators=("raw_sample",)),
@@ -143,38 +143,38 @@ DEFAULT_COMMAND_SEQUENCE: tuple[CommandSpec, ...] = (
     CommandSpec("alert decode 0x3869", "Decode vendor alert low-clear vector.", expected_any=("Alert decoded:",), validators=("alert_decoded",), expected_temperature_c=-9.0, expected_humidity_pct=22.0),
     CommandSpec("alert encode -10 20", "Encode vendor alert low-set vector.", expected_any=("Alert encoded:",), validators=("alert_encoded",), expected_encoded="0x3466"),
     CommandSpec("alert decode 0x3466", "Decode vendor alert low-set vector.", expected_any=("Alert decoded:",), validators=("alert_decoded",), expected_temperature_c=-10.0, expected_humidity_pct=20.0),
-    CommandSpec("periodic start 0.5 high", "Start volatile 0.5 mps periodic acquisition.", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop"),
+    CommandSpec("periodic start 0.5 high", "Start volatile 0.5 mps periodic acquisition.", expected_any=("periodic start: OK",), recovery_command="periodic stop"),
     CommandSpec("periodic fetch", "Fetch one 0.5 mps periodic sample.", expected_any=("Temp:",), validators=("measurement_plausible",), pre_delay_s=2.6, timeout_s=14.0),
-    CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
-    CommandSpec("periodic start 1 high", "Start volatile 1 mps periodic acquisition.", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop"),
-    CommandSpec("status_restore confirm", "Exercise readStatusWithModeRestore() while periodic mode is active.", expected=("status_restore:", "statusReadStatus"), expected_any=("restored=1", "restored=true", "restored=yes", "restored=on"), validators=("status_restore", "status_restore_active"), timeout_s=12.0, recovery_command="periodic stop"),
+    CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK",)),
+    CommandSpec("periodic start 1 high", "Start volatile 1 mps periodic acquisition.", expected_any=("periodic start: OK",), recovery_command="periodic stop"),
+    CommandSpec("status_restore confirm", "Exercise readStatusWithModeRestore() while periodic mode is active.", expected=("status_restore:", "statusReadStatus"), expected_any=("restored=1",), validators=("status_restore", "status_restore_active"), timeout_s=12.0, recovery_command="periodic stop"),
     CommandSpec("periodic fetch", "Fetch one 1 mps periodic sample.", expected_any=("Temp:",), validators=("measurement_plausible",), pre_delay_s=1.4, timeout_s=12.0),
-    CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
-    CommandSpec("periodic start 2 medium", "Start volatile 2 mps periodic acquisition.", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), recovery_command="periodic stop"),
+    CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK",)),
+    CommandSpec("periodic start 2 medium", "Start volatile 2 mps periodic acquisition.", expected_any=("periodic start: OK",), recovery_command="periodic stop"),
     CommandSpec("periodic fetch", "Fetch one 2 mps periodic sample.", expected_any=("Temp:",), validators=("measurement_plausible",), pre_delay_s=0.8, timeout_s=12.0),
-    CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
-    CommandSpec("art start", "Start ART mode.", expected_any=("art start: OK", "start_art: OK", "Status: OK", "art start: OK code=0"), recovery_command="art stop", unsupported_ok=True),
+    CommandSpec("periodic stop", "Stop periodic acquisition.", expected_any=("periodic stop: OK",)),
+    CommandSpec("art start", "Start ART mode.", expected_any=("art start: OK",), recovery_command="art stop", unsupported_ok=True),
     CommandSpec("art fetch", "Fetch one ART sample.", expected_any=("Temp:",), validators=("measurement_plausible",), pre_delay_s=1.0, timeout_s=12.0, unsupported_ok=True),
-    CommandSpec("art stop", "Stop ART mode.", expected_any=("art stop: OK", "stop_periodic: OK", "Status: OK", "art stop: OK code=0"), unsupported_ok=True),
-    CommandSpec("drv", "Final health snapshot.", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
+    CommandSpec("art stop", "Stop ART mode.", expected_any=("art stop: OK",), unsupported_ok=True),
+    CommandSpec("drv", "Final health snapshot.", expected_any=("Driver Health",), validators=("driver_ready", "zero_failures")),
 )
 
 
 def destructive_commands(include_bus_wide_reset: bool) -> list[CommandSpec]:
     specs = [
-        CommandSpec("selftest confirm", "Run CLI selftest.", group="destructive", expected_any=("Selftest result:", "selftest: pass="), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=25.0, notes="The shared selftest performs softReset()."),
-        CommandSpec("recover confirm", "Manual recovery attempt.", group="destructive", expected_any=("recover: OK", "Status: OK"), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0),
-        CommandSpec("status", "Read status before clear_status.", group="destructive", expected_any=("status: raw=0x", "raw=0x"), validators=("status_word",), requires_opt_in="--include-destructive", destructive=True),
-        CommandSpec("clear_status confirm", "Clear status flags.", group="destructive", expected_any=("Status: OK", "clearstatus: OK", "clearstatus: OK code=0"), requires_opt_in="--include-destructive", destructive=True),
-        CommandSpec("status", "Read status after clear_status.", group="destructive", expected_any=("status: raw=0x", "raw=0x"), validators=("status_word",), requires_opt_in="--include-destructive", destructive=True),
-        CommandSpec("reset confirm", "Soft reset sensor.", group="destructive", expected_any=("Status: OK", "reset: OK", "reset: OK code=0"), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0),
-        CommandSpec("restore confirm", "Reset sensor and restore cached settings.", group="destructive", expected_any=("Status: OK", "restore: OK", "restore: OK code=0"), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0),
-        CommandSpec("iface_reset confirm", "Run application-provided interface reset callback.", group="destructive", expected_any=("Status: OK", "iface_reset: OK", "iface_reset: OK code=0"), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0, unsupported_ok=True),
+        CommandSpec("selftest confirm", "Run CLI selftest.", group="destructive", expected_any=("Selftest result:",), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=25.0, notes="The shared selftest performs softReset()."),
+        CommandSpec("recover confirm", "Manual recovery attempt.", group="destructive", expected_any=("recover: OK",), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0),
+        CommandSpec("status", "Read status before clear_status.", group="destructive", expected_any=("status: raw=0x",), validators=("status_word",), requires_opt_in="--include-destructive", destructive=True),
+        CommandSpec("clear_status confirm", "Clear status flags.", group="destructive", expected_any=("Status: OK",), requires_opt_in="--include-destructive", destructive=True),
+        CommandSpec("status", "Read status after clear_status.", group="destructive", expected_any=("status: raw=0x",), validators=("status_word",), requires_opt_in="--include-destructive", destructive=True),
+        CommandSpec("reset confirm", "Soft reset sensor.", group="destructive", expected_any=("Status: OK",), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0),
+        CommandSpec("restore confirm", "Reset sensor and restore cached settings.", group="destructive", expected_any=("Status: OK",), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0),
+        CommandSpec("iface_reset confirm", "Run application-provided interface reset callback.", group="destructive", expected_any=("Status: OK",), requires_opt_in="--include-destructive", destructive=True, recovery_command="settings", timeout_s=20.0, unsupported_ok=True),
     ]
     if include_bus_wide_reset:
         specs.extend((
             CommandSpec("greset arm", "Arm one general-call reset without I2C.", group="bus-wide-reset", expected_any=("greset armed=1",), requires_opt_in="--include-bus-wide-reset", destructive=True, recovery_command="greset disarm", notes="Affects all devices that support general-call reset if the next step is confirmed."),
-            CommandSpec("greset confirm", "Consume the arm and attempt the bus-wide reset.", group="bus-wide-reset", expected_any=("Status: OK", "greset: OK", "greset: OK code=0"), requires_opt_in="--include-bus-wide-reset", destructive=True, recovery_command="greset disarm", timeout_s=20.0, unsupported_ok=True, notes="Examples keep general-call transport disabled by default; enabling it affects all compatible devices."),
+            CommandSpec("greset confirm", "Consume the arm and attempt the bus-wide reset.", group="bus-wide-reset", expected_any=("Status: OK",), requires_opt_in="--include-bus-wide-reset", destructive=True, recovery_command="greset disarm", timeout_s=20.0, unsupported_ok=True, notes="Examples keep general-call transport disabled by default; enabling it affects all compatible devices."),
         ))
     return specs
 
@@ -190,8 +190,8 @@ def soak_commands(count: int, duration_s: float = 0.0) -> list[CommandSpec]:
         CommandSpec("stress 10", "Short stress run.", group="soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=90.0),
         CommandSpec(f"stress {count}", "Configured bounded stress run.", group="soak", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=max(90.0, float(count) * 3.0)),
         CommandSpec(f"stress_mix {mix_count}", "Configured mixed-operation stress run.", group="soak", expected_any=STRESS_MIX_EXPECTED, validators=STRESS_VALIDATORS, requires_opt_in="--include-soak", timeout_s=max(90.0, float(mix_count) * 2.0)),
-        CommandSpec("drv", "Final health after stress.", group="soak", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures"), requires_opt_in="--include-soak"),
-        CommandSpec("settings", "Final settings after stress.", group="soak", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready",), requires_opt_in="--include-soak"),
+        CommandSpec("drv", "Final health after stress.", group="soak", expected_any=("Driver Health",), validators=("driver_ready", "zero_failures"), requires_opt_in="--include-soak"),
+        CommandSpec("settings", "Final settings after stress.", group="soak", expected_any=("=== Config ===",), validators=("driver_ready",), requires_opt_in="--include-soak"),
     ]
 
 
@@ -212,12 +212,12 @@ def i2c_soak_command(duration_s: float) -> CommandSpec:
 
 def clock_stretch_commands() -> list[CommandSpec]:
     return [
-        CommandSpec("mode single", "Force single-shot mode.", group="clock-stretch", expected_any=("Status: OK", "mode: OK", "mode: OK code=0"), requires_opt_in="--include-clock-stretch", unsupported_ok=True),
-        CommandSpec("stretch 1", "Enable clock stretching in driver settings.", group="clock-stretch", expected_any=("Status: OK", "stretch: OK", "stretch: OK code=0"), requires_opt_in="--include-clock-stretch", unsupported_ok=True),
-        CommandSpec("meastime", "Record expected measurement time.", group="clock-stretch", expected_any=("Estimated measurement time:", "measurement_time_ms="), requires_opt_in="--include-clock-stretch"),
+        CommandSpec("mode single", "Force single-shot mode.", group="clock-stretch", expected_any=("Status: OK",), requires_opt_in="--include-clock-stretch", unsupported_ok=True),
+        CommandSpec("stretch 1", "Enable clock stretching in driver settings.", group="clock-stretch", expected_any=("Status: OK",), requires_opt_in="--include-clock-stretch", unsupported_ok=True),
+        CommandSpec("meastime", "Record expected measurement time.", group="clock-stretch", expected_any=("Estimated measurement time:",), requires_opt_in="--include-clock-stretch"),
         CommandSpec("read", "Run stretch-enabled single-shot read using current settings.", group="clock-stretch", expected_any=("Temp:", "request: IN_PROGRESS"), validators=("measurement_plausible",), requires_opt_in="--include-clock-stretch", timeout_s=14.0, unsupported_ok=True),
         CommandSpec("serial stretch", "Read serial/EIC with clock stretching.", group="clock-stretch", expected_any=("Serial:",), validators=("serial",), requires_opt_in="--include-clock-stretch", timeout_s=14.0, unsupported_ok=True),
-        CommandSpec("stretch 0", "Restore no-stretch mode.", group="clock-stretch", expected_any=("Status: OK", "stretch: OK", "stretch: OK code=0"), requires_opt_in="--include-clock-stretch"),
+        CommandSpec("stretch 0", "Restore no-stretch mode.", group="clock-stretch", expected_any=("Status: OK",), requires_opt_in="--include-clock-stretch"),
         CommandSpec("single high", "Verify no-stretch single-shot path after restore.", group="clock-stretch", expected_any=("Temp:",), validators=("measurement_plausible",), requires_opt_in="--include-clock-stretch", timeout_s=12.0),
         CommandSpec("serial nostretch", "Verify no-stretch serial path after restore.", group="clock-stretch", expected_any=("Serial:",), validators=("serial",), requires_opt_in="--include-clock-stretch"),
     ]
@@ -228,37 +228,37 @@ def alert_write_commands() -> list[CommandSpec]:
         CommandSpec("alert show", "Record alert limits before write test.", group="alert-write", expected_any=("HIGH_SET",), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert encode 60 80", "Encode high-set value.", group="alert-write", expected_any=("Alert encoded:",), validators=("alert_encoded",), expected_encoded="0xCD33", requires_opt_in="--include-alert-write"),
         CommandSpec("alert decode 0xCD33", "Decode high-set value.", group="alert-write", expected_any=("Alert decoded:",), validators=("alert_decoded",), expected_temperature_c=60.0, expected_humidity_pct=80.0, requires_opt_in="--include-alert-write"),
-        CommandSpec("alert set hs 60 80 confirm", "Write high-set alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
+        CommandSpec("alert set hs 60 80 confirm", "Write high-set alert limit.", group="alert-write", expected_any=("Status: OK",), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
         CommandSpec("alert read hs", "Read high-set alert limit.", group="alert-write", expected_any=("Alert HIGH_SET:",), validators=("alert_read",), expected_raw="0xCD33", requires_opt_in="--include-alert-write", timeout_s=12.0),
-        CommandSpec("alert set hc 58 79 confirm", "Write high-clear alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
+        CommandSpec("alert set hc 58 79 confirm", "Write high-clear alert limit.", group="alert-write", expected_any=("Status: OK",), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
         CommandSpec("alert read hc", "Read high-clear alert limit.", group="alert-write", expected_any=("Alert HIGH_CLEAR:",), validators=("alert_read",), expected_raw="0xC92D", requires_opt_in="--include-alert-write", timeout_s=12.0),
-        CommandSpec("alert set lc -9 22 confirm", "Write low-clear alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
+        CommandSpec("alert set lc -9 22 confirm", "Write low-clear alert limit.", group="alert-write", expected_any=("Status: OK",), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
         CommandSpec("alert read lc", "Read low-clear alert limit.", group="alert-write", expected_any=("Alert LOW_CLEAR:",), validators=("alert_read",), expected_raw="0x3869", requires_opt_in="--include-alert-write", timeout_s=12.0),
-        CommandSpec("alert set ls -10 20 confirm", "Write low-set alert limit.", group="alert-write", expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
+        CommandSpec("alert set ls -10 20 confirm", "Write low-set alert limit.", group="alert-write", expected_any=("Status: OK",), requires_opt_in="--include-alert-write", destructive=True, recovery_command="alert disable confirm", timeout_s=12.0),
         CommandSpec("alert read ls", "Read low-set alert limit.", group="alert-write", expected_any=("Alert LOW_SET:",), validators=("alert_read",), expected_raw="0x3466", requires_opt_in="--include-alert-write", timeout_s=12.0),
         CommandSpec("alert show", "Record alert limits after writes.", group="alert-write", expected_any=("HIGH_SET",), validators=("alert_read",), requires_opt_in="--include-alert-write", timeout_s=12.0),
-        CommandSpec("alert disable confirm", "Disable alerts as cleanup.", group="alert-write", expected_any=("Status: OK", "alert disable: OK", "alert disable: OK code=0"), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0, notes="Cleanup command; this still does not prove physical ALERT pin behavior."),
+        CommandSpec("alert disable confirm", "Disable alerts as cleanup.", group="alert-write", expected_any=("Status: OK",), requires_opt_in="--include-alert-write", destructive=True, timeout_s=12.0, notes="Cleanup command; this still does not prove physical ALERT pin behavior."),
         CommandSpec("alert show", "Verify alert cleanup state.", group="alert-write", expected_any=("HIGH_SET",), validators=("alert_read",), expected_alert_limits=(("HIGH_SET", "0x0000"), ("LOW_SET", "0xFFFF")), requires_opt_in="--include-alert-write", timeout_s=12.0),
     ]
 
 
 def heater_commands() -> list[CommandSpec]:
     return [
-        CommandSpec("heater on confirm", "Enable the heater briefly for command/status verification.", group="heater", expected_any=("Status: OK", "heater: OK", "heater: OK code=0"), requires_opt_in="--include-heater", destructive=True, recovery_command="heater off"),
+        CommandSpec("heater on confirm", "Enable the heater briefly for command/status verification.", group="heater", expected_any=("Status: OK",), requires_opt_in="--include-heater", destructive=True, recovery_command="heater off"),
         CommandSpec("heater status", "Verify the heater reports enabled.", group="heater", expected_any=("Heater:",), validators=("heater_on",), requires_opt_in="--include-heater"),
-        CommandSpec("heater off", "Disable the heater immediately after verification.", group="heater", expected_any=("Status: OK", "heater: OK", "heater: OK code=0"), requires_opt_in="--include-heater", destructive=True),
+        CommandSpec("heater off", "Disable the heater immediately after verification.", group="heater", expected_any=("Status: OK",), requires_opt_in="--include-heater", destructive=True),
         CommandSpec("heater status", "Verify heater cleanup.", group="heater", expected_any=("Heater:",), validators=("heater_off",), requires_opt_in="--include-heater"),
     ]
 
 
 def extra_periodic_commands() -> list[CommandSpec]:
     return [
-        CommandSpec("periodic start 4 high", "Start 4 mps periodic acquisition.", group="periodic-all", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), requires_opt_in="--include-all-periodic-rates", recovery_command="periodic stop"),
+        CommandSpec("periodic start 4 high", "Start 4 mps periodic acquisition.", group="periodic-all", expected_any=("periodic start: OK",), requires_opt_in="--include-all-periodic-rates", recovery_command="periodic stop"),
         CommandSpec("periodic fetch", "Fetch one 4 mps periodic sample.", group="periodic-all", expected_any=("Temp:",), validators=("measurement_plausible",), requires_opt_in="--include-all-periodic-rates", pre_delay_s=0.5, timeout_s=12.0),
-        CommandSpec("periodic stop", "Stop 4 mps periodic acquisition.", group="periodic-all", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0"), requires_opt_in="--include-all-periodic-rates"),
-        CommandSpec("periodic start 10 high", "Start 10 mps periodic acquisition.", group="periodic-all", expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"), requires_opt_in="--include-all-periodic-rates", recovery_command="periodic stop"),
+        CommandSpec("periodic stop", "Stop 4 mps periodic acquisition.", group="periodic-all", expected_any=("periodic stop: OK",), requires_opt_in="--include-all-periodic-rates"),
+        CommandSpec("periodic start 10 high", "Start 10 mps periodic acquisition.", group="periodic-all", expected_any=("periodic start: OK",), requires_opt_in="--include-all-periodic-rates", recovery_command="periodic stop"),
         CommandSpec("periodic fetch", "Fetch one 10 mps periodic sample.", group="periodic-all", expected_any=("Temp:",), validators=("measurement_plausible",), requires_opt_in="--include-all-periodic-rates", pre_delay_s=0.35, timeout_s=12.0),
-        CommandSpec("periodic stop", "Stop 10 mps periodic acquisition.", group="periodic-all", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0"), requires_opt_in="--include-all-periodic-rates"),
+        CommandSpec("periodic stop", "Stop 10 mps periodic acquisition.", group="periodic-all", expected_any=("periodic stop: OK",), requires_opt_in="--include-all-periodic-rates"),
     ]
 
 
@@ -268,7 +268,7 @@ def benchmark_commands(count: int) -> list[CommandSpec]:
     count = max(1, count)
     return [
         CommandSpec(f"stress {count}", "Sample-rate benchmark using bounded single-shot stress.", group="benchmark", expected_any=STRESS_EXPECTED, validators=STRESS_VALIDATORS, timeout_s=max(90.0, float(count) * 3.0)),
-        CommandSpec("drv", "Final health after benchmark.", group="benchmark", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
+        CommandSpec("drv", "Final health after benchmark.", group="benchmark", expected_any=("Driver Health",), validators=("driver_ready", "zero_failures")),
     ]
 
 
@@ -352,11 +352,6 @@ def timestamp() -> str:
 
 def iso_timestamp() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def parse_boolish(value: str) -> int:
-    text = value.strip().lower()
-    return 1 if text in ("1", "true", "yes", "on") else 0
 
 
 def command_count(command: str) -> int | None:
@@ -449,11 +444,12 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
     if match:
         rate = match.group(1)
         flag = "--include-all-periodic-rates" if rate in ("4", "10") else None
+        label = "periodic start" if normalized.startswith("periodic start ") else "start_periodic"
         return CommandSpec(
             command,
             f"Start volatile {rate} mps periodic acquisition from a custom plan.",
             group="periodic-all" if flag else "custom-periodic",
-            expected_any=("periodic start: OK", "start_periodic: OK", "Status: OK", "periodic start: OK code=0"),
+            expected_any=(f"{label}: OK",),
             requires_opt_in=flag,
             recovery_command="periodic stop",
             timeout_s=12.0,
@@ -464,7 +460,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Start ART mode from a custom plan.",
             group="custom-art",
-            expected_any=("art start: OK", "start_art: OK", "Status: OK", "art start: OK code=0"),
+            expected_any=("Status: OK",),
             recovery_command="art stop",
             unsupported_ok=True,
         )
@@ -473,7 +469,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Stop periodic or ART acquisition from a custom plan.",
             group="custom-periodic",
-            expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0"),
+            expected_any=("Status: OK",),
         )
 
     match = re.fullmatch(r"stress(?:_mix)? ([1-9][0-9]*)", normalized)
@@ -509,7 +505,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Custom heater state change.",
             group="heater",
-            expected_any=("Status: OK", "heater: OK", "heater: OK code=0"),
+            expected_any=("Status: OK",),
             requires_opt_in="--include-heater",
             destructive=True,
             recovery_command="heater off" if enabling else None,
@@ -521,7 +517,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Custom alert-limit write.",
             group="alert-write",
-            expected_any=("Status: OK", "alert write: OK", "alert write: OK code=0"),
+            expected_any=("Status: OK",),
             requires_opt_in="--include-alert-write",
             destructive=True,
             recovery_command="alert disable confirm",
@@ -533,18 +529,19 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Disable alert output from a custom plan.",
             group="alert-write",
-            expected_any=("Status: OK", "alert disable: OK", "alert disable: OK code=0"),
+            expected_any=("Status: OK",),
             requires_opt_in="--include-alert-write",
             destructive=True,
             timeout_s=12.0,
         )
 
     if re.fullmatch(r"command (?:write|write_data|read) .+ confirm", normalized):
+        expected = ("Command 0x",) if normalized.startswith("command read ") else ("Status: OK",)
         return CommandSpec(
             command,
             "Custom raw sensor command/read.",
             group="destructive",
-            expected_any=("Status: OK", "command: OK", "command write: OK", "command read: OK", "Command 0x"),
+            expected_any=expected,
             requires_opt_in="--include-destructive",
             destructive=True,
             recovery_command="settings",
@@ -557,7 +554,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Clear sensor status flags from a custom plan.",
             group="destructive",
-            expected_any=("Status: OK", "clearstatus: OK", "clearstatus: OK code=0"),
+            expected_any=("Status: OK",),
             requires_opt_in="--include-destructive",
             destructive=True,
         )
@@ -567,7 +564,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Reset command-mode defaults from a custom plan.",
             group="destructive",
-            expected_any=("Status: OK", "defaults: OK", "defaults: OK code=0"),
+            expected_any=("Status: OK",),
             requires_opt_in="--include-destructive",
             destructive=True,
             recovery_command="settings",
@@ -578,7 +575,7 @@ def parameterized_custom_policy(command: str) -> CommandSpec | None:
             command,
             "Select an opt-in high periodic rate from a custom plan.",
             group="periodic-all",
-            expected_any=("Status: OK", "rate: OK", "rate: OK code=0"),
+            expected_any=("Status: OK",),
             requires_opt_in="--include-all-periodic-rates",
             recovery_command="periodic stop",
         )
@@ -784,20 +781,20 @@ def recovery_spec_for(spec: CommandSpec) -> CommandSpec | None:
     expected_any: tuple[str, ...]
     validators: tuple[str, ...] = ()
     if command == "periodic stop":
-        expected_any = ("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")
+        expected_any = ("periodic stop: OK",)
     elif command == "art stop":
-        expected_any = ("art stop: OK", "stop_periodic: OK", "Status: OK", "art stop: OK code=0")
+        expected_any = ("art stop: OK",)
     elif command == "settings":
-        expected_any = ("=== Config ===", "state=", "mode=")
+        expected_any = ("=== Config ===",)
         validators = ("driver_ready",)
     elif command == "heater off":
-        expected_any = ("Status: OK", "heater: OK", "heater: OK code=0")
+        expected_any = ("Status: OK",)
     elif command == "alert disable confirm":
-        expected_any = ("Status: OK", "alert disable: OK", "alert disable: OK code=0")
+        expected_any = ("Status: OK",)
     elif command == "greset disarm":
         expected_any = ("greset armed=0",)
     else:
-        expected_any = ("Status: OK", f"{command}: OK", f"{command}: OK code=0")
+        expected_any = ("Status: OK",)
     return CommandSpec(
         command,
         f"Automatic cleanup after failed `{spec.command}`.",
@@ -1068,19 +1065,17 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
             parsed["alert_raw"] = f"0x{match.group(1).upper()}"
 
     if "status_restore:" in plain:
-        boolish = r"(?:\d|true|false|yes|no|on|off)"
         restore = re.search(
-            rf"initialMode=(\w+)\s+finalMode=(\w+)\s+modeInterrupted=({boolish})\s+statusValid=({boolish})\s+restored=({boolish})",
+            r"initialMode=(\w+)\s+finalMode=(\w+)\s+modeInterrupted=([01])\s+statusValid=([01])\s+restored=([01])",
             plain,
-            re.IGNORECASE,
         )
         if restore:
             parsed["status_restore"] = {
                 "initialMode": restore.group(1),
                 "finalMode": restore.group(2),
-                "modeInterrupted": parse_boolish(restore.group(3)),
-                "statusValid": parse_boolish(restore.group(4)),
-                "restored": parse_boolish(restore.group(5)),
+                "modeInterrupted": int(restore.group(3)),
+                "statusValid": int(restore.group(4)),
+                "restored": int(restore.group(5)),
             }
         for label in ("result", "stopStatus", "statusReadStatus", "restoreStatus"):
             match = re.search(rf"{label}:\s*(OK|ERR|IN_PROGRESS)\s+code=(\d+)", plain)
@@ -1629,33 +1624,33 @@ def duration_soak_marker(args: argparse.Namespace) -> CommandSpec:
 
 def final_cleanup_specs(args: argparse.Namespace) -> list[CommandSpec]:
     specs = [
-        CommandSpec("periodic stop", "Final stop of periodic or ART acquisition.", group="cleanup", expected_any=("periodic stop: OK", "stop_periodic: OK", "Status: OK", "periodic stop: OK code=0")),
+        CommandSpec("periodic stop", "Final stop of periodic or ART acquisition.", group="cleanup", expected_any=("periodic stop: OK",)),
     ]
     if args.include_bus_wide_reset:
         specs.append(CommandSpec("greset disarm", "Clear any unconsumed general-call reset arm.", group="cleanup", expected_any=("greset armed=0",), destructive=True))
     if args.include_heater:
         specs.extend(
             (
-                CommandSpec("heater off", "Final heater cleanup.", group="cleanup", expected_any=("Status: OK", "heater: OK", "heater: OK code=0"), destructive=True),
+                CommandSpec("heater off", "Final heater cleanup.", group="cleanup", expected_any=("Status: OK",), destructive=True),
                 CommandSpec("heater status", "Verify final heater state.", group="cleanup", expected_any=("Heater:",), validators=("heater_off",)),
             )
         )
     if args.include_alert_write:
         specs.extend(
             (
-                CommandSpec("alert disable confirm", "Final alert-limit cleanup.", group="cleanup", expected_any=("Status: OK", "alert disable: OK", "alert disable: OK code=0"), destructive=True, timeout_s=12.0),
+                CommandSpec("alert disable confirm", "Final alert-limit cleanup.", group="cleanup", expected_any=("Status: OK",), destructive=True, timeout_s=12.0),
                 CommandSpec("alert show", "Verify final alert-limit cleanup.", group="cleanup", expected_any=("HIGH_SET",), validators=("alert_read",), expected_alert_limits=(("HIGH_SET", "0x0000"), ("LOW_SET", "0xFFFF")), timeout_s=12.0),
             )
         )
     if args.include_destructive:
-        specs.append(CommandSpec("clear_status confirm", "Clear final sticky diagnostic flags.", group="cleanup", expected_any=("Status: OK", "clear_status: OK", "clear_status: OK code=0"), destructive=True))
+        specs.append(CommandSpec("clear_status confirm", "Clear final sticky diagnostic flags.", group="cleanup", expected_any=("Status: OK",), destructive=True))
     specs.extend(
         (
-            CommandSpec("mode single", "Restore single-shot mode.", group="cleanup", expected_any=("Status: OK", "mode: OK", "mode: OK code=0")),
-            CommandSpec("stretch 0", "Restore no-stretch operation.", group="cleanup", expected_any=("Status: OK", "stretch: OK", "stretch: OK code=0")),
-            CommandSpec("repeat high", "Restore high repeatability.", group="cleanup", expected_any=("Status: OK", "repeat: OK", "repeat: OK code=0")),
-            CommandSpec("drv", "Verify final driver health.", group="cleanup", expected_any=("Driver Health", "state=", "online="), validators=("driver_ready", "zero_failures")),
-            CommandSpec("settings", "Verify final deterministic settings.", group="cleanup", expected_any=("=== Config ===", "state=", "mode="), validators=("driver_ready", "settings_baseline")),
+            CommandSpec("mode single", "Restore single-shot mode.", group="cleanup", expected_any=("Status: OK",)),
+            CommandSpec("stretch 0", "Restore no-stretch operation.", group="cleanup", expected_any=("Status: OK",)),
+            CommandSpec("repeat high", "Restore high repeatability.", group="cleanup", expected_any=("Status: OK",)),
+            CommandSpec("drv", "Verify final driver health.", group="cleanup", expected_any=("Driver Health",), validators=("driver_ready", "zero_failures")),
+            CommandSpec("settings", "Verify final deterministic settings.", group="cleanup", expected_any=("=== Config ===",), validators=("driver_ready", "settings_baseline")),
         )
     )
     return [with_timeout(spec, args.timeout) for spec in specs]
