@@ -1,9 +1,9 @@
 /**
  * @file Sht3xCli.h
- * @brief Arduino bringup CLI command processor for SHT3x diagnostics.
+ * @brief Framework-neutral bringup CLI command processor for SHT3x diagnostics.
  *
- * NOT part of the library API. This is example/application glue; the ESP-IDF
- * example intentionally uses its own native fixed-buffer CLI.
+ * NOT part of the library API. This is example/application glue shared by the
+ * Arduino and native ESP-IDF examples.
  */
 
 #pragma once

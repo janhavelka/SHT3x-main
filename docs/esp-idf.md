@@ -1,9 +1,10 @@
 # SHT3x ESP-IDF Notes
 
-Last updated: 2026-08-05
+Last updated: 2026-08-30
 
-Scope: framework-neutral core component plus a native ESP-IDF diagnostic
-example. Arduino/PlatformIO support remains separate and intact.
+Scope: framework-neutral core component plus native ESP-IDF diagnostic glue
+around the shared framework-neutral example CLI. Arduino/PlatformIO transport
+and platform setup remain separate and intact.
 
 ## Current State
 
@@ -14,7 +15,9 @@ example. Arduino/PlatformIO support remains separate and intact.
 - Root `CMakeLists.txt` registers the core with `idf_component_register`.
 - `examples/idf/basic` uses the ESP-IDF 5.4+ `driver/i2c_master.h` API.
 - The ESP-IDF example owns the I2C bus/device handles, reset/bus-recovery GPIOs
-  when configured, timing hooks, and CLI loop.
+  when configured, timing hooks, input task, and CLI loop. Arduino and ESP-IDF
+  compile the same fixed-buffer `examples/common/Sht3xCli.cpp` command
+  processor behind their own platform hooks.
 - The ESP-IDF example is a diagnostic bring-up CLI, not a production task model.
 - Its CLI owns every cooperative request with a nonzero identity, validates
   active/terminal result structure and transfer budgets, retains exactly one
@@ -109,27 +112,32 @@ Example component:
 
 ```cmake
 idf_component_register(
-  SRCS "main.cpp" "IdfI2cTransport.cpp"
-  INCLUDE_DIRS "."
+  SRCS "main.cpp" "IdfI2cTransport.cpp" "../../../common/Sht3xCli.cpp"
+  INCLUDE_DIRS "." "../../../common" "../../../../include"
   REQUIRES esp_driver_i2c esp_driver_gpio esp_timer freertos vfs
 )
+
+target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 ```
 
-The example must not compile Arduino-only helpers from `examples/common/` into
-ESP-IDF targets.
+Only the framework-neutral CLI and transfer-statistics contract are shared.
+Arduino-only bus, scanner, board, and Wire helpers from `examples/common/` must
+not be compiled into ESP-IDF targets.
 
 ## Diagnostic CLI Contract
 
 `tools/sht3x_cli_contract.py` is the authoritative ordered command/help,
 execution, and safety contract for both native ESP-IDF and Arduino examples.
-The IDF implementation remains native and independent, while repository guards
-enforce exact help parity, strict whole-token parsing/arity, confirmation gates,
-runtime `framework=native-esp-idf`, target and IDF-version identity, and the
-same `request`/`job`/`result`/`cancel` and transfer-assertion surface.
+Both examples compile one framework-neutral command processor; their output,
+time/yield, scan, transfer, bus ownership, and task/loop hooks remain native.
+Repository guards enforce the shared help surface, strict whole-token
+parsing/arity, confirmation gates, runtime `framework=native-esp-idf`, target
+and IDF-version identity, and the same `request`/`job`/`result`/`cancel` and
+transfer-assertion surface.
 
 The example starts through `bind()` and a cooperative ensure-idle job; it does
 not call the synchronous compatibility `begin()` or discard results through
-`tick()`. General-call reset remains disabled by default because the example's
+`SHT3x::tick()`. General-call reset remains disabled by default because the example's
 single-address device handle is not a bus-wide general-call transport.
 
 ## Validation

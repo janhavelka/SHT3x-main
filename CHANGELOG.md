@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added separate saturating diagnostics for proven periodic read-header NACKs
+  and bounded no-data observations inferred from ambiguous transports.
+- Added focused native regressions for periodic no-data bounds/re-arming,
+  OFFLINE recovery, missed-output remainder accounting, serial and alert CRCs,
+  sample age, heater verification, and isolated test clocks/transports.
+- Added a finding-by-finding code-audit remediation report.
+
+### Changed
+- Made job deadlines admission boundaries checked once per poll: a callback
+  admitted before its deadline retains a valid late completion, while a later
+  poll starts no further I2C after expiry.
+- Made ART repeatability/rate setters update only the desired restore cache,
+  and made periodic no-data retries wait the fetch margin instead of one full
+  acquisition period.
+- Shared one framework-neutral fixed-buffer command processor between the
+  Arduino and native ESP-IDF diagnostic examples while keeping native platform,
+  transport, timing, and bus ownership hooks.
+- Widened package compatibility by removing unnecessary PlatformIO framework/
+  platform and ESP-IDF target allow-lists. Intentional export filters and the
+  packaged HIL tooling remain unchanged.
+
+### Fixed
+- Bounded periodic proven and inferred no-data streaks with an automatic
+  three-period-plus-margin window, re-armed the window after terminal jobs, and
+  prevented ordinary no-data observations from poisoning transport health.
+- Completed each tracked logical operation exactly once after protocol
+  validation. CRC/checksum and sensor command-rejection failures now affect
+  logical health without incrementing transport failures.
+- Required `begin()` to establish either Break or soft-reset reconciliation and
+  then read a clean CRC-valid status before reporting success.
+- Preserved verified acquisition state when measurement cancellation reports
+  only `RESULT_MAY_BE_PENDING`, and made recovery-backoff admission health-neutral.
+- Carried sub-period remainder in the estimate of sensor outputs not fetched,
+  guarded microsecond command-spacing wrap with a millisecond companion, and
+  added an unconditional 1 ms single-shot clock-quantization allowance.
+- Made `probe()` reject active periodic/ART acquisition, made heater changes
+  verify status and the applied heater bit before caching, and made
+  `resetToDefaults()` issue a physical soft reset before committing defaults.
+- Corrected local-state handling in `readSettings()` and measurement request
+  validation, validated transport-capability bits, accumulated partial native
+  ESP-IDF console input safely, documented diagnostic pull-up limits, and
+  removed unreachable general-reset dispatch.
+
 ## [1.8.0] - 2026-08-05
 
 ### Added

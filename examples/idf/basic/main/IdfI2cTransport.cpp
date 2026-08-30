@@ -6,10 +6,34 @@
 
 namespace {
 
-void incrementSaturated(uint32_t& value) {
-  if (value != std::numeric_limits<uint32_t>::max()) {
-    ++value;
+uint32_t saturatingAdd(uint32_t value, size_t increment) {
+  constexpr uint32_t MAX_VALUE = std::numeric_limits<uint32_t>::max();
+  if (increment > static_cast<size_t>(MAX_VALUE - value)) {
+    return MAX_VALUE;
   }
+  return value + static_cast<uint32_t>(increment);
+}
+
+SHT3x::Status recordTransfer(IdfI2cContext* ctx, SHT3x::Status status,
+                             bool readCallback, size_t txBytes,
+                             size_t rxBytes) {
+  if (ctx == nullptr) {
+    return status;
+  }
+  sht3x_example::TransferStats& stats = ctx->transferStats;
+  if (readCallback) {
+    stats.readCallbacks = saturatingAdd(stats.readCallbacks, 1U);
+  } else {
+    stats.writeCallbacks = saturatingAdd(stats.writeCallbacks, 1U);
+  }
+  if (status.ok()) {
+    stats.successes = saturatingAdd(stats.successes, 1U);
+  } else {
+    stats.failures = saturatingAdd(stats.failures, 1U);
+  }
+  stats.txBytes = saturatingAdd(stats.txBytes, txBytes);
+  stats.rxBytes = saturatingAdd(stats.rxBytes, rxBytes);
+  return status;
 }
 
 int timeoutToIdf(uint32_t timeoutMs) {
@@ -61,46 +85,55 @@ SHT3x::Status validate(uint8_t addr, const void* user) {
 
 SHT3x::Status idfI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                           uint32_t timeoutMs, void* user) {
+  IdfI2cContext* ctx = static_cast<IdfI2cContext*>(user);
   SHT3x::Status st = validate(addr, user);
   if (!st.ok()) {
-    return st;
+    return recordTransfer(ctx, st, false, 0U, 0U);
   }
   if (data == nullptr || len == 0U) {
-    return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
-                                "Invalid IDF I2C write buffer");
+    return recordTransfer(
+        ctx,
+        SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
+                             "Invalid IDF I2C write buffer"),
+        false, 0U, 0U);
   }
 
-  IdfI2cContext* ctx = static_cast<IdfI2cContext*>(user);
-  incrementSaturated(ctx->writeTransfers);
-  incrementSaturated(ctx->totalTransfers);
-  return mapEspError(i2c_master_transmit(ctx->device, data, len, timeoutToIdf(timeoutMs)),
-                     "IDF I2C write failed");
+  const SHT3x::Status result = mapEspError(
+      i2c_master_transmit(ctx->device, data, len, timeoutToIdf(timeoutMs)),
+      "IDF I2C write failed");
+  return recordTransfer(ctx, result, false, result.ok() ? len : 0U, 0U);
 }
 
 SHT3x::Status idfI2cWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                               uint8_t* rxData, size_t rxLen,
                               uint32_t timeoutMs, void* user) {
   (void)txData;
+  IdfI2cContext* ctx = static_cast<IdfI2cContext*>(user);
   SHT3x::Status st = validate(addr, user);
   if (!st.ok()) {
-    return st;
+    return recordTransfer(ctx, st, true, txLen, 0U);
   }
   if (txLen != 0U) {
-    return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
-                                "SHT3x IDF adapter requires receive-only reads");
+    return recordTransfer(
+        ctx,
+        SHT3x::Status::Error(
+            SHT3x::Err::INVALID_PARAM,
+            "SHT3x IDF adapter requires receive-only reads"),
+        true, txLen, 0U);
   }
   if (rxLen > 0U && rxData == nullptr) {
-    return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
-                                "Invalid IDF I2C read buffer");
+    return recordTransfer(
+        ctx,
+        SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM,
+                             "Invalid IDF I2C read buffer"),
+        true, txLen, 0U);
   }
   if (rxLen == 0U) {
-    return SHT3x::Status::Ok();
+    return recordTransfer(ctx, SHT3x::Status::Ok(), true, txLen, 0U);
   }
 
-  IdfI2cContext* ctx = static_cast<IdfI2cContext*>(user);
-  incrementSaturated(ctx->readTransfers);
-  incrementSaturated(ctx->totalTransfers);
-  return mapEspError(i2c_master_receive(ctx->device, rxData, rxLen,
-                                        timeoutToIdf(timeoutMs)),
-                     "IDF I2C read failed");
+  const SHT3x::Status result = mapEspError(
+      i2c_master_receive(ctx->device, rxData, rxLen, timeoutToIdf(timeoutMs)),
+      "IDF I2C read failed");
+  return recordTransfer(ctx, result, true, txLen, result.ok() ? rxLen : 0U);
 }

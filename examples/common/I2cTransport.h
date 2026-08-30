@@ -63,6 +63,9 @@ inline void resetTransferStats() {
 /// @return true if initialized
 inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
   // Example-only convenience. In a managed bus, the manager should own these settings.
+  // ESP32 Wire's internal pull-ups are suitable only for diagnostic bring-up;
+  // reliable 400 kHz designs need external pull-ups sized for voltage and bus
+  // capacitance.
   if (!Wire.begin(sda, scl, freqHz)) {
     return false;
   }

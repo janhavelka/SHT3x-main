@@ -89,6 +89,7 @@ def check_core_boundary() -> None:
 
 def main() -> int:
     shared_cli = ROOT / "examples" / "common" / "Sht3xCli.cpp"
+    shared_cli_h = ROOT / "examples" / "common" / "Sht3xCli.h"
     idf_main = ROOT / "examples" / "idf" / "basic" / "main" / "main.cpp"
     idf_project = ROOT / "examples" / "idf" / "basic" / "CMakeLists.txt"
     idf_cmake = ROOT / "examples" / "idf" / "basic" / "main" / "CMakeLists.txt"
@@ -99,6 +100,7 @@ def main() -> int:
 
     for path in (
         shared_cli,
+        shared_cli_h,
         idf_main,
         idf_project,
         idf_cmake,
@@ -111,6 +113,25 @@ def main() -> int:
             fail(f"missing required file: {path.as_posix()}")
 
     check_core_boundary()
+
+    shared_cli_text = shared_cli.read_text(encoding="utf-8", errors="replace")
+    shared_cli_header_text = shared_cli_h.read_text(
+        encoding="utf-8", errors="replace"
+    )
+    shared_cli_code = strip_non_code(shared_cli_text + shared_cli_header_text)
+    for token in (
+        "Arduino.h",
+        "Wire.h",
+        "TwoWire",
+        "Serial",
+        "ArduinoCompat",
+        "IdfArduinoCompat",
+        "driver/i2c_master.h",
+        "esp_timer.h",
+        "freertos/",
+    ):
+        if re.search(rf"\b{re.escape(token)}\b", shared_cli_code) is not None:
+            fail(f"shared CLI uses framework-specific token: {token}")
 
     contract_errors = validate_contract()
     if contract_errors:
@@ -138,43 +159,49 @@ def main() -> int:
 
     for needle in (
         'extern "C" void app_main(void)',
-        "handleCommandLine",
-        "char buffer[LINE_LEN]",
+        "Sht3xCli.h",
+        "sht3x_cli::setPlatform",
+        "sht3x_cli::config()",
+        "sht3x_cli::beginOwnerSafe()",
+        "sht3x_cli::processCommand",
+        "sht3x_cli::tick()",
+        "char chunk[INPUT_CHUNK_LEN]",
+        "char line[LINE_LEN]",
         "std::fgets",
+        "std::clearerr(stdin)",
+        "lineLength",
         "discardingOverflow",
-        "Input line too long; discarded",
-        "Input queue full; discarded",
+        "Input line too long",
+        "Input queue full",
         "CLI_QUEUE_SEND_TIMEOUT_MS",
         "i2c_master_probe",
         "driver/i2c_master.h",
         "esp_timer_get_time",
         "vTaskDelay",
-        "gConfig.nowMs",
-        "gConfig.nowUs",
-        "gConfig.cooperativeYield",
-        "requestMeasurement(request)",
-        "pollJob(nowMs(nullptr), budget, result)",
-        "cancelOwnedJob(SHT3x::CancelReason::DEADLINE_EXPIRED",
-        "framework=native-esp-idf",
-        "xfer_assert",
-        "quarantineOwnerInvariant",
-        "instructionLimit",
+        "config.nowMs",
+        "config.nowUs",
+        "config.cooperativeYield",
+        "native-esp-idf",
+        "external I2C pull-ups",
     ):
         require_text(idf_main, needle)
 
     idf_main_text = idf_main.read_text(encoding="utf-8", errors="replace")
-    if parse_help_rows(idf_main_text) != expected_help_rows():
-        fail("native ESP-IDF help rows drifted from tools/sht3x_cli_contract.py")
-    for forbidden in ("gDevice.tick(", "gDevice.begin(", "gDevice.requestMeasurement()"):
+    if parse_help_rows(shared_cli_text) != expected_help_rows():
+        fail("shared CLI help rows drifted from tools/sht3x_cli_contract.py")
+    for forbidden in (
+        "handleCommandLine",
+        "validCommandArity",
+        "printHelpItem",
+        "SHT3x::SHT3x gDevice",
+    ):
         if forbidden in idf_main_text:
-            fail(f"native ESP-IDF CLI retains identity-losing call: {forbidden}")
+            fail(f"native ESP-IDF glue duplicates shared CLI token: {forbidden}")
     if "xQueueSend(queue, &line, portMAX_DELAY)" in idf_main_text:
         fail("native ESP-IDF CLI input queue send must be timeout-bounded")
 
-    if "../../../common/Sht3xCli.cpp" in idf_cmake.read_text(
-        encoding="utf-8", errors="replace"
-    ):
-        fail("IDF example must not compile examples/common/Sht3xCli.cpp")
+    require_text(idf_cmake, '"../../../common/Sht3xCli.cpp"')
+    require_text(idf_cmake, '"../../../common"')
     for component in ("esp_driver_i2c", "esp_driver_gpio", "esp_timer", "freertos", "vfs"):
         require_text(idf_cmake, component)
     require_text(idf_cmake, '"../../../../include"')
@@ -185,8 +212,9 @@ def main() -> int:
     require_text(root_cmake, "idf_component_register")
     require_text(root_cmake, 'SRCS "src/SHT3x.cpp"')
     require_text(root_cmake, 'INCLUDE_DIRS "include"')
-    require_text(idf_manifest, "esp32s2")
-    require_text(idf_manifest, "esp32s3")
+    idf_manifest_text = idf_manifest.read_text(encoding="utf-8", errors="replace")
+    if re.search(r"(?m)^targets\s*:", idf_manifest_text) is not None:
+        fail("framework-neutral component manifest must not restrict ESP-IDF targets")
     require_text(idf_manifest, 'idf: ">=5.4"')
 
     for command in (
@@ -202,7 +230,6 @@ def main() -> int:
         "alert show",
     ):
         require_text(shared_cli, command)
-        require_text(idf_main, command)
 
     print("IDF example contract PASSED")
     return 0

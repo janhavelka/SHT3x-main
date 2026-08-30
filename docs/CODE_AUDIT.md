@@ -53,9 +53,9 @@ Arduino example.
 
 **What the code does.** In periodic mode, `pollJob()` only tolerates a
 not-ready Fetch when the transport declares
-`TransportCapability::READ_HEADER_NACK` ([src/SHT3x.cpp:692-699](src/SHT3x.cpp)).
+`TransportCapability::READ_HEADER_NACK` ([src/SHT3x.cpp:692-699](../src/SHT3x.cpp)).
 Without that flag, `_i2cWriteReadRaw()` rewrites `I2C_NACK_READ` to `I2C_ERROR`
-([src/SHT3x.cpp:2265-2272](src/SHT3x.cpp)), the read goes through
+([src/SHT3x.cpp:2265-2272](../src/SHT3x.cpp)), the read goes through
 `_updateHealth()` as a completed logical failure, and `pollJob()` terminates the
 job with `recordFailure()`.
 
@@ -133,10 +133,10 @@ Findings 2 and 3 are fixed by the same block. Do all three together.
 **Severity: High.**
 
 **What the code does.** The not-ready branch never terminates the job; it rewinds
-the phase and reschedules ([src/SHT3x.cpp:705-719](src/SHT3x.cpp)). Three things
+the phase and reschedules ([src/SHT3x.cpp:705-719](../src/SHT3x.cpp)). Three things
 could bound that loop and all three are off by default: `JobRequest::hasDeadline`
 is `false`, `Config::notReadyTimeoutMs` is `0` meaning *disabled*
-([include/SHT3x/Config.h:193](include/SHT3x/Config.h)), and a proven not-ready is
+([include/SHT3x/Config.h:193](../include/SHT3x/Config.h)), and a proven not-ready is
 deliberately not a health failure. `_notReadyCount` grows without bound and is
 never read by the driver.
 
@@ -178,7 +178,7 @@ Then update `Config.h` to document `0 = auto (3 periods + margin)` and drop the
 
 **What the code does.** `_notReadyStartMs` / `_notReadyStartValid` are cleared
 only on a successful periodic read or a full acquisition reset. `_clearJobState()`
-([src/SHT3x.cpp:1989-1998](src/SHT3x.cpp)) — which every terminal path calls —
+([src/SHT3x.cpp:1989-1998](../src/SHT3x.cpp)) — which every terminal path calls —
 does not touch them. Once the window has expired it stays expired for every
 later job, because the start timestamp is frozen at the first not-ready of the
 first streak.
@@ -201,7 +201,7 @@ finding 1's block. The health counters already carry the long-run history; the
 window should only ever measure the current streak.
 
 **Note for whoever implements this:** `test_not_ready_timeout_escalation`
-([test/test_basic.cpp:1657-1686](test/test_basic.cpp)) asserts
+([test/test_basic.cpp:1657-1686](../test/test_basic.cpp)) asserts
 `TEST_ASSERT_TRUE(device._notReadyStartValid)` *after* the terminal failure. That
 assertion pins the sticky latch as intended behaviour and must be inverted.
 
@@ -212,7 +212,7 @@ assertion pins the sticky latch as intended behaviour and must be inverted.
 **Severity: High.**
 
 **What the code does.** All four tracked wrappers filter on the *return value*
-before updating health, e.g. [src/SHT3x.cpp:2383-2387](src/SHT3x.cpp):
+before updating health, e.g. [src/SHT3x.cpp:2383-2387](../src/SHT3x.cpp):
 
 ```cpp
 Status st = _i2cWriteRaw(buf, len);
@@ -223,7 +223,7 @@ return _updateHealth(st, logicalComplete);
 ```
 
 `_updateHealth()` adds a second escape for `IN_PROGRESS`
-([src/SHT3x.cpp:2460](src/SHT3x.cpp)). The intent is to keep the driver's own
+([src/SHT3x.cpp:2460](../src/SHT3x.cpp)). The intent is to keep the driver's own
 pre-flight rejections out of the health counters — but by that point the driver's
 rejection and the user callback's return are indistinguishable.
 
@@ -284,7 +284,7 @@ duplicated gate code removed, and two guess-the-origin branches gone.
 
 **Severity: High.**
 
-**What the code does.** [src/SHT3x.cpp:311-322](src/SHT3x.cpp) discards the
+**What the code does.** [src/SHT3x.cpp:311-322](../src/SHT3x.cpp) discards the
 result of both writes it depends on, then sets `_hardwareStateValid = true` at
 line 345 on the strength of a status read:
 
@@ -341,9 +341,9 @@ reconciliation writes did not land; call `recover()` or
 
 **What the code does.** `_updateHealth()` commits logical success from the
 *transport* result, before any frame validation
-([src/SHT3x.cpp:2470-2484](src/SHT3x.cpp)). The CRC check runs afterwards in the
+([src/SHT3x.cpp:2470-2484](../src/SHT3x.cpp)). The CRC check runs afterwards in the
 caller, and `_recordProtocolFailure()` touches exactly one counter
-([src/SHT3x.cpp:2508-2512](src/SHT3x.cpp)).
+([src/SHT3x.cpp:2508-2512](../src/SHT3x.cpp)).
 
 **Failure scenario.** A sensor with a damaged output stage: transactions complete
 cleanly, every data frame has a corrupt CRC. Loop `readStatus()` 10 000 times:
@@ -414,7 +414,7 @@ failure that feeds the OFFLINE counter.
 a caller choosing a tight budget gets spurious timeouts on nearly every transfer.
 
 **This is currently asserted as intended behaviour.**
-[test/test_basic.cpp:1826-1837](test/test_basic.cpp) sets a *complete* read with
+[test/test_basic.cpp:1826-1837](../test/test_basic.cpp) sets a *complete* read with
 `gMillisStep = 30 > timeoutMs = 20` and asserts `Err::I2C_TIMEOUT` plus the
 drain. The test is named `test_wire_adapter_drains_partial_read`, but this half
 of it is a complete read.
@@ -457,14 +457,14 @@ any work (correct) and seven *after* a step has already succeeded — lines 517,
 
 Two of them lose real work:
 
-- **Ensure-idle** ([src/SHT3x.cpp:597-599](src/SHT3x.cpp)). Break went out, soft
+- **Ensure-idle** ([src/SHT3x.cpp:597-599](../src/SHT3x.cpp)). Break went out, soft
   reset went out, the status register came back CRC-valid and clean — and then
   the deadline check routes into `cancelJob()`, which sets
   `_hardwareStateValid = false` and never calls `recordEnsureSuccess()`. The
   device *is* in verified single-shot idle; the driver reports `TIMED_OUT` and
   forgets it. The owner's only correct response is to run the whole destructive
   sequence again.
-- **Measurement** ([src/SHT3x.cpp:686-688](src/SHT3x.cpp), 727-729). A 6-byte
+- **Measurement** ([src/SHT3x.cpp:686-688](../src/SHT3x.cpp), 727-729). A 6-byte
   frame with both CRCs validated is discarded: `_rawSample`, `_hasSample`,
   `_sampleTimestampMs` are all left untouched. The bus cost, the conversion
   latency, and the sensor's data register slot were all spent.
@@ -474,7 +474,7 @@ seven post-work checks. Semantics are preserved — a job still never *starts* a
 step after its deadline, because the next poll terminates it — and roughly 30
 lines of special-casing disappear with them: `recordDeadline`'s
 `measurementReadResolved` parameter, the `_hardwareStateValid` save/restore at
-[src/SHT3x.cpp:376-386](src/SHT3x.cpp), and the `consumedInvalidMeasurement`
+[src/SHT3x.cpp:376-386](../src/SHT3x.cpp), and the `consumedInvalidMeasurement`
 branch in `recordFailure`.
 
 A deadline governs whether *more* work is authorized, never whether *finished*
@@ -487,7 +487,7 @@ work counts.
 **Severity: Medium.**
 
 **What the code does.** `cancelJob()` clears `_hardwareStateValid` whenever the
-effect is anything but `NONE` ([src/SHT3x.cpp:981-983](src/SHT3x.cpp)), and
+effect is anything but `NONE` ([src/SHT3x.cpp:981-983](../src/SHT3x.cpp)), and
 `_effectForPhase()` returns `RESULT_MAY_BE_PENDING` for the conversion and read
 phases. So a plain "never mind, cancel that reading" invalidates the acquisition
 baseline.
@@ -503,7 +503,7 @@ successful probe, and falls through to Break + soft reset. The owner cancelled a
 reading and got a sensor reset.
 
 `recordFailure` has the same over-reach, invalidating unconditionally
-([src/SHT3x.cpp:418-420](src/SHT3x.cpp)) — including for
+([src/SHT3x.cpp:418-420](../src/SHT3x.cpp)) — including for
 `recordFailure(_offlineStatus())` and `recordFailure(BUSY, "Periodic mode
 active")`, neither of which performs any I2C at all.
 
@@ -531,7 +531,7 @@ fixes the reported scenario.
 
 **What the code does.** The backoff gate lives *inside*
 `_performRecoveryLadder()` and returns `BUSY` before any bus access
-([src/SHT3x.cpp:2128-2134](src/SHT3x.cpp)). All three callers treat any non-OK
+([src/SHT3x.cpp:2128-2134](../src/SHT3x.cpp)). All three callers treat any non-OK
 identically and clear `_hardwareStateValid`.
 
 **Failure scenario.** A bus-manager-owned deployment with all reset options
@@ -578,7 +578,7 @@ repeated calls cannot starve recovery.
 **Severity: Medium.**
 
 **What the code does.** `_i2cWriteRaw()` stamps `_lastCommandUs` after every
-attempt ([src/SHT3x.cpp:2286-2287](src/SHT3x.cpp)). `_i2cWriteReadRaw()` does
+attempt ([src/SHT3x.cpp:2286-2287](../src/SHT3x.cpp)). `_i2cWriteReadRaw()` does
 not. So `_ensureCommandDelay()` always measures from the last *write*, never from
 the last bus transaction.
 
@@ -625,7 +625,7 @@ both already gated by `_measurementReadyMs`.
 
 **Severity: Medium.**
 
-**What the code does.** [src/SHT3x.cpp:2039-2044](src/SHT3x.cpp):
+**What the code does.** [src/SHT3x.cpp:2039-2044](../src/SHT3x.cpp):
 
 ```cpp
 return nowMs + _periodMs + _periodicFetchMarginMs();
@@ -667,7 +667,7 @@ control of bus load.
 
 **Severity: Medium.**
 
-**What the code does.** [src/SHT3x.cpp:731-740](src/SHT3x.cpp) floors
+**What the code does.** [src/SHT3x.cpp:731-740](../src/SHT3x.cpp) floors
 `elapsed / _periodMs` on every fetch and discards the remainder.
 
 **Under-reports the driver's own loss.** Steady-state fetch cadence is
@@ -716,7 +716,7 @@ fetched*, which includes the owner's own polling cadence.
 **Severity: Medium.**
 
 **What the code does.** In ART mode, `setPeriodicRate()` and
-`setRepeatability()` ([src/SHT3x.cpp:1248-1259](src/SHT3x.cpp), 1319-1330) call
+`setRepeatability()` ([src/SHT3x.cpp:1248-1259](../src/SHT3x.cpp), 1319-1330) call
 `startArt()`, which sends Break and then the fixed word `0x2B32`. The `rate` and
 `rep` arguments are used only in the non-ART branch of `_enterPeriodic()`.
 
@@ -752,7 +752,7 @@ version above is not.
 
 **Severity: Medium.**
 
-**What the code does.** `probe()` ([src/SHT3x.cpp:772-787](src/SHT3x.cpp)) checks
+**What the code does.** `probe()` ([src/SHT3x.cpp:772-787](../src/SHT3x.cpp)) checks
 only `_singleShotMeasurementPending()`, which is false in periodic mode with no
 job pending. It then issues `0xF32D` + a 3-byte read on a sensor mid-acquisition.
 
@@ -779,7 +779,7 @@ gap; make the decision explicit either way.
 everything else falls through to `Err::I2C_BUS`. It never returns
 `I2C_NACK_ADDR`, `I2C_NACK_DATA` or `I2C_NACK_READ`.
 
-`mapPresenceProbeFailure()` ([src/SHT3x.cpp:125-130](src/SHT3x.cpp)) converts
+`mapPresenceProbeFailure()` ([src/SHT3x.cpp:125-130](../src/SHT3x.cpp)) converts
 `I2C_NACK_ADDR → DEVICE_NOT_FOUND`, and `probe()` is its only consumer. So an
 absent sensor reports `DEVICE_NOT_FOUND` on Arduino and `I2C_BUS` on ESP-IDF: the
 two reference adapters disagree on the most basic diagnostic.
@@ -805,7 +805,7 @@ already fixed — see "Already fixed".)
 
 **Severity: Low.**
 
-`setHeater()` ([src/SHT3x.cpp:1517-1522](src/SHT3x.cpp)) treats "the sensor ACKed
+`setHeater()` ([src/SHT3x.cpp:1517-1522](../src/SHT3x.cpp)) treats "the sensor ACKed
 two bytes" as "the sensor executed the command". `writeAlertLimitRaw()` performs
 the correct pattern for the same class of question: it reads the status register
 back and checks the command-error and write-checksum bits before committing to
@@ -829,17 +829,17 @@ only.
 
 | Item | Location | Proposal |
 | --- | --- | --- |
-| `_durationElapsed(now, start, d)` returns *true* when `now` is one tick **behind** `start` — `_durationElapsed(999, 1000, 60000)` is `true`. Every caller but one compares same-source timestamps, so it is latent; the exception is [src/SHT3x.cpp:695](src/SHT3x.cpp), which mixes the caller's `nowMs` with an internally sampled `_notReadyStartMs`. | [src/SHT3x.cpp:2843-2845](src/SHT3x.cpp) | Delete `_durationElapsed` and express every duration gate as `_timeElapsed(now, start + d)`. `start + d` wraps correctly and the signed comparison is already the wrap-safe primitive the rest of the file uses. One primitive instead of two, and the unsafe one is gone. |
-| The tIDLE gate uses `uint32` **microseconds**, which wrap every 71.6 min, and `_lastCommandValid` is never aged out. After a long idle the gate can falsely report "not open" (probability `commandDelayMs·1000 / 2^32` per wrap boundary). Bounded consequence: one wasted poll, or up to `commandDelayMs` of synchronous spinning. | [src/SHT3x.cpp:493-499](src/SHT3x.cpp), 2526-2550 | Add a millisecond companion `_lastCommandMs` (49.7-day window) and open the gate unconditionally once a full command delay has provably passed on the ms clock. |
-| `estimateMeasurementTimeMs()` returns exactly the datasheet maximum when `singleShotMeasurementMarginMs = 0`, but `_measurementReadyMs` is derived from an integer-ms clock sampled *after* the write returned, so up to 1 ms of the real interval is truncated away. The read can fire at ~14.1 ms against a 15 ms worst case. The default margin of 1 covers it; `bind()` accepts 0. | [src/SHT3x.cpp:1943-1946](src/SHT3x.cpp) | Add `+ 1U` unconditionally inside `estimateMeasurementTimeMs()` to absorb the truncation, and let the configured margin be pure headroom on top. |
-| `readSettings()` maps a transport-level `BUSY` (a shared-bus adapter reporting the bus held by another master) to `Status::Ok()`, because it cannot tell that `BUSY` apart from "job active" / "periodic active". Meanwhile `consecutiveFailures()` has silently advanced. | [src/SHT3x.cpp:1169-1176](src/SHT3x.cpp) | Decide the OK-snapshot cases positively from local state instead of decoding a return code: `if (_jobActive() \|\| _periodicActive) { out.statusValid = false; return Status::Ok(); } return stStatus;` |
-| `resetToDefaults()` can return OK with the physical heater still on: when `_hardwareStateValid && !_periodicActive`, the ladder short-circuits on a successful probe without issuing any reset, and `_setDefaultsToConfigAndCache()` is purely local. The header promises *"OK after a recovered default single-shot state"*. | [src/SHT3x.cpp:806-822](src/SHT3x.cpp) | Either drive `setHeater(false)` explicitly after `_setSafeBaseline()`, or weaken the header to say defaults are applied to the driver's restore plan only. The current pairing is what should not stand. |
-| `_recordProtocolFailure()` is gated on `tracked` in `_readStatusRaw` but called unconditionally in `_readMeasurementRawNoDelay`. Latent today (only `pollJob` reaches the latter, always tracked), but it will bite the first time an untracked measurement read is added. | [src/SHT3x.cpp:2599-2601](src/SHT3x.cpp) vs 2617 | Move the decision into the helper: `void _recordProtocolFailure(bool tracked)` with an early return, so no call site can get it wrong. |
-| `PollJobResult::phase` is sampled once at function entry and never updated by `recordProgress()`, so every progress result reports the step that just *finished* rather than the one now pending. `SINGLE_SHOT_READ` is never observable in a non-terminal result. | [src/SHT3x.cpp:371](src/SHT3x.cpp), 425-435 | Either publish `_measurementPhase` in `recordProgress()`, or tighten the field doc to "the phase that performed this step". |
-| `requestMeasurement()` clears `_measurementReady` before it finishes validating, so the "Periodic mode not active" and "Invalid mode" paths destroy a ready sample on their way to returning an error. I could not reach that state combination through the public API. | [src/SHT3x.cpp:875](src/SHT3x.cpp) | Move the clear below all validation, into each mode branch next to `_measurementRequested = true`. |
+| `_durationElapsed(now, start, d)` returns *true* when `now` is one tick **behind** `start` — `_durationElapsed(999, 1000, 60000)` is `true`. Every caller but one compares same-source timestamps, so it is latent; the exception is [src/SHT3x.cpp:695](../src/SHT3x.cpp), which mixes the caller's `nowMs` with an internally sampled `_notReadyStartMs`. | [src/SHT3x.cpp:2843-2845](../src/SHT3x.cpp) | Delete `_durationElapsed` and express every duration gate as `_timeElapsed(now, start + d)`. `start + d` wraps correctly and the signed comparison is already the wrap-safe primitive the rest of the file uses. One primitive instead of two, and the unsafe one is gone. |
+| The tIDLE gate uses `uint32` **microseconds**, which wrap every 71.6 min, and `_lastCommandValid` is never aged out. After a long idle the gate can falsely report "not open" (probability `commandDelayMs·1000 / 2^32` per wrap boundary). Bounded consequence: one wasted poll, or up to `commandDelayMs` of synchronous spinning. | [src/SHT3x.cpp:493-499](../src/SHT3x.cpp), 2526-2550 | Add a millisecond companion `_lastCommandMs` (49.7-day window) and open the gate unconditionally once a full command delay has provably passed on the ms clock. |
+| `estimateMeasurementTimeMs()` returns exactly the datasheet maximum when `singleShotMeasurementMarginMs = 0`, but `_measurementReadyMs` is derived from an integer-ms clock sampled *after* the write returned, so up to 1 ms of the real interval is truncated away. The read can fire at ~14.1 ms against a 15 ms worst case. The default margin of 1 covers it; `bind()` accepts 0. | [src/SHT3x.cpp:1943-1946](../src/SHT3x.cpp) | Add `+ 1U` unconditionally inside `estimateMeasurementTimeMs()` to absorb the truncation, and let the configured margin be pure headroom on top. |
+| `readSettings()` maps a transport-level `BUSY` (a shared-bus adapter reporting the bus held by another master) to `Status::Ok()`, because it cannot tell that `BUSY` apart from "job active" / "periodic active". Meanwhile `consecutiveFailures()` has silently advanced. | [src/SHT3x.cpp:1169-1176](../src/SHT3x.cpp) | Decide the OK-snapshot cases positively from local state instead of decoding a return code: `if (_jobActive() \|\| _periodicActive) { out.statusValid = false; return Status::Ok(); } return stStatus;` |
+| `resetToDefaults()` can return OK with the physical heater still on: when `_hardwareStateValid && !_periodicActive`, the ladder short-circuits on a successful probe without issuing any reset, and `_setDefaultsToConfigAndCache()` is purely local. The header promises *"OK after a recovered default single-shot state"*. | [src/SHT3x.cpp:806-822](../src/SHT3x.cpp) | Either drive `setHeater(false)` explicitly after `_setSafeBaseline()`, or weaken the header to say defaults are applied to the driver's restore plan only. The current pairing is what should not stand. |
+| `_recordProtocolFailure()` is gated on `tracked` in `_readStatusRaw` but called unconditionally in `_readMeasurementRawNoDelay`. Latent today (only `pollJob` reaches the latter, always tracked), but it will bite the first time an untracked measurement read is added. | [src/SHT3x.cpp:2599-2601](../src/SHT3x.cpp) vs 2617 | Move the decision into the helper: `void _recordProtocolFailure(bool tracked)` with an early return, so no call site can get it wrong. |
+| `PollJobResult::phase` is sampled once at function entry and never updated by `recordProgress()`, so every progress result reports the step that just *finished* rather than the one now pending. `SINGLE_SHOT_READ` is never observable in a non-terminal result. | [src/SHT3x.cpp:371](../src/SHT3x.cpp), 425-435 | Either publish `_measurementPhase` in `recordProgress()`, or tighten the field doc to "the phase that performed this step". |
+| `requestMeasurement()` clears `_measurementReady` before it finishes validating, so the "Periodic mode not active" and "Invalid mode" paths destroy a ready sample on their way to returning an error. I could not reach that state combination through the public API. | [src/SHT3x.cpp:875](../src/SHT3x.cpp) | Move the clear below all validation, into each mode branch next to `_measurementRequested = true`. |
 | The ESP-IDF CLI calls `std::fgets(..., stdin)` with no `uart_driver_install` / `uart_vfs_dev_use_driver` anywhere in the example, so ESP-IDF stdin is non-blocking and returns partial lines. Typing character-by-character into a serial console prints `"Input line too long; discarded"`. Masked in practice because the HIL runner writes whole lines at once. | `examples/idf/basic/main/main.cpp:1964` | Install the UART driver and register it with the VFS before the input task starts, or switch to `linenoise`, which the IDF console component already provides. |
 | Both examples enable internal pull-ups at 400 kHz. ESP32 internal pull-ups are ~45 kΩ — marginal at that speed. | `examples/common/I2cTransport.h:66`, `main.cpp:590` | Keep the default but say so in a comment: reference designs should use external 2.2–10 kΩ pull-ups. |
-| `Config::transportCapabilities` is the one config field `bind()` does not validate; an out-of-range value is accepted. `hasCapability` masks, so extra bits are inert. | [src/SHT3x.cpp:201-207](src/SHT3x.cpp) | Add the range check for symmetry with the other eight validated fields. |
+| `Config::transportCapabilities` is the one config field `bind()` does not validate; an out-of-range value is accepted. `hasCapability` masks, so extra bits are inert. | [src/SHT3x.cpp:201-207](../src/SHT3x.cpp) | Add the range check for symmetry with the other eight validated fields. |
 | Unreachable `greset` branches in both CLIs — arity validation rejects the bare command before dispatch. Identical in both files, which is itself evidence of the copy-paste in finding 20. | `examples/common/Sht3xCli.cpp:2774-2778`, `examples/idf/basic/main/main.cpp:1707-1709` | Delete both. |
 
 ---
@@ -866,9 +866,9 @@ injection. The gaps that matter:
   write-then-read-back test.
 - **Assertions that cannot fail.** `sampleAgeMs(123)` with
   `_sampleTimestampMs == 0` would pass if the implementation were `return nowMs`
-  ([test/test_basic.cpp:4771](test/test_basic.cpp)). The scanner test asserts
+  ([test/test_basic.cpp:4771](../test/test_basic.cpp)). The scanner test asserts
   `112 == 0x77 - 0x08 + 1` while the stub ACKs every address
-  ([test/test_basic.cpp:1886](test/test_basic.cpp)).
+  ([test/test_basic.cpp:1886](../test/test_basic.cpp)).
   `test_recover_permanent_offline` never asserts `DriverState::OFFLINE` and with
   the default threshold ends `DEGRADED`.
 - **Order dependence.** `setUp()`/`tearDown()` are empty while timing runs
@@ -1044,7 +1044,7 @@ plus a `jobTypeFor(_phase)` helper would delete three fields, make
 `_clearJobState()` a one-liner, and reduce `_singleShotMeasurementPending()`
 (whose second clause is dead) to `_phase != JobPhase::IDLE`. Findings 3, 18
 (`requestMeasurement`) and the unreachable offline gate at
-[src/SHT3x.cpp:484-488](src/SHT3x.cpp) are all consequences of state stored twice.
+[src/SHT3x.cpp:484-488](../src/SHT3x.cpp) are all consequences of state stored twice.
 
 **Health is committed at the wrong layer.** `_updateHealth()` decides "logical
 operation succeeded" from the transport callback's return code, but the operation
@@ -1102,7 +1102,7 @@ RH monotonicity breaks over 0..100%: 0
 
 **Undocumented vendor conflicts.** Four disagreements between the Sensirion
 documents are now recorded in
-[docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) with the
+[docs/reference/sht3x-chip-notes.md](reference/sht3x-chip-notes.md) with the
 driver's choice for each: the alert note prints `0xC92D` for 79 %RH/58 °C while
 the workbook computes `0xCB2D` (we follow the printed word, since it describes
 the device's power-up state); the datasheet and the alert note disagree on
@@ -1144,7 +1144,7 @@ replaced with three obvious lines.
 ### Documentation cleanup
 
 - **Deleted `docs/tunnelmonitor-integration.md`** and replaced it with
-  [docs/integration.md](docs/integration.md), which covers the same ownership
+  [docs/integration.md](integration.md), which covers the same ownership
   boundary, cooperative flow, transport contract and presence/health rules
   without being about one downstream product. The old file was largely a report
   about a sibling checkout on the author's disk ("The local sibling source

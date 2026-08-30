@@ -368,8 +368,8 @@ def test_alert_cleanup_requires_disabled_limits() -> None:
     assert "LOW_SET raw 0x0000 != expected 0xFFFF" in notes
 
 
-def test_status_raw_idf_output_parses() -> None:
-    parsed = hil.parse_command_output("status_raw", "status=0x8010\n")
+def test_status_raw_shared_output_parses() -> None:
+    parsed = hil.parse_command_output("status_raw", "Status raw: 0x8010\n")
     assert parsed["status_word"] == "0x8010"
 
 
@@ -393,27 +393,14 @@ def test_measurement_parses_and_passes() -> None:
     assert parsed["humidity_pct"] == 50.10
 
 
-def test_idf_measurement_format_parses_and_passes() -> None:
-    spec = hil.CommandSpec(
-        "single high",
-        "measurement",
-        expected_any=("temperature=",),
-        validators=("measurement_plausible",),
-    )
-    result, notes, parsed = classify(spec, "temperature=23.50 C humidity=44.25 %RH\n")
-    assert result == hil.RESULT_PASS, notes
-    assert parsed["temperature_c"] == 23.50
-    assert parsed["humidity_pct"] == 44.25
-
-
 def test_measurement_plausibility_failure() -> None:
     spec = hil.CommandSpec(
         "single high",
         "measurement",
-        expected_any=("temperature=",),
+        expected_any=("Temp:",),
         validators=("measurement_plausible",),
     )
-    result, notes, _ = classify(spec, "temperature=130.00 C humidity=120.00 %RH\n")
+    result, notes, _ = classify(spec, "Temp: 130.00 C, Humidity: 120.00 %\n")
     assert result == hil.RESULT_FAIL
     assert "temperature 130.0 C outside broad plausibility range" in notes
     assert "humidity 120.0 %RH outside broad plausibility range" in notes
@@ -435,43 +422,6 @@ def test_driver_health_parses_and_passes() -> None:
     assert parsed["state"] == "READY"
     assert parsed["online"] is True
     assert parsed["total_failures"] == 0
-
-
-def test_idf_driver_health_consecutive_parses_and_passes() -> None:
-    spec = hil.CommandSpec(
-        "drv",
-        "health",
-        expected_any=("health ok=",),
-        validators=("zero_failures",),
-    )
-    result, notes, parsed = classify(spec, "health ok=24 fail=0 consecutive=0 lastOk=100 lastErr=0\n")
-    assert result == hil.RESULT_PASS, notes
-    assert parsed["total_success"] == 24
-    assert parsed["total_failures"] == 0
-    assert parsed["consecutive_failures"] == 0
-
-
-def test_idf_driver_health_full_format_parses_and_passes() -> None:
-    spec = hil.CommandSpec(
-        "drv",
-        "health",
-        expected_any=("state=",),
-        validators=("driver_ready", "zero_failures"),
-    )
-    result, notes, parsed = classify(
-        spec,
-        "getSettings: OK code=0 detail=0 msg=\n"
-        "state=READY initialized=1 online=1 addr=0x44 timeout=100\n"
-        "mode=single repeat=high rate=1 stretch=0 periodic=0 pending=0 ready=0 sample=0\n"
-        "health ok=24 fail=0 consecutive=0 lastOk=100 lastErr=0\n",
-    )
-    assert result == hil.RESULT_PASS, notes
-    assert parsed["state"] == "READY"
-    assert parsed["online"] is True
-    assert parsed["configured_i2c_address"] == "0x44"
-    assert parsed["total_success"] == 24
-    assert parsed["total_failures"] == 0
-    assert parsed["consecutive_failures"] == 0
 
 
 def test_malformed_driver_state_fails() -> None:
@@ -681,10 +631,12 @@ def test_zero_failures_validator_catches_compact_nonzero_consecutive() -> None:
     spec = hil.CommandSpec(
         "drv",
         "health",
-        expected_any=("health ok=",),
+        expected_any=("Health: state=",),
         validators=("zero_failures",),
     )
-    result, notes, parsed = classify(spec, "health ok=24 fail=0 consecutive=1 lastOk=100 lastErr=0\n")
+    result, notes, parsed = classify(
+        spec, "Health: state=READY online=YES consec=1 ok=24 fail=0 rate=96.0%\n"
+    )
     assert parsed["consecutive_failures"] == 1
     assert result == hil.RESULT_FAIL
     assert "consecutive failures is nonzero" in notes
@@ -1013,7 +965,7 @@ def test_async_measurement_wait_sends_online_nudge() -> None:
     spec = hil.CommandSpec(
         "periodic fetch",
         "async periodic fetch",
-        expected_any=("Temp:", "temperature="),
+        expected_any=("Temp:",),
         validators=("measurement_plausible",),
         timeout_s=1.0,
     )

@@ -151,7 +151,7 @@ struct SettingsSnapshot {
                                                "Measurement not ready"); ///< Last measurement-path status
   uint32_t measurementReadyMs = 0;                            ///< Deadline/timestamp associated with the pending sample
   uint32_t sampleTimestampMs = 0;                             ///< Timestamp of the last successful sample
-  uint32_t missedSamples = 0;                                 ///< Best-effort missed periodic sample count
+  uint32_t missedSamples = 0;                                 ///< Best-effort periodic sensor outputs not fetched
   StatusRegister status = {};                                 ///< Parsed status-register snapshot when available
   bool statusValid = false;                                   ///< True if status was read successfully for this snapshot
   Status statusReadStatus = Status::Error(Err::UNSUPPORTED, "Status not read"); ///< Result of the status-read attempt
@@ -231,6 +231,11 @@ public:
   ///       callbacks and bounded cooperative waits. External bus-owner tasks
   ///       should use bind() followed by requestEnsureIdle()/pollJob().
   /// @param config Configuration including transport callbacks
+  /// @note Break and soft-reset reconciliation are attempted independently. A
+  ///       clean CRC-valid status read proves communication, while
+  ///       success requires at least one reconciliation command and its required
+  ///       settle wait to succeed. Otherwise begin() returns the precise failure
+  ///       and leaves the instance uninitialized.
   /// @return Status::Ok() on success, error otherwise
   Status begin(const Config& config);
 
@@ -263,6 +268,9 @@ public:
   /// @note Cancellation is observed only between pollJob() calls. An injected
   ///       transport callback is externally bounded but atomic from the
   ///       driver's perspective and cannot be interrupted by cancelJob().
+  ///       A deadline is an admission boundary: a callback admitted before it
+  ///       expires may complete after it, and its validated result is retained.
+  ///       A later poll starts no additional I2C and returns the timeout.
   /// @param nowMs Current timestamp from the Config::nowMs millisecond timebase.
   /// @param maxInstructions Maximum transport callbacks authorized for this poll.
   /// @param[out] result Active progress or exactly-once terminal provenance.
@@ -282,6 +290,8 @@ public:
   /// Cancel the active cooperative job locally with zero I2C.
   /// @note The terminal result is returned exactly once by this call.
   ///       Measurement-job cancellation preserves previous cached sample data.
+  ///       A possible unread single-shot result does not invalidate an otherwise
+  ///       verified acquisition baseline.
   ///       An ensure-idle job that already completed reset may have cleared it.
   ///       Inspect effect for possible unread measurement data or
   ///       partial/indeterminate device state.
@@ -326,9 +336,10 @@ public:
   /// Raw diagnostic presence check with no health tracking.
   /// @note Uses the status-register command path through raw transport wrappers.
   ///       This can issue I2C outside normal health accounting and is not an
-  ///       online-state verdict. Avoid calling during active acquisition unless
-  ///       that diagnostic side effect is intentional.
-  /// @return Status::Ok() if device responds, error otherwise
+  ///       online-state verdict. It returns BUSY during periodic/ART acquisition
+  ///       because Read Status is not a Fetch Data command.
+  /// @return Status::Ok() if device responds, BUSY during active periodic/ART,
+  ///         or the precise diagnostic error otherwise.
   Status probe();
 
   /// Run the manual communication recovery ladder after bind()/begin().
@@ -348,9 +359,9 @@ public:
 
   /// Recover communication and reset the driver's desired settings to defaults.
   /// @note This calls the recovery ladder, sets a safe single-shot baseline,
-  ///       and resets the local restore cache to defaults. The recovery ladder
-  ///       may stop after a successful probe without issuing a sensor reset only
-  ///       when the prior hardware state was already verified and nonperiodic.
+  ///       issues a soft reset even if the ladder's initial probe was sufficient,
+  ///       then resets the local restore cache to sensor defaults. This ensures
+  ///       heater and alert-limit hardware state is reset, not only the cache.
   /// @return OK after a recovered default single-shot state, or the first
   ///         recovery/reset failure.
   Status resetToDefaults();
@@ -392,7 +403,9 @@ public:
   bool isPeriodicActive() const { return _periodicActive; }
 
   /// True only after typed reconciliation established a known acquisition baseline.
-  /// Raw/advanced command access and ambiguous transport failures invalidate it.
+  /// Raw/advanced command access, ambiguous transport failures, and incomplete
+  /// ensure-idle mutations invalidate it. Cancelling a measurement whose result
+  /// may still become pending does not invalidate the acquisition mode.
   /// @return true when the driver has verified its acquisition-state baseline.
   bool hardwareStateValid() const { return _hardwareStateValid; }
 
@@ -400,35 +413,36 @@ public:
   // Health Tracking
   // =========================================================================
 
-  /// Timestamp of last successful complete logical transport operation after bind()/begin().
+  /// Timestamp of last successful complete tracked logical operation after bind()/begin().
   /// @return Millisecond timestamp, or 0 when no tracked success exists.
   uint32_t lastOkMs() const { return _lastOkMs; }
 
-  /// Timestamp of last failed tracked transport operation after bind()/begin().
+  /// Timestamp of last failed tracked logical operation after bind()/begin().
   /// @return Millisecond timestamp, or 0 when no tracked failure exists.
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
   /// Timestamp of last tracked I2C attempt after bind()/begin().
-  /// @note Includes successes, failures, and expected read-header NACKs.
+  /// @note Includes successes, failures, and proven or inferred periodic
+  ///       no-data observations.
   /// @return Millisecond timestamp, or 0 when no tracked callback was attempted.
   uint32_t lastBusActivityMs() const { return _lastBusActivityMs; }
 
-  /// Most recent tracked transport error status.
-  /// @note Validation, precondition, CRC, and sensor status-bit errors are
-  ///       returned by the API that observes them but do not replace this value
-  ///       unless they occur through a tracked transport wrapper.
-  /// @return Most recent tracked transport error, or OK before any such error.
+  /// Most recent failed tracked logical-operation status.
+  /// @note Includes transport, CRC, and sensor status-bit failures. Local
+  ///       validation, admission, cancellation, and caller-deadline errors do
+  ///       not replace this value.
+  /// @return Most recent tracked logical failure, or OK before any such error.
   Status lastError() const { return _lastError; }
 
-  /// Consecutive logical-operation transport failures since last complete success.
+  /// Consecutive tracked logical-operation failures since last complete success.
   /// @return Saturating consecutive-failure count.
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
 
-  /// Total logical-operation transport failure count for the current driver session.
+  /// Total tracked logical-operation failure count for the current driver session.
   /// @return Saturating logical-failure count.
   uint32_t totalFailures() const { return _totalFailures; }
 
-  /// Total complete logical-operation transport success count for the current driver session.
+  /// Total complete tracked logical-operation success count for the current driver session.
   /// @return Saturating logical-success count.
   uint32_t totalSuccess() const { return _totalSuccess; }
 
@@ -437,18 +451,25 @@ public:
   uint32_t transportSuccess() const { return _transportSuccess; }
 
   /// Total failed transport callbacks.
-  /// @note Proven expected read-header NACK/not-ready responses are excluded
-  ///       and counted by totalNotReady().
+  /// @note Proven and inferred periodic no-data observations are excluded and
+  ///       counted by totalNotReady() or totalInferredNotReady().
   /// @return Saturating failed-callback count.
   uint32_t transportFailures() const { return _transportFailures; }
 
   /// Total CRC/checksum failures and sensor-reported command rejections.
+  /// @note These are logical health failures but never transport failures.
   /// @return Saturating protocol-failure count.
   uint32_t protocolFailures() const { return _protocolFailures; }
 
   /// Total expected periodic read-header NACK/not-ready responses.
   /// @return Saturating expected-not-ready count.
   uint32_t totalNotReady() const { return _totalNotReady; }
+
+  /// Total bounded no-data retries inferred from an ambiguous read failure.
+  /// @note Used only when READ_HEADER_NACK is absent and a generic I2C_ERROR is
+  ///       observed during the driver's periodic readiness window.
+  /// @return Saturating inferred-not-ready count.
+  uint32_t totalInferredNotReady() const { return _totalInferredNotReady; }
 
   /// Count of consecutive "not-ready" responses during periodic fetch.
   /// @return Saturating current periodic not-ready streak.
@@ -501,8 +522,10 @@ public:
     return _hasSample ? (nowMs - _sampleTimestampMs) : 0;
   }
 
-  /// Best-effort estimate of missed samples in periodic/ART mode.
-  /// @return Saturating estimate based on fetch timing.
+  /// Best-effort estimate of sensor outputs not fetched in periodic/ART mode.
+  /// @note This includes samples skipped because the owner polls more slowly
+  ///       than the configured acquisition cadence.
+  /// @return Saturating estimate based on successful-fetch timing.
   uint32_t missedSamplesEstimate() const { return _missedSamples; }
 
   /// Get measurement result (float)
@@ -624,9 +647,11 @@ public:
   Status readCommand(uint16_t command, uint8_t* out, size_t len,
                      bool allowNoData = false);
 
-  /// Set measurement repeatability; active periodic/ART modes are restarted and
+  /// Set measurement repeatability; active periodic mode is restarted and
   /// cached settings are updated only after the restart succeeds.
-  /// @note If stopping an active periodic/ART mode succeeds but the restart
+  /// @note ART uses a fixed command with no repeatability field, so an ART-mode
+  ///       change updates only the desired restore plan and does not touch I2C.
+  /// @note If stopping an active periodic mode succeeds but the restart
   ///       command fails, the sensor and driver are left in single-shot idle
   ///       while cached settings still describe the last fully applied plan.
   /// @param rep Requested repeatability.
@@ -649,9 +674,11 @@ public:
   /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getClockStretching(ClockStretching& out) const;
 
-  /// Set periodic rate; active periodic/ART modes are restarted and cached
-  /// settings are updated only after the restart succeeds.
-  /// @note If stopping an active periodic/ART mode succeeds but the restart
+  /// Set periodic rate; active periodic mode is restarted and cached settings
+  /// are updated only after the restart succeeds.
+  /// @note ART runs at its fixed vendor-defined cadence, so an ART-mode change
+  ///       updates only the desired restore plan and does not touch I2C.
+  /// @note If stopping an active periodic mode succeeds but the restart
   ///       command fails, the sensor and driver are left in single-shot idle
   ///       while cached settings still describe the last fully applied plan.
   /// @param rate Requested periodic measurement rate.
@@ -730,7 +757,12 @@ public:
   /// @note The heater is intended for plausibility checks and condensation
   ///       mitigation workflows, not normal measurement. Self-heating can affect
   ///       temperature and humidity readings. Stop periodic/ART before changing
-  ///       it. Cached heater state is updated only after success.
+  ///       it. The command is followed by a CRC-valid status read; cached heater
+  ///       state is updated only when no command/checksum rejection is reported
+  ///       and the returned heater bit matches the requested state.
+  /// @note If the heater command succeeds but status verification fails, the
+  ///       physical heater may already have changed while the restore cache
+  ///       remains unchanged; the returned error exposes that partial result.
   /// @param enable true to enable the heater, false to disable it.
   /// @return OK when applied, or a precondition/transport error.
   Status setHeater(bool enable);
@@ -933,6 +965,8 @@ private:
   /// Tracked I2C write to alternate address (updates health)
   Status _i2cWriteRawAddrTracked(uint8_t addr, const uint8_t* buf, size_t len);
 
+  Status _admitTrackedI2c() const;
+
   /// Tracked I2C write-read (updates health)
   Status _i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
                               uint8_t* rxBuf, size_t rxLen,
@@ -968,11 +1002,12 @@ private:
   // Health Management
   // =========================================================================
 
-  /// Update health counters and state based on operation result
-  /// Called ONLY from tracked transport wrappers
+  /// Record one physical callback and, when requested, its logical completion.
+  /// Called only from tracked transport wrappers.
   Status _updateHealth(const Status& st, bool logicalComplete = true);
+  Status _completeLogicalOperation(const Status& st);
   void _reassertOfflineLatch();
-  void _recordProtocolFailure();
+  void _recordProtocolFailure(const Status& st, bool tracked);
 
   /// Record any bus activity (including expected NACK)
   void _recordBusActivity(uint32_t nowMs);
@@ -982,6 +1017,7 @@ private:
   // =========================================================================
 
   uint32_t _periodicFetchMarginMs() const;
+  uint32_t _notReadyWindowMs() const;
   uint32_t _periodicReadyMs(uint32_t nowMs) const;
   uint32_t _periodicRetryMs(uint32_t nowMs) const;
   bool _singleShotMeasurementPending() const;
@@ -989,13 +1025,17 @@ private:
   uint32_t _allocateJobId();
   JobEffect _effectForPhase(JobPhase phase, bool ambiguous) const;
   void _clearJobState();
+  bool _commandDelayElapsed() const;
+  void _markCommandAttempt();
   Status _ensureCommandDelay();
   Status _waitMs(uint32_t delayMs);
-  Status _readStatusRaw(uint16_t& raw, bool tracked);
+  Status _readStatusRaw(uint16_t& raw, bool tracked,
+                        bool logicalComplete = true);
   Status _readMeasurementRawNoDelay(RawSample& out, bool tracked, bool allowNoData);
   Status _enterPeriodic(PeriodicRate rate, Repeatability rep, bool art);
   Status _stopPeriodicInternal();
   Status _applyCachedSettingsAfterReset();
+  Status _admitRecoveryAttempt();
   Status _performRecoveryLadder();
   void _setSafeBaseline();
   void _setDefaultsToConfigAndCache();
@@ -1031,10 +1071,12 @@ private:
   uint32_t _transportSuccess = 0;
   uint32_t _protocolFailures = 0;
   uint32_t _totalNotReady = 0;
+  uint32_t _totalInferredNotReady = 0;
   bool _allowOfflineI2c = false;
 
   // Command timing
   uint32_t _lastCommandUs = 0;
+  uint32_t _lastCommandMs = 0;
   bool _lastCommandValid = false;
 
   // Measurement state
@@ -1058,6 +1100,7 @@ private:
   uint32_t _periodMs = 0;
   uint32_t _sampleTimestampMs = 0;
   uint32_t _missedSamples = 0;
+  uint32_t _missedRemainderMs = 0;
   uint32_t _notReadyStartMs = 0;
   bool _notReadyStartValid = false;
   uint32_t _notReadyCount = 0;

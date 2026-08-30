@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Arduino/native-IDF CLI parity and owner-safety invariants."""
+"""Check the shared Arduino/native-IDF CLI and owner-safety invariants."""
 
 from __future__ import annotations
 
@@ -107,8 +107,8 @@ def main() -> int:
 
     common = ROOT / "examples" / "common"
     bringup = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
-    arduino_cli = common / "Sht3xCli.cpp"
-    arduino_header = common / "Sht3xCli.h"
+    shared_cli = common / "Sht3xCli.cpp"
+    shared_header = common / "Sht3xCli.h"
     scanner = common / "I2cScanner.h"
     idf_main = ROOT / "examples" / "idf" / "basic" / "main" / "main.cpp"
     idf_transport_h = ROOT / "examples" / "idf" / "basic" / "main" / "IdfI2cTransport.h"
@@ -117,8 +117,8 @@ def main() -> int:
     for filename in REQUIRED_COMMON:
         read(common / filename, f"common helper {filename}")
     bringup_text = read(bringup, "Arduino bring-up CLI")
-    arduino_text = read(arduino_cli, "Arduino CLI")
-    arduino_header_text = read(arduino_header, "Arduino CLI header")
+    shared_text = read(shared_cli, "shared CLI")
+    shared_header_text = read(shared_header, "shared CLI header")
     scanner_text = read(scanner, "Arduino I2C scanner")
     idf_text = read(idf_main, "native ESP-IDF CLI")
     idf_transport_text = read(idf_transport_h, "IDF transport header") + read(
@@ -137,24 +137,43 @@ def main() -> int:
     ):
         require(scanner_text, token, "Arduino scanner")
 
-    if "Sht3xCli.h" in idf_text:
-        fail("native ESP-IDF CLI must not include Arduino example CLI source")
-    for token in (
-        "gConfig.nowMs",
-        "gConfig.nowUs",
-        "gConfig.cooperativeYield",
-        'extern "C" void app_main(void)',
-        "handleCommandLine",
-        "std::fgets",
+    require(idf_text, "Sht3xCli.h", "native ESP-IDF glue")
+    for forbidden in (
+        "Arduino.h",
+        "Wire.h",
+        "TwoWire",
+        "ArduinoCompat",
+        "IdfArduinoCompat",
     ):
-        require(idf_text, token, "native ESP-IDF CLI")
+        if re.search(rf"\b{re.escape(forbidden)}\b", shared_text + shared_header_text):
+            fail(f"shared CLI uses framework-specific token {forbidden!r}")
+    if "Serial." in shared_text or "OutputProxy Serial" in shared_text:
+        fail("shared CLI retains an Arduino-looking Serial output proxy")
+    for token in (
+        'extern "C" void app_main(void)',
+        "sht3x_cli::setPlatform",
+        "sht3x_cli::config()",
+        "config.nowMs",
+        "config.nowUs",
+        "config.cooperativeYield",
+        "sht3x_cli::beginOwnerSafe()",
+        "sht3x_cli::processCommand",
+        "sht3x_cli::tick()",
+        "std::fgets",
+        "std::clearerr(stdin)",
+        "char chunk[INPUT_CHUNK_LEN]",
+        "lineLength",
+        "discardingOverflow",
+        "Input line too long",
+        "Input queue full",
+        "CLI_QUEUE_SEND_TIMEOUT_MS",
+        "external I2C pull-ups",
+    ):
+        require(idf_text, token, "native ESP-IDF glue")
 
-    compare_help(arduino_text, "Arduino CLI")
-    compare_help(idf_text, "native ESP-IDF CLI")
-    check_strict_parsing(arduino_text, "Arduino CLI")
-    check_strict_parsing(idf_text, "native ESP-IDF CLI")
-    check_confirmations(arduino_text, "Arduino CLI")
-    check_confirmations(idf_text, "native ESP-IDF CLI")
+    compare_help(shared_text, "shared CLI")
+    check_strict_parsing(shared_text, "shared CLI")
+    check_confirmations(shared_text, "shared CLI")
 
     for token in (
         "requestMeasurement(request)",
@@ -177,59 +196,45 @@ def main() -> int:
         "greset armed=0 zero_i2c=1",
         "SHT3X_BUILD_TARGET",
     ):
-        require(arduino_text + arduino_header_text + bringup_text, token, "Arduino CLI")
+        require(shared_text + shared_header_text + bringup_text, token, "shared CLI")
     for forbidden in ("deviceInstance.tick(", "deviceInstance.begin("):
-        if forbidden in arduino_text:
-            fail(f"Arduino CLI retains owner-unsafe lifecycle call {forbidden!r}")
-    require_regex(arduino_text, r"if \(cmd == \"recover\"\).*?scheduleEnsureIdle\(\"recover\", false\)", "Arduino CLI")
-    require_regex(arduino_text, r"if \(!ownerJobActive \|\| pendingRequestId == 0U\)\s*\{\s*Serial\.printf\(\"%s: none", "Arduino CLI")
-    require_regex(arduino_text, r"validCommandArity\(parsed, knownCommand\).*?confirmationEffect\(parsed\).*?requireConfirmation\(cmd, parsed, effect\).*?if \(cmd == \"help\"", "Arduino CLI")
-    require_regex(arduino_text, r"if \(cmd == \"settings\"\)\s*\{\s*printConfig\(true\)", "Arduino CLI")
-    if arduino_text.count("cancelPending()") != 2:
-        fail("Arduino CLI may cancel an owner job only from explicit job cancel/cancel dispatch")
-    if arduino_text.count('"i2c_soak:') < 4:
-        fail("Arduino duration-soak evidence must use bounded multi-record output")
+        if forbidden in shared_text:
+            fail(f"shared CLI retains owner-unsafe lifecycle call {forbidden!r}")
+    require_regex(shared_text, r"if \(cmd == \"recover\"\).*?scheduleEnsureIdle\(\"recover\", false\)", "shared CLI")
+    require_regex(shared_text, r"if \(!ownerJobActive \|\| pendingRequestId == 0U\)\s*\{\s*output\.printf\(\"%s: none", "shared CLI")
+    require_regex(shared_text, r"validCommandArity\(parsed, knownCommand\).*?confirmationEffect\(parsed\).*?requireConfirmation\(cmd, parsed, effect\).*?if \(cmd == \"help\"", "shared CLI")
+    require_regex(shared_text, r"if \(cmd == \"settings\"\)\s*\{\s*printConfig\(true\)", "shared CLI")
+    if shared_text.count("cancelPending()") != 2:
+        fail("shared CLI may cancel an owner job only from explicit job cancel/cancel dispatch")
+    if shared_text.count('"i2c_soak:') < 4:
+        fail("shared duration-soak evidence must use bounded multi-record output")
 
     for token in (
-        "SHT3x::JobRequest request",
-        "request.requestId",
-        "requestMeasurement(request)",
-        "pollJob(nowMs(nullptr), budget, result)",
-        "cancelOwnedJob(SHT3x::CancelReason::DEADLINE_EXPIRED",
-        "result.requestId != requestId",
-        "result.type != type",
-        "result.effect",
-        "framework=native-esp-idf",
+        "native-esp-idf",
         "esp_get_idf_version()",
         "CONFIG_IDF_TARGET",
-        "xfer_assert",
-        "validCommandArity",
-        "Input line too long; discarded",
-        "discardingOverflow",
-        "Input queue full; discarded",
-        "CLI_QUEUE_SEND_TIMEOUT_MS",
-        "quarantineOwnerInvariant",
-        "instructionLimit",
-        "result.status.code != callStatus.code",
     ):
-        require(idf_text, token, "native ESP-IDF CLI")
-    for forbidden in ("gDevice.tick(", "gDevice.begin(", "gDevice.requestMeasurement()"):
+        require(idf_text + shared_text, token, "native ESP-IDF CLI")
+    for forbidden in (
+        "handleCommandLine",
+        "validCommandArity",
+        "printHelpItem",
+        "SHT3x::SHT3x gDevice",
+    ):
         if forbidden in idf_text:
-            fail(f"native ESP-IDF CLI retains identity-losing call {forbidden!r}")
-    require_regex(idf_text, r"validCommandArity\(cmd, parsedArgs, knownCommand\).*?if \(std::strcmp\(cmd, \"help\"\)", "native ESP-IDF CLI")
-    require_regex(idf_text, r"if \(!gOwner\.active\)\s*\{\s*std::puts\(\"fetch: ERR no_active_job=1\"\)", "native ESP-IDF CLI")
-    if idf_text.count("hasExactConfirmation(") < 9:
-        fail("native ESP-IDF CLI lost exact confirmation dispatch gates")
+            fail(f"native ESP-IDF glue duplicates shared CLI token {forbidden!r}")
 
     for token in (
-        "readTransfers",
-        "writeTransfers",
-        "totalTransfers",
-        "incrementSaturated",
-        "resetTransferCounters",
-        "assertTransferCounters",
+        "readCallbacks",
+        "writeCallbacks",
+        "successes",
+        "failures",
+        "txBytes",
+        "rxBytes",
+        "saturatingAdd",
+        "transferStats",
     ):
-        require(idf_transport_text + idf_text, token, "native ESP-IDF transport")
+        require(idf_transport_text + idf_text + shared_text, token, "native ESP-IDF transport")
 
     print(f"CLI contract PASSED ({len(COMMAND_SPECS)} authoritative help rows)")
     return 0

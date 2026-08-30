@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Authoritative host-side contract for both SHT3x diagnostic CLIs.
+"""Authoritative host-side contract for the shared SHT3x diagnostic CLI.
 
-The Arduino and native ESP-IDF examples intentionally retain independent
-framework-specific implementations.  This module is not compiled into either
-firmware; repository checks compare both implementations with these ordered
-command rows so help, safety gates, and execution ownership cannot drift.
+The Arduino and native ESP-IDF examples compile the same framework-neutral
+command processor. This module is not compiled into either firmware; repository
+checks compare that implementation with these ordered command rows so help,
+safety gates, and execution ownership cannot drift.
 """
 
 from __future__ import annotations
