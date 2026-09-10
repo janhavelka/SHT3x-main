@@ -47,7 +47,9 @@ I2C, supports two selectable addresses, and is packaged in a 2.5 mm x 2.5 mm x
 
 The sensor supports single-shot measurements, periodic measurements at
 0.5/1/2/4/10 measurements per second, ART mode at 4 Hz, status readout, soft
-reset, heater control, and alert limits. Source: datasheet, pp. 10-13.
+reset, and heater control. Source: datasheet, pp. 10-13. Alert limits are not
+defined in the datasheet at all; their commands and reduced data format exist
+only in the alert application note. Source: alert note, pp. 1-2.
 
 ## Pinout And Signals
 
@@ -100,7 +102,7 @@ Signal notes:
 | --- | ---: | ---: | --- |
 | Power-up time | typ. 0.5 ms, max 1 ms | typ. 0.5 ms, max 1.5 ms | Datasheet, p. 7 |
 | Soft reset time | typ. 0.5 ms, max 1.5 ms | not repeated in low-voltage table | Datasheet, p. 7 |
-| `nRESET` low pulse | min 1 us | min 1 us | Datasheet, p. 7 |
+| `nRESET` low pulse | min 1 us | not repeated in low-voltage table | Datasheet, p. 7 |
 | Low repeatability measurement | typ. 2.5 ms, max 4 ms | typ. 2.5 ms, max 4.5 ms | Datasheet, p. 7 |
 | Medium repeatability measurement | typ. 4.5 ms, max 6 ms | typ. 4.5 ms, max 6.5 ms | Datasheet, p. 7 |
 | High repeatability measurement | typ. 12.5 ms, max 15 ms | typ. 12.5 ms, max 15.5 ms | Datasheet, p. 7 |
@@ -162,7 +164,7 @@ reproduces the datasheet Fahrenheit formula exactly.
 | Fetch data | `0xE000` | Reads periodic/ART buffered data; NACK if no data is present; buffer clears after fetch. | Datasheet, p. 11 |
 | Break periodic | `0x3093` | Stops periodic acquisition; takes 1 ms. | Datasheet, pp. 11-12 |
 | Soft reset | `0x30A2` | Reinitializes system controller and reloads calibration data. | Datasheet, p. 12 |
-| General-call reset | address `0x00`, byte `0x06` | Resets all devices on bus that support I2C general call. | Datasheet, p. 12 |
+| General-call reset | address `0x00`, byte `0x06` | Resets all devices on bus that support I2C general call; only works while the sensor can still process I2C commands, so it is strictly weaker than `nRESET` / hard reset. | Datasheet, p. 12 |
 | Heater enable / disable | `0x306D` / `0x3066` | Heater is for plausibility checking only; disabled after reset. | Datasheet, pp. 12-13 |
 | Read status / clear status | `0xF32D` / `0x3041` | Clear affects flags 15, 11, 10, and 4. | Datasheet, p. 13 |
 | Get serial number, stretching / no stretching | `0x3780` / `0x3682` | Returns two words plus CRCs; 32-bit serial number. | Serial-number note, p. 1 |
@@ -237,12 +239,25 @@ instead biases every threshold low by half a code (about 0.39 %RH / 0.17 degC)
 and mis-encodes the published `20 %RH / -10 degC` default. Source: alert note,
 pp. 1-3; `HT_AlertMode_BitConversion.xlsx` cells `D8`/`F8`.
 
+Alert limits are volatile and are **not** preserved across a reset. Any reset -
+soft reset, `nRESET`, general call, brown-out or power-up - reloads the four
+initial values in the table above and discards customer-programmed limits, which
+must then be re-written. ALERT is also driven active after every such event,
+which is why status bit 15 has a reset default of `1`. This is the reason the
+driver keeps a RAM restore plan (`CachedSettings::alertRaw`) and re-applies it in
+`resetAndRestore()`. Source: alert note, p. 3, sections 3 and 3.3.
+
+Alert mode itself is only active while the sensor runs in periodic (or ART) data
+acquisition mode. Breaking out to single-shot deactivates it. Individual limits
+are deactivated by setting the low set point above the high set point
+(`LowSet > HighSet`). Source: alert note, p. 1, section 1.
+
 ## Modes, Interrupts, Status, And Faults
 
 | Mode | Behavior | Readout | Source |
 | --- | --- | --- | --- |
 | Single-shot | One command triggers one RH/T pair. Commands select repeatability and clock stretching. | Read sensor after measurement; with no stretching, read header NACKs until data is ready. | Datasheet, p. 10 |
-| Periodic | One command starts a stream of RH/T pairs at selected mps and repeatability. | Use fetch data `0xE000`; data memory clears after fetch. | Datasheet, pp. 10-11 |
+| Periodic | One command starts a stream of RH/T pairs at selected mps and repeatability. Clock stretching cannot be selected in periodic/ART mode, so `Config::clockStretching` applies to single-shot only. | Use fetch data `0xE000`; data memory clears after fetch. | Datasheet, pp. 10-11 |
 | ART | Accelerated response-time mode starts acquisition at 4 Hz. | Same fetch and break flow as periodic mode. | Datasheet, p. 11 |
 
 ALERT behavior:
@@ -351,9 +366,11 @@ traceable.
 
 Recorded so the gaps are deliberate rather than accidental.
 
-- **Power-up time `tPU`** (typ 0.5 ms, max 1 ms at 2.4-5.5 V; max 1.5 ms below
-  2.4 V, datasheet p. 7). The driver has no power-up wait: the application owns
-  the delay between VDD reaching `VPOR` and the first `bind()`/`begin()` call.
+- **Cold-boot power-up time `tPU`** (typ 0.5 ms, max 1 ms at 2.4-5.5 V; max
+  1.5 ms below 2.4 V, datasheet p. 7). The application owns the delay between VDD
+  reaching `VPOR` and the first `bind()`/`begin()` call. After a reset the driver
+  issues itself - soft reset, general call, or the `Config::hardReset` callback -
+  it waits `RESET_DELAY_MS` (`src/SHT3x.cpp`), which covers both `tPU` and `tSR`.
 - **Fahrenheit conversion** (datasheet p. 14). Celsius only; convert in the
   application.
 - **Dynamic `ADDR` switching** (datasheet p. 8). `Config::i2cAddress` is fixed

@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `docs/open-issues.md`, a maintained backlog of confirmed defects and
+  simplifications with a concrete proposal for each, replacing the finished
+  `docs/CODE_AUDIT.md` / `docs/CODE_AUDIT_REMEDIATION.md` report pair.
+- Added a regression for `setMode()` committing the restore plan when the
+  requested mode already matches, and coverage that the Arduino transport
+  callbacks never touch the shared `Wire` timeout.
+- Added separate saturating diagnostics for proven periodic read-header NACKs
+  and bounded no-data observations inferred from ambiguous transports.
+- Added focused native regressions for periodic no-data bounds/re-arming,
+  OFFLINE recovery, missed-output remainder accounting, serial and alert CRCs,
+  sample age, heater verification, and isolated test clocks/transports.
+- Added direct regressions for exact periodic retry timing, full microsecond
+  wrap, callback/deadline admission, active-mode probe rejection, selective
+  scanner ACKs, public alert-limit readback, and heater-status readback.
+
+### Changed
+- Reset and Break settle waits now carry a one-millisecond clock-quantization
+  allowance (`RESET_DELAY_MS` 3 ms, `BREAK_DELAY_MS` 2 ms), because a wait of N ms
+  anchored on a truncated millisecond timestamp only guarantees more than
+  N-1 ms. The previous 2 ms reset wait could elapse in just over 1 ms, below the
+  datasheet `tSR` maximum of 1.5 ms.
+- `recover()` no longer issues Read Status while periodic/ART acquisition is
+  running. Fetch Data is the only documented readout in that mode and the answer
+  could not be accepted before Break anyway, so both transactions were wasted.
+- `setMode()` now commits the desired restore mode even when the driver is
+  already in the requested mode, so a later `resetAndRestore()` cannot restart an
+  acquisition mode the caller explicitly turned off.
+- The Arduino example transport no longer saves and restores the global `Wire`
+  timeout around every transfer. That is per-instance state shared with every
+  other device on the bus, and the adapter already enforces the driver's
+  requested bound by measuring the transfer.
+- The shared CLI now uses one timeout for every scheduled measurement job. The
+  previous 500 ms deadline was shorter than the acquisition period at 0.5, 1 and
+  2 mps, so repeated `periodic fetch`, `read` and `stress` commands timed out
+  before the sensor could produce a sample.
+- `i2c_soak` now runs for the requested duration and counts failed samples
+  instead of aborting on the first one, and reports a setup failure separately.
+- Made job deadlines admission boundaries checked once per poll: a callback
+  admitted before its deadline retains a valid late completion, while a later
+  poll starts no further I2C after expiry.
+- Made ART repeatability/rate setters update only the desired restore cache,
+  and made periodic no-data retries wait the fetch margin instead of one full
+  acquisition period.
+- Shared one framework-neutral fixed-buffer command processor between the
+  Arduino and native ESP-IDF diagnostic examples while keeping native platform,
+  transport, timing, and bus ownership hooks.
+- Widened package compatibility by removing unnecessary PlatformIO framework/
+  platform and ESP-IDF target allow-lists. Intentional export filters and the
+  packaged HIL tooling remain unchanged.
+- Removed duplicate shared-CLI checks from the ESP-IDF example guard and
+  obsolete alternate-output branches from the unified-CLI HIL runner.
+
+### Fixed
+- Fixed the native ESP-IDF example adapter mapping every unrecognized `esp_err_t`
+  to `Err::I2C_BUS`. That claimed a bus/arbitration fault the adapter cannot
+  prove, and it excluded a normal periodic Fetch Data NACK from the driver's
+  bounded no-data inference, which only fires on `Err::I2C_ERROR` - so ordinary
+  "no new sample" responses were counted as transport failures and could latch
+  the driver OFFLINE.
+- Deduplicated the shared CLI's `alert read` and `heater status` handlers, which
+  had drifted into two output formats for the same data, and removed an
+  unreachable branch in `tick()`, a redundant forward declaration, and dead
+  extrema initialization.
+- Removed write-only `_milliSample` state, the duplicated raw-write wrapper body,
+  two byte-identical ART branches, a redundant `readSettings()` branch, and an
+  unused `<cstring>` include from the driver.
+- `tools/check_core_timing_guard.py` now checks for `delay()`, the one primitive
+  the engineering rules name by hand. `tools/check_cli_contract.py`'s native
+  ESP-IDF transport gate no longer searches the shared CLI, where seven of its
+  eight tokens live and made it pass vacuously. The HIL runner's status parser
+  now accepts every status kind the CLI can print, not three of five.
+  `tools/check_docs_contract.py` no longer crashes on a file that is tracked but
+  deleted from the working tree.
+- Corrected documentation that contradicted the code: the health-tracking
+  architecture in `AGENTS.md`, hardware-validation claims that `docs/hardware.md`
+  records as not run, the clock-stretching and ART setter descriptions, the
+  `generalCallReset()` return code, the `hardwareStateValid()` invalidation rule,
+  the cached-sample getter return codes, the ESP-IDF error-mapping list, and
+  three changelog links to release tags that never existed.
+- Bounded periodic proven and inferred no-data streaks with an automatic
+  three-period-plus-margin window, re-armed the window after terminal jobs, and
+  prevented ordinary no-data observations from poisoning transport health.
+- Completed each tracked logical operation exactly once after protocol
+  validation. CRC/checksum and sensor command-rejection failures now affect
+  logical health without incrementing transport failures.
+- Required `begin()` to establish either Break or soft-reset reconciliation and
+  then read a clean CRC-valid status before reporting success.
+- Preserved verified acquisition state when measurement cancellation reports
+  only `RESULT_MAY_BE_PENDING`, and made recovery-backoff admission health-neutral.
+- Carried sub-period remainder in the estimate of sensor outputs not fetched,
+  guarded microsecond command-spacing wrap with a millisecond companion, and
+  added an unconditional 1 ms single-shot clock-quantization allowance.
+- Made `probe()` reject active periodic/ART acquisition, made heater changes
+  verify status and the applied heater bit before caching, and made
+  `resetToDefaults()` issue a physical soft reset before committing defaults.
+- Documented that a failed, admitted `resetToDefaults()` attempt can leave
+  partially changed physical state even though the local cache is not committed.
+- Corrected local-state handling in `readSettings()` and measurement request
+  validation, validated transport-capability bits, accumulated partial native
+  ESP-IDF console input safely, documented diagnostic pull-up limits, and
+  removed unreachable general-reset dispatch.
+
 ## [1.8.0] - 2026-08-05
 
 ### Added
@@ -45,7 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Consolidated software status in the README, physical evidence and runner
   procedure in `docs/hardware.md`, and documentation/package policy in
   `docs/README.md`. Generated HIL runs are disposable local output; accepted raw
-  evidence is archived outside the checkout and represented here by fingerprints.
+  evidence is archived outside the checkout.
 - Shared one framework-neutral transfer-counter type across Arduino example
   support instead of maintaining duplicate structures and field-copy glue.
 
@@ -429,6 +532,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [1.3.2]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.3.0
-[1.2.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.2.0
-[1.1.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.1.0
-[1.0.0]: https://github.com/janhavelka/SHT3x-main/releases/tag/v1.0.0

@@ -8,14 +8,13 @@
 #include <driver/i2c_master.h>
 
 #include "SHT3x/SHT3x.h"
+#include "TransferStats.h"
 
 struct IdfI2cContext {
   i2c_master_bus_handle_t bus = nullptr;
   i2c_master_dev_handle_t device = nullptr;
   uint8_t address = 0x44;
-  uint32_t readTransfers = 0;
-  uint32_t writeTransfers = 0;
-  uint32_t totalTransfers = 0;
+  sht3x_example::TransferStats transferStats{};
 };
 
 SHT3x::Status idfI2cWrite(uint8_t addr, const uint8_t* data, size_t len,

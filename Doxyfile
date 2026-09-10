@@ -35,6 +35,7 @@ INPUT                  = README.md CHANGELOG.md include \
                          docs/hardware.md \
                          docs/esp-idf.md \
                          docs/integration.md \
+                         docs/open-issues.md \
                          docs/reference/sht3x-chip-notes.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES

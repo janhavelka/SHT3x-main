@@ -63,6 +63,9 @@ inline void resetTransferStats() {
 /// @return true if initialized
 inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
   // Example-only convenience. In a managed bus, the manager should own these settings.
+  // ESP32 Wire's internal pull-ups are suitable only for diagnostic bring-up;
+  // reliable 400 kHz designs need external pull-ups sized for voltage and bus
+  // capacitance.
   if (!Wire.begin(sda, scl, freqHz)) {
     return false;
   }
@@ -94,15 +97,14 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                           false, 0U, 0U);
   }
 
-  const uint32_t previousTimeoutMs = wire->getTimeOut();
-  wire->setTimeOut(timeoutMs);
+  // The bus owner owns Wire's timeout; initWire() sets it once. This callback
+  // enforces the driver's requested bound by measuring the transfer instead.
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   // SHT3x requires STOP between command write and read header.
   const uint32_t startMs = millis();
   uint8_t result = wire->endTransmission(true);
   const uint32_t elapsedMs = millis() - startMs;
-  wire->setTimeOut(previousTimeoutMs);
 
   if (elapsedMs > timeoutMs) {
     return recordTransfer(Status::Error(Err::I2C_TIMEOUT, "I2C write timeout",
@@ -167,13 +169,10 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                           true, txLen, 0U);
   }
 
-  // Read phase
-  const uint32_t previousTimeoutMs = wire->getTimeOut();
-  wire->setTimeOut(timeoutMs);
+  // Read phase. As above, Wire's own timeout stays owned by the bus manager.
   const uint32_t startMs = millis();
   size_t received = wire->requestFrom(addr, rxLen);
   const uint32_t elapsedMs = millis() - startMs;
-  wire->setTimeOut(previousTimeoutMs);
   if (elapsedMs > timeoutMs) {
     for (size_t i = 0; i < received; i++) {
       (void)wire->read();

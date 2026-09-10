@@ -9,8 +9,10 @@
 namespace SHT3x {
 
 /// Transport capability flags.
-/// @note READ_HEADER_NACK changes driver behavior for periodic Fetch Data
-///       readiness. TIMEOUT and BUS_ERROR document transport precision for
+/// @note READ_HEADER_NACK identifies periodic Fetch Data responses that the
+///       transport can prove are expected read-header NACKs. It changes the
+///       diagnostic provenance, not whether a bounded periodic no-data retry is
+///       permitted. TIMEOUT and BUS_ERROR document transport precision for
 ///       diagnostics and future policy; callbacks should still return the most
 ///       specific Err value they can prove.
 enum class TransportCapability : uint8_t {
@@ -50,6 +52,12 @@ inline constexpr bool hasCapability(TransportCapability caps, TransportCapabilit
 ///         - Err::I2C_TIMEOUT for timeout
 ///         - Err::I2C_BUS for bus/arbitration error
 ///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
+/// @note Once the callback has been entered, return only the transport codes
+///       listed above. INVALID_CONFIG and INVALID_PARAM are treated as
+///       driver-side rejections: they are excluded from health accounting, so a
+///       real bus outcome reported with one of them is invisible to
+///       consecutiveFailures(), DriverState and the OFFLINE latch. Use them only
+///       for pre-flight guards that run before any bus access.
 /// @note Callbacks must not recursively call public APIs on the same SHT3x
 ///       instance. Serialize any shared bus access outside the driver. They
 ///       must return within timeoutMs, avoid unbounded waits, and must not
@@ -74,6 +82,12 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 ///         - Err::I2C_TIMEOUT for timeout
 ///         - Err::I2C_BUS for bus/arbitration error
 ///         - Err::I2C_ERROR when the adapter cannot distinguish the exact cause
+/// @note Once the callback has been entered, return only the transport codes
+///       listed above. INVALID_CONFIG and INVALID_PARAM are treated as
+///       driver-side rejections: they are excluded from health accounting, so a
+///       real bus outcome reported with one of them is invisible to
+///       consecutiveFailures(), DriverState and the OFFLINE latch. Use them only
+///       for pre-flight guards that run before any bus access.
 /// @note The driver issues command writes via i2cWrite() and then calls
 ///       i2cWriteRead() with txLen==0 to perform the read after a tIDLE delay.
 ///       Combined write+read (repeated-start) is not allowed for SHT3x flows.
@@ -126,8 +140,13 @@ enum class Repeatability : uint8_t {
   HIGH_REPEATABILITY = 2
 };
 
-/// Clock stretching mode for single-shot measurement and serial-number reads.
-/// Periodic and ART modes use Fetch Data and do not use this setting.
+/// Clock stretching mode for single-shot measurement commands.
+/// @note This selects the single-shot command family only. The driver always
+///       waits the estimated conversion time in a bus-silent phase before
+///       issuing the read, so the sensor never actually stretches SCL and the
+///       setting does not change driver timing or the required i2cTimeoutMs.
+///       Periodic and ART modes cannot select stretching at all and use Fetch
+///       Data; readSerialNumber() takes its own explicit stretch argument.
 enum class ClockStretching : uint8_t {
   STRETCH_DISABLED = 0,
   STRETCH_ENABLED = 1
@@ -185,11 +204,13 @@ struct Config {
   // === Timing ===
   uint16_t commandDelayMs = 1;                        ///< Minimum command spacing (tIDLE), 0 normalizes to 1; max 1000 ms
 
-  /// Periodic mode not-ready timeout (0 = disabled).
-  /// @note Applies only when transportCapabilities includes READ_HEADER_NACK.
-  ///       Before this timeout expires, a proven read-header NACK during
-  ///       periodic Fetch Data is treated as MEASUREMENT_NOT_READY and does not
-  ///       increment health failures.
+  /// Periodic mode not-ready timeout (0 = automatic).
+  /// @note Zero derives a finite window of three acquisition periods plus the
+  ///       configured/automatic fetch margin. During this window a proven
+  ///       read-header NACK, or an ambiguous generic read error from a transport
+  ///       that cannot report read-header NACK, is treated as a retryable
+  ///       MEASUREMENT_NOT_READY observation. Expiry terminates the logical
+  ///       measurement with TIMEOUT without adding a transport failure.
   uint32_t notReadyTimeoutMs = 0;                     ///< 0..600000 ms
 
   /// Periodic fetch margin (ms) to avoid early fetches (0 = auto, max(2, period/20))

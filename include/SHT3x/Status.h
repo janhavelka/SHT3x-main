@@ -48,9 +48,10 @@ constexpr bool isProtocolError(Err error) {
          error == Err::WRITE_CRC_ERROR;
 }
 
-/// True only for a proven expected measurement-not-ready condition.
+/// True only for an expected measurement-not-ready condition.
 /// @param error Error code to classify.
-/// @return true only for the expected measurement-not-ready code.
+/// @return true only for the expected measurement-not-ready code, whether its
+///         transport provenance was proven or boundedly inferred.
 constexpr bool isExpectedNotReady(Err error) {
   return error == Err::MEASUREMENT_NOT_READY;
 }

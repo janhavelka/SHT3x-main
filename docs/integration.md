@@ -41,7 +41,10 @@ ISR-safe; serialize access in the owning task.
 3. On first use, and after any owner-level bus recovery, submit a nonzero
    `JobRequest` to `requestEnsureIdle()`. Advance it with
    `pollJob(nowMs, 1, result)` until it returns a terminal result. This is the
-   only way to establish a verified acquisition baseline.
+   owner-safe way to establish a verified acquisition baseline. The synchronous
+   `begin()`, `softReset()`, `generalCallReset()`, `recover()`,
+   `resetToDefaults()` and `resetAndRestore()` also establish it, at the
+   blocking cost described under "Synchronous Helpers" below.
 4. For a sample, call `requestMeasurement(JobRequest)` and poll the same way.
    Consume every terminal result immediately and check that `result.requestId`
    matches the request you issued.
@@ -50,7 +53,9 @@ ISR-safe; serialize access in the owning task.
    `MilliRounding::TRUNCATE_SCALED` when an existing contract requires
    truncating the positive scaled ratio before the temperature offset.
 6. Set `singleShotMeasurementMarginMs` explicitly if you need a fixed
-   conversion wait. The default is 1 ms on top of the datasheet maximum.
+   conversion wait. The wait is the datasheet maximum rounded up to whole
+   milliseconds, plus an unconditional 1 ms allowance for millisecond-timestamp
+   truncation, plus this margin, which defaults to 1 ms.
 7. Cancel only between polls, with `cancelJob()`. Cancellation is bus-silent.
    Do not cancel and forget a job that may have changed hardware state: either
    let it reach its terminal result, or cancel it and then schedule
@@ -58,6 +63,24 @@ ISR-safe; serialize access in the owning task.
 
 Each `pollJob()` performs at most one transport callback. Wait phases —
 conversion, reset settle, command spacing — perform none.
+
+## Synchronous Helpers
+
+`recover()`, `resetToDefaults()`, `resetAndRestore()` and `begin()` are
+synchronous. They are bounded, but the bound is a callback count, and the wall
+clock you must budget for is:
+
+```text
+worst case = (I2C callbacks x i2cTimeoutMs)
+           + the listed settle waits
+           + your own busReset/hardReset callback time
+```
+
+With the default `i2cTimeoutMs = 50` and every recovery rung enabled, that is
+roughly 0.66 s for `recover()` and 1.45 s for `resetAndRestore()`, plus your
+reset callbacks, which the driver does not bound at all. An I2C task with a
+short tick or a task watchdog must either budget for that or stay on
+`requestEnsureIdle()`, which spreads the same reconciliation across polls.
 
 If your scheduler keeps 64-bit deadlines, pass the low 32 bits into
 `JobRequest::deadlineMs`. The driver's comparisons are wrap-safe as long as the

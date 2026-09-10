@@ -1,7 +1,7 @@
 {
   "name": "SHT3x",
   "version": "1.8.0",
-  "description": "Deterministic SHT3x temperature/humidity sensor driver for ESP32.",
+  "description": "Deterministic, framework-neutral C++17 SHT3x temperature/humidity sensor driver.",
   "keywords": [
     "sht3x",
     "sht30",
@@ -34,13 +34,6 @@
   },
   "license": "MIT",
   "homepage": "https://www.thymos.cz",
-  "frameworks": [
-    "arduino",
-    "espidf"
-  ],
-  "platforms": [
-    "espressif32"
-  ],
   "headers": [
     "SHT3x/SHT3x.h"
   ],
@@ -63,6 +56,7 @@
       "docs/hardware.md",
       "docs/esp-idf.md",
       "docs/integration.md",
+      "docs/open-issues.md",
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
       "tools/run_sht3x_hil.py",
