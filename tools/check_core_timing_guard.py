@@ -17,6 +17,7 @@ SCAN_DIRS = ("src", "include")
 VALID_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp"}
 
 FORBIDDEN_CALLS = {
+    "delay": re.compile(r"\bdelay\s*\("),
     "millis": re.compile(r"\bmillis\s*\("),
     "micros": re.compile(r"\bmicros\s*\("),
     "delayMicroseconds": re.compile(r"\bdelayMicroseconds\s*\("),

@@ -347,8 +347,10 @@ sample helpers can return data.
 
 Changing repeatability or periodic rate restarts active `PERIODIC` acquisition,
 and the cache is updated only after that restart succeeds. ART has one fixed
-vendor command and cadence with neither setting encoded, so both setters update
-only the desired restore cache in ART mode and perform zero I2C.
+vendor command and cadence with neither setting encoded, so in ART mode both
+setters update the driver's desired settings and the restore cache and perform
+zero I2C. The new value is visible immediately through `getRepeatability()`,
+`getPeriodicRate()` and `getSettings()`; nothing is sent to the sensor.
 
 ### Status Semantics
 
@@ -484,11 +486,27 @@ Synchronous convenience/advanced APIs are bounded by:
 
 - I2C write/read phases: `i2cTimeoutMs`
 - Command spacing gate: `commandDelayMs + i2cTimeoutMs` (guarded)
-- Reset/Break waits: `RESET_DELAY_MS` (2 ms), `BREAK_DELAY_MS` (1 ms), both guarded
+- Reset/Break waits: `RESET_DELAY_MS` (3 ms), `BREAK_DELAY_MS` (2 ms), both guarded.
+  Each is the datasheet figure (soft reset 1.5 ms, Break 1 ms, rounded up to
+  whole milliseconds) plus one millisecond, because a millisecond timestamp
+  sampled when the wait starts can truncate almost a full millisecond.
 
 Legacy command-spacing/reset waits use deadline and stall guards plus
 `cooperativeYield`; they are not used by the owner-safe wait phases. The driver
 has no unbounded retry loop and performs no steady-state heap allocation.
+
+A callback count is only half a bound. The wall clock an RTOS integrator has to
+budget for is:
+
+```text
+worst case = (I2C callbacks x i2cTimeoutMs) + the listed waits
+           + your own busReset/hardReset callback time
+```
+
+With the default `i2cTimeoutMs = 50` and every recovery rung enabled, that is
+roughly 0.66 s for `recover()` and 1.45 s for `resetAndRestore()`. The driver
+does not bound the application's `busReset`/`hardReset` callbacks at all. Owner
+tasks with a short tick or a watchdog should stay on `requestEnsureIdle()`.
 
 ### Public API Transaction and Latency Summary
 
@@ -506,12 +524,12 @@ because the vendor requirement is command-to-next-command spacing.
 | `pollJob(..., >=1, ...)` | 0 or 1 | One callback timeout maximum | Never consumes more than one instruction per call; terminal identity is returned once. |
 | `cancelJob()` / `cancelMeasurement()` | 0 | None | Local cancellation; effect reports pending/changed/indeterminate hardware state. `RESULT_MAY_BE_PENDING` preserves verified acquisition state. |
 | `requestEnsureIdle()` complete job | 4 maximum across polls | Two bus-silent settle phases | Break, reset, status command, status read; caller deadline/cancel applies. |
-| `begin()` | 4, or 5 with periodic/ART start | Break 1 ms + reset 2 ms + command-spacing guards | Break and soft reset are attempted independently; success requires either accepted-and-settled command plus a clean CRC-valid status read, then the optional start. |
+| `begin()` | 4, or 5 with periodic/ART start | Break 2 ms + reset 3 ms + command-spacing guards | Break and soft reset are attempted independently; success requires either accepted-and-settled command plus a clean CRC-valid status read, then the optional start. |
 | `getMeasurement()` / cached sample getters | 0 transactions | none | Reads cached data only. |
-| `setMode(SINGLE_SHOT)` / `stopPeriodic()` | Break command if periodic/ART active | command spacing + write timeout + 1 ms break wait | No sensor command when already idle. |
+| `setMode(SINGLE_SHOT)` / `stopPeriodic()` | Break command if periodic/ART active | command spacing + write timeout + 2 ms break wait | No sensor command when already idle. |
 | `startPeriodic()` / `startArt()` | Optional Break, then start command | command spacing + write timeout, plus break wait if needed | Updates cached desired settings only after success. |
 | `setRepeatability()` / `setPeriodicRate()` | 0 when idle or in ART; restart sequence only in periodic mode | Bounded by `startPeriodic()` for an active periodic restart | ART changes only the desired restore cache because its fixed command encodes neither setting. Periodic restart failures leave the last fully applied cache intact. |
-| `setClockStretching()` | 0 transactions | none | Applies to single-shot and serial-number command selection only. |
+| `setClockStretching()` | 0 transactions | none | Selects the single-shot command family only. `readSerialNumber()` takes its own explicit `stretch` argument and ignores this setting. |
 | `readStatus()` / `readHeaterStatus()` | Status command + receive-only read | command spacing + write/read timeout | Returns `BUSY` during any cooperative job or active periodic/ART. |
 | `readStatusWithModeRestore()` | Break, status read, periodic/ART restart | bounded multi-step sequence | Interrupts cadence; inspect step statuses on failure. |
 | `clearStatus()` | Clear-status command | command spacing + write timeout | Destructive for status flags 15, 11, 10, and 4. |
@@ -523,11 +541,11 @@ because the vendor requirement is command-to-next-command spacing.
 | `writeCommand()` / `writeCommandWithData()` | 1 command write | command spacing + write timeout | Advanced direct access; normal helpers are preferred. |
 | `readCommand()` | Command write + receive-only read | command spacing + write/read timeout | Read length is capped to documented SHT3x frame sizes. |
 | `probe()` | Status command + read via raw transport | command spacing + write/read timeout | Returns `BUSY` during periodic/ART. Otherwise diagnostic only; does not update logical, transport, protocol, or state health. |
-| `softReset()` | Soft-reset command | command spacing + write timeout + 2 ms reset wait | Blocked while periodic/ART is active. Success clears pending measurement/sample state and leaves local mode as single-shot. |
-| `generalCallReset()` | General-call write to address `0x00` | command spacing + write timeout + 2 ms reset wait | Bus-wide, disabled by default, and an application/bus-manager policy. Success clears local measurement state and leaves local mode as single-shot. |
+| `softReset()` | Soft-reset command | command spacing + write timeout + 3 ms reset wait | Blocked while periodic/ART is active. Success clears pending measurement/sample state and leaves local mode as single-shot. |
+| `generalCallReset()` | General-call write to address `0x00` | command spacing + write timeout + 3 ms reset wait | Bus-wide, disabled by default, and an application/bus-manager policy. Success clears local measurement state and leaves local mode as single-shot. |
 | `interfaceReset()` | Application callback only | bounded by callback contract | Callback must implement the SCL sequence and return a `Status`; every attempt invalidates verified state and starts tIDLE, even on failure. |
 | `recover()` | 2–15 callbacks maximum when every ladder option is enabled (at most 13 I2C callbacks plus interface/hard-reset callbacks) | Each enabled reset wait is bounded; no retry loop | A probe can short-circuit only when hardware state was already verified idle. Unknown state requires Break+soft reset or a hard/general-call reset plus validated status; interface reset alone proves only communication. Use `requestEnsureIdle()` for owner-safe startup/reconciliation. |
-| `resetToDefaults()` | Recovery bound plus 1 soft-reset callback | Same finite ladder, then command spacing + write timeout + 2 ms reset wait | Always performs a physical soft reset after recovery before committing local defaults. Failure after an admitted attempt begins can leave partial/indeterminate physical state; the restore cache is unchanged and `hardwareStateValid()` is false. Precondition/backoff rejections preserve state. |
+| `resetToDefaults()` | Recovery bound plus 1 soft-reset callback | Same finite ladder, then command spacing + write timeout + 3 ms reset wait | Always performs a physical soft reset after recovery before committing local defaults. Failure after an admitted attempt begins can leave partial/indeterminate physical state; the restore cache is unchanged and `hardwareStateValid()` is false. Precondition/backoff rejections preserve state. |
 | `resetAndRestore()` | Recovery bound; restore adds at most 16 I2C callbacks | Same finite ladder plus fixed restore plan (three-callback heater verification + up to four three-callback alert writes + optional acquisition start) | Partial restore is reported and invalidates verified hardware state. |
 
 `tick()` returns `void`; use `pollJob()` for exact failure, phase, identity, and
@@ -545,7 +563,9 @@ terminal identity must be consumed; `end()` emits no result.
 ## Recovery Ladder
 
 `recover()` performs one tracked status probe, then a configurable ladder, and
-leaves a single-shot local baseline on success:
+leaves a single-shot local baseline on success. The opening probe is skipped
+while periodic/ART acquisition is running, because Fetch Data is the only
+documented readout in that mode and Break has to run first anyway:
 
 1. Interface/bus reset (`busReset` callback), then probe
 2. Soft reset, then probe
@@ -606,15 +626,22 @@ The driver is **not** thread-safe and must be externally serialized. Do not call
 
 ## ESP32 Notes
 
-- Default is **no clock stretching**. If you enable stretching, set `i2cTimeoutMs` >=
-  worst-case tMEAS (15.5 ms at low-Vdd, high repeatability) + margin.
-- Clock stretching affects only single-shot measurement commands and
-  serial-number reads. Periodic/ART modes use their own command families and
-  Fetch Data readout.
+- Default is **no clock stretching**, and the driver never depends on stretching:
+  the cooperative single-shot path always waits the estimated conversion time in
+  a bus-silent phase and only then issues the read, so the sensor already has
+  data latched and never holds SCL. `ClockStretching::STRETCH_ENABLED` therefore
+  changes only which single-shot command word is sent; it does not change the
+  driver's timing, and it does not require a larger `i2cTimeoutMs`.
+- `Config::clockStretching` applies to single-shot commands only. Periodic/ART
+  modes cannot select stretching at all (datasheet section 4.5) and use Fetch
+  Data readout; `readSerialNumber()` takes its own explicit `stretch` argument.
 - On ESP32 Wire, a 0-byte `requestFrom` is **ambiguous** (could be not-ready or
   bus fault). Return `I2C_ERROR`; only periodic Fetch Data may infer bounded
   no-data from it, and the proven-NACK counter remains separate.
-- Use `Wire.setTimeOut()` and keep bus pull-ups and clock speed within datasheet limits.
+- The bus owner sets `Wire.setTimeOut()` once, at bus initialization, and keeps
+  pull-ups and clock speed within datasheet limits. Transport callbacks must not
+  change it per transfer: it is per-instance state shared with every other device
+  on that bus.
 - Transport callbacks must not recursively call public APIs on the same driver
   instance. Serialize shared buses and multi-task access outside the driver.
 
@@ -804,11 +831,13 @@ opt-ins and cleanup policies as raw writes.
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - release history
-- <a href="docs/README.md">Documentation index</a> - maintained guides and package boundary
+- `docs/README.md` - documentation index and package boundary
+  (not a link: Doxygen cannot disambiguate two files named `README.md`)
 - [docs/integration.md](docs/integration.md) - embedding the driver in a larger firmware
 - [docs/hardware.md](docs/hardware.md) - hardware coverage and the HIL runbook
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component and example notes
 - [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - datasheet facts, with the known vendor inconsistencies
+- [docs/open-issues.md](docs/open-issues.md) - confirmed defects and simplifications not yet fixed
 - `docs/reference/vendor/` - the Sensirion PDFs and alert spreadsheet (repository only)
 
 Public API Doxygen comments live in `include/SHT3x/`. In a full repository

@@ -1,7 +1,5 @@
 # SHT3x ESP-IDF Notes
 
-Last updated: 2026-08-30
-
 Scope: framework-neutral core component plus native ESP-IDF diagnostic glue
 around the shared framework-neutral example CLI. Arduino/PlatformIO transport
 and platform setup remain separate and intact.
@@ -14,8 +12,9 @@ and platform setup remain separate and intact.
 - `idf_component.yml` declares ESP-IDF `>=5.4`.
 - Root `CMakeLists.txt` registers the core with `idf_component_register`.
 - `examples/idf/basic` uses the ESP-IDF 5.4+ `driver/i2c_master.h` API.
-- The ESP-IDF example owns the I2C bus/device handles, reset/bus-recovery GPIOs
-  when configured, timing hooks, input task, and CLI loop. Arduino and ESP-IDF
+- The ESP-IDF example owns the I2C bus/device handles, timing hooks, input task,
+  and CLI loop. Neither shipped example supplies `Config::busReset` or
+  `Config::hardReset`, so `iface_reset` returns `UNSUPPORTED` in both. Arduino and ESP-IDF
   compile the same fixed-buffer `examples/common/Sht3xCli.cpp` command
   processor behind their own platform hooks.
 - The ESP-IDF example is a diagnostic bring-up CLI, not a production task model.
@@ -92,6 +91,12 @@ Expected behavior:
 - Map `ESP_ERR_INVALID_ARG` to `Err::INVALID_PARAM`.
 - Map `ESP_ERR_INVALID_RESPONSE` to `Err::I2C_ERROR` unless a custom adapter can
   distinguish address, data, or read-header NACK phases.
+- Map every other `esp_err_t` to `Err::I2C_ERROR` as well. `i2c_master_transmit()`
+  and `i2c_master_receive()` surface a NACK differently across 5.x releases, so an
+  unrecognized code is exactly the "adapter cannot distinguish the cause" case.
+  Do not use `Err::I2C_BUS` as the catch-all: it claims a proven bus/arbitration
+  fault, and it also excludes the failure from the driver's bounded periodic
+  no-data inference, which only fires on `Err::I2C_ERROR`.
 - Do not advertise `TransportCapability::READ_HEADER_NACK` unless the adapter
   can prove that phase.
 
@@ -143,10 +148,10 @@ single-address device handle is not a bus-wide general-call transport.
 ## Validation
 
 The repository defines pinned ESP-IDF 5.4.2 CI builds for ESP32-S2 and ESP32-S3
-and keeps the example/CLI contract under repository checks. Both pure ESP-IDF
-targets passed for the merged `1.8.0` implementation baseline. The release
-commit must pass the same jobs before tagging, and pure ESP-IDF hardware
-validation remains open.
+(`.github/workflows/ci.yml`, job `idf-example-build`) and keeps the example/CLI
+contract under repository checks. No local ESP-IDF build result is recorded
+here: confirm the live CI run for the commit you are evaluating. Pure ESP-IDF
+hardware validation remains open.
 
 The following maintenance commands require a full repository checkout:
 
@@ -174,10 +179,5 @@ Confirm live CI logs or local `idf.py` logs before claiming ESP-IDF validation.
 
 ## Remaining Hardware Work
 
-- Smoke test addresses `0x44` and `0x45` on real ESP32-S2/S3 boards.
-- Verify single-shot non-stretch, clock-stretch if enabled, periodic fetch, ART,
-  alert limits, reset callbacks, heater status, and CRC fault handling.
-- Verify recovery behavior with injected I2C timeout and NACK failures.
-- Verify ALERT pin/status behavior during periodic mode with
-  `readStatusWithModeRestore()` and explicit `clearStatus()`.
-- Capture production humidity fixture data before making accuracy claims.
+Hardware coverage and the remaining gaps are tracked in one place,
+[hardware.md](hardware.md). Do not maintain a second list here.

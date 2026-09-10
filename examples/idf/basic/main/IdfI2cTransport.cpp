@@ -55,11 +55,15 @@ SHT3x::Status mapEspError(esp_err_t err, const char* message) {
     case ESP_ERR_INVALID_ARG:
       return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, message,
                                   static_cast<int32_t>(err));
-    case ESP_ERR_INVALID_RESPONSE:
-      return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, message,
-                                  static_cast<int32_t>(err));
     default:
-      return SHT3x::Status::Error(SHT3x::Err::I2C_BUS, message,
+      // i2c_master_transmit()/i2c_master_receive() do not document a distinct
+      // return code per NACK phase, and the code they use for a NACK differs
+      // across ESP-IDF 5.x releases. Anything this adapter has not proven is
+      // therefore Err::I2C_ERROR, the documented "cannot distinguish the cause"
+      // value. Err::I2C_BUS would claim a bus/arbitration fault we cannot prove,
+      // and it would also exclude a normal periodic Fetch Data NACK from the
+      // driver's bounded no-data inference, which only fires on I2C_ERROR.
+      return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, message,
                                   static_cast<int32_t>(err));
   }
 }

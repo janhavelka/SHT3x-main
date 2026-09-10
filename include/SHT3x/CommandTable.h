@@ -115,7 +115,7 @@ static constexpr uint16_t STATUS_WRITE_CRC_ERROR = 0x0001;  ///< Write checksum 
 
 static constexpr size_t DATA_WORD_BYTES = 2;     ///< Bytes in one data word
 static constexpr size_t DATA_CRC_BYTES = 1;      ///< CRC bytes following one data word
-static constexpr size_t DATA_WORD_WITH_CRC = 3;  ///< One data word plus CRC
+static constexpr size_t DATA_WORD_WITH_CRC = DATA_WORD_BYTES + DATA_CRC_BYTES; ///< One data word plus CRC
 
 static constexpr size_t MEASUREMENT_DATA_LEN = 2 * DATA_WORD_WITH_CRC; ///< Temperature and humidity words
 static constexpr size_t STATUS_DATA_LEN = DATA_WORD_WITH_CRC;         ///< Status word plus CRC

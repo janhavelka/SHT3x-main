@@ -8,8 +8,9 @@ procedure live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - Framework-neutral C++17 core, delivered as a PlatformIO library and an
   ESP-IDF component.
-- Validated on ESP32-S2 / ESP32-S3 under both Arduino and native ESP-IDF; the
-  core itself has no framework dependency.
+- CI builds ESP32-S2 / ESP32-S3 under both Arduino and native ESP-IDF; the core
+  itself has no framework dependency. Hardware coverage is a separate claim and
+  is tracked only in [docs/hardware.md](docs/hardware.md).
 - Goals: deterministic behavior, long-term stability, clean API contracts,
   portability, no surprises in the field.
 
@@ -33,7 +34,7 @@ examples/
   idf/basic/              Native ESP-IDF diagnostic CLI
 docs/             Maintained guides and vendor reference material
 tools/            Repository contract gates and the host-side HIL runner
-scripts/          generate_version.py
+scripts/          generate_version.py, pio.cmd (Windows PlatformIO wrapper)
 .github/          CI workflow
 platformio.ini    Arduino/native build environments
 library.json      PlatformIO manifest and the single source of version truth
@@ -205,31 +206,43 @@ State transitions:
 All I2C goes through layered wrappers:
 
 ```
-Public API (pollJob, readStatus, setMode, etc.)
+Public API (pollJob, readStatus, setHeater, readSerialNumber, ...)
+    -> _completeLogicalOperation() after CRC/status validation
+Command helpers (_writeCommand / _readAfterCommand)
     ->
-Command helpers (writeCommand/readAfterCommand)
-    ->
-TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
+TRACKED wrappers (_i2cWriteTracked, _i2cWriteReadTracked, ...)
     -> _updateHealth() called here ONLY
-RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
+RAW wrappers (_i2cWriteRaw, _i2cWriteReadRaw)
     ->
 Transport callbacks (Config::i2cWrite, i2cWriteRead)
 ```
 
 **Rules:**
-- Public API methods NEVER call `_updateHealth()` directly
-- Command helpers use TRACKED wrappers -> health updated automatically
-- `probe()` uses RAW wrappers -> no health tracking (diagnostic only)
-- `recover()` tracks probe failures (driver is initialized, so failures count)
+- `_updateHealth()` is called ONLY from tracked transport wrappers. It records
+  transport facts (`_transportSuccess` / `_transportFailures`, bus activity) and
+  delegates the logical verdict to `_completeLogicalOperation()`.
+- `_completeLogicalOperation()` is the single owner of `_totalSuccess`,
+  `_totalFailures`, `_consecutiveFailures`, `_lastOkMs`, `_lastErrorMs`,
+  `_lastError` and `DriverState`. It runs exactly once per logical operation.
+- A multi-callback operation (command + read, or command + status verification)
+  passes `logicalComplete = false` to its intermediate callbacks. The public API
+  calls `_completeLogicalOperation()` itself once the CRC and the sensor's status
+  bits have been checked, so a frame that fails validation is a logical failure
+  even though its transport callback succeeded.
+- Public API methods NEVER call `_updateHealth()` directly.
+- `probe()` uses RAW wrappers -> no health tracking (diagnostic only).
+- `recover()` tracks probe failures (driver is initialized, so failures count).
 
 ### Health Tracking Rules
 
-- `_updateHealth()` called ONLY inside tracked transport wrappers; command/read
-  pairs mark only the final callback as logical completion.
+- Logical completion happens after protocol validation, never before it. CRC and
+  sensor command-rejection failures are logical failures that increment
+  `_protocolFailures` and never `_transportFailures`.
 - State transitions guarded by `_initialized` (no DEGRADED/OFFLINE before
   `bind()`/`begin()` succeeds).
-- NOT called for config/param validation errors (INVALID_CONFIG, INVALID_PARAM).
-- NOT called for precondition errors (NOT_INITIALIZED).
+- NOT recorded for config/param validation errors (INVALID_CONFIG,
+  INVALID_PARAM) returned by an admitted callback, nor for precondition errors
+  (NOT_INITIALIZED), admission rejections, cancellation, or caller deadlines.
 - `probe()` uses raw I2C and does NOT update logical, transport, protocol, or
   state health (diagnostic only).
 
@@ -242,7 +255,9 @@ Transport callbacks (Config::i2cWrite, i2cWriteRead)
 - `_totalFailures` / `_totalSuccess` - session logical-operation counters
 - `_transportFailures` / `_transportSuccess` - physical callback counters
 - `_protocolFailures` - CRC/checksum and sensor command-rejection counter
-- `_totalNotReady` - expected periodic read-header NACK counter
+- `_totalNotReady` - proven periodic read-header NACK counter
+- `_totalInferredNotReady` - bounded no-data retries inferred from an ambiguous
+  read failure when the transport cannot prove a read-header NACK
 - All counters saturate at their integer maximum; they never wrap.
 
 ---

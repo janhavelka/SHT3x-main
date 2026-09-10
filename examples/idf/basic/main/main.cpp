@@ -171,8 +171,9 @@ void configureCli() {
   config.i2cTimeoutMs = 50U;
   config.mode = SHT3x::Mode::SINGLE_SHOT;
   config.clockStretching = SHT3x::ClockStretching::STRETCH_DISABLED;
-  // mapEspError() distinguishes ESP_ERR_TIMEOUT exactly; other unexpected IDF
-  // errors share a conservative I2C_BUS mapping.
+  // mapEspError() distinguishes ESP_ERR_TIMEOUT exactly; every other IDF error
+  // is reported as the generic Err::I2C_ERROR, so this adapter can advertise
+  // TIMEOUT and nothing else.
   config.transportCapabilities = SHT3x::TransportCapability::TIMEOUT;
   config.offlineThreshold = 5U;
   sht3x_cli::configReady() = true;

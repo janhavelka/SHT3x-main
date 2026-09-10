@@ -5,7 +5,6 @@
 
 #include "SHT3x/SHT3x.h"
 
-#include <cstring>
 #include <limits>
 #include <cmath>
 
@@ -14,8 +13,15 @@ namespace {
 
 static constexpr size_t MAX_WRITE_LEN = 5;
 static constexpr size_t MAX_READ_LEN = cmd::MEASUREMENT_DATA_LEN;
-static constexpr uint32_t RESET_DELAY_MS = 2;
-static constexpr uint32_t BREAK_DELAY_MS = 1;
+// A millisecond timestamp sampled when a wait starts can truncate almost a full
+// millisecond, so a wait of N ms only guarantees more than (N - 1) ms of real
+// time. Every settle wait therefore carries one extra millisecond on top of the
+// datasheet figure, the same allowance estimateMeasurementTimeMs() applies.
+static constexpr uint32_t CLOCK_QUANTIZATION_MS = 1;
+static constexpr uint32_t RESET_SETTLE_MS = 2;  // tSR max 1.5 ms, rounded up
+static constexpr uint32_t BREAK_SETTLE_MS = 1;  // Break processing takes 1 ms
+static constexpr uint32_t RESET_DELAY_MS = RESET_SETTLE_MS + CLOCK_QUANTIZATION_MS;
+static constexpr uint32_t BREAK_DELAY_MS = BREAK_SETTLE_MS + CLOCK_QUANTIZATION_MS;
 static constexpr uint16_t MIN_COMMAND_DELAY_MS = 1;
 static constexpr uint32_t ART_PERIOD_MS = 250;
 static constexpr uint32_t MAX_I2C_TIMEOUT_MS = 60000;
@@ -286,7 +292,6 @@ Status SHT3x::bind(const Config& config) {
   _lastRecoverValid = false;
   _rawSample = RawSample{};
   _compSample = CompensatedSample{};
-  _milliSample = MeasurementMilli{};
   _mode = Mode::SINGLE_SHOT;
   _periodicActive = false;
   _hardwareStateValid = false;
@@ -465,10 +470,6 @@ Status SHT3x::pollJob(uint32_t nowMs, uint8_t maxInstructions, PollJobResult& re
     _rawSample = sample;
     _compSample.tempC_x100 = convertTemperatureC_x100(_rawSample.rawTemperature);
     _compSample.humidityPct_x100 = convertHumidityPct_x100(_rawSample.rawHumidity);
-    _milliSample.temperatureMilliCelsius =
-        convertTemperatureMilliCelsius(_rawSample.rawTemperature);
-    _milliSample.humidityMilliPercent =
-        convertHumidityMilliPercent(_rawSample.rawHumidity);
     _sampleTimestampMs = completedMs;
     _measurementReady = true;
     _hasSample = true;
@@ -751,6 +752,10 @@ void SHT3x::end() {
   _lastMeasurementStatus = initialMeasurementStatus();
   _measurementReadyMs = 0;
   _periodicActive = false;
+  // _periodicActive and _mode describe the same fact and are written together
+  // everywhere else; clearing only the flag here was the one reachable skew.
+  _mode = Mode::SINGLE_SHOT;
+  _config.mode = Mode::SINGLE_SHOT;
   _periodicStartMs = 0;
   _lastFetchMs = 0;
   _lastFetchValid = false;
@@ -1114,6 +1119,11 @@ Status SHT3x::setMode(Mode mode) {
   }
 
   if (mode == _mode) {
+    // No sensor command is needed, but the explicit request still commits the
+    // restore plan: a recovery can leave _mode at SINGLE_SHOT while the cache
+    // still names the old acquisition mode.
+    _cachedSettings.mode = mode;
+    _hasCachedSettings = true;
     return Status::Ok();
   }
 
@@ -1196,12 +1206,9 @@ Status SHT3x::readSettings(SettingsSnapshot& out) {
     return Status::Ok();
   }
 
-  Status stStatus = readStatus(out.status);
+  const Status stStatus = readStatus(out.status);
   out.statusReadStatus = stStatus;
-  if (stStatus.ok()) {
-    out.statusValid = true;
-    return stStatus;
-  }
+  out.statusValid = stStatus.ok();
   return stStatus;
 }
 
@@ -1273,13 +1280,9 @@ Status SHT3x::setRepeatability(Repeatability rep) {
     }
     return st;
   }
-  if (_mode == Mode::ART) {
-    _config.repeatability = rep;
-    _cachedSettings.repeatability = rep;
-    _hasCachedSettings = true;
-    return Status::Ok();
-  }
-
+  // ART and SINGLE_SHOT both apply the setting locally with zero I2C: ART's
+  // fixed vendor command encodes no repeatability, and single-shot picks its
+  // command word at request time.
   _config.repeatability = rep;
   _cachedSettings.repeatability = rep;
   _hasCachedSettings = true;
@@ -1338,13 +1341,8 @@ Status SHT3x::setPeriodicRate(PeriodicRate rate) {
     }
     return st;
   }
-  if (_mode == Mode::ART) {
-    _config.periodicRate = rate;
-    _cachedSettings.periodicRate = rate;
-    _hasCachedSettings = true;
-    return Status::Ok();
-  }
-
+  // ART and SINGLE_SHOT both apply the setting locally with zero I2C: ART runs
+  // at its fixed vendor cadence, and single-shot has no periodic rate.
   _config.periodicRate = rate;
   _cachedSettings.periodicRate = rate;
   _hasCachedSettings = true;
@@ -2234,9 +2232,17 @@ Status SHT3x::_performRecoveryLadder() {
       return false;
     };
 
-    Status last = probeTracked();
-    if (acceptProbe(last, last)) {
-      return Status::Ok();
+    // The opening probe is a Read Status transaction. While periodic/ART
+    // acquisition is running, Fetch Data is the only documented readout, and
+    // acceptProbe() could not accept the answer anyway because Break has to run
+    // first. Skip it there; keep it otherwise, where it is the cheap way to
+    // learn whether the bus works at all.
+    Status last = reconciliationRequired();
+    if (!_periodicActive) {
+      last = probeTracked();
+      if (acceptProbe(last, last)) {
+        return Status::Ok();
+      }
     }
 
     if (_config.recoverUseBusReset && _config.busReset != nullptr) {
@@ -2344,20 +2350,6 @@ Status SHT3x::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
   return st;
 }
 
-Status SHT3x::_i2cWriteRaw(const uint8_t* buf, size_t len) {
-  if (_config.i2cWrite == nullptr) {
-    return Status::Error(Err::INVALID_CONFIG, "I2C write not set");
-  }
-  if (buf == nullptr || len == 0) {
-    return Status::Error(Err::INVALID_PARAM, "Invalid I2C buffer");
-  }
-  const Status st = _config.i2cWrite(_config.i2cAddress, buf, len,
-                                     _config.i2cTimeoutMs, _config.i2cUser);
-  // A failed callback may still have placed the command on the bus/device.
-  _markCommandAttempt();
-  return st;
-}
-
 Status SHT3x::_i2cWriteRawAddr(uint8_t addr, const uint8_t* buf, size_t len) {
   if (_config.i2cWrite == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C write not set");
@@ -2367,8 +2359,13 @@ Status SHT3x::_i2cWriteRawAddr(uint8_t addr, const uint8_t* buf, size_t len) {
   }
   const Status st =
       _config.i2cWrite(addr, buf, len, _config.i2cTimeoutMs, _config.i2cUser);
+  // A failed callback may still have placed the command on the bus/device.
   _markCommandAttempt();
   return st;
+}
+
+Status SHT3x::_i2cWriteRaw(const uint8_t* buf, size_t len) {
+  return _i2cWriteRawAddr(_config.i2cAddress, buf, len);
 }
 
 Status SHT3x::_admitTrackedI2c() const {

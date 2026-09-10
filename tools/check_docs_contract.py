@@ -61,6 +61,10 @@ def check_markdown_links(paths: list[Path]) -> list[str]:
         if relative.suffix.lower() != ".md":
             continue
         source = ROOT / relative
+        if not source.is_file():
+            # Tracked but deleted from the working tree, e.g. after `rm` without
+            # `git rm`. Nothing to link-check.
+            continue
         text = source.read_text(encoding="utf-8")
         for match in MARKDOWN_LINK_RE.finditer(text):
             target = match.group(1).strip().strip("<>")

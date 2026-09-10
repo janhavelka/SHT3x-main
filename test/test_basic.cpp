@@ -1013,6 +1013,14 @@ static void advancePreciseTimeMs(PreciseTimingTransport& ctx,
   ctx.nowUs += deltaMs * 1000u;
 }
 
+// Advance to the instant the driver itself scheduled for the current wait phase.
+// Wait durations are the driver's constants; a test that hardcodes them pins an
+// implementation detail instead of the behaviour under test.
+static void advancePreciseTimeToJobWake(PreciseTimingTransport& ctx,
+                                        SHT3xDevice& device) {
+  advancePreciseTimeMs(ctx, device._jobWakeMs - ctx.nowMs);
+}
+
 static Status runEnsureIdleToStatusResult(SHT3xDevice& device,
                                           PreciseTimingTransport& ctx,
                                           PollJobResult& result) {
@@ -2061,11 +2069,14 @@ void test_wire_adapter_timeout_and_stop() {
   gMillisStep = 0;
   Wire.setTimeOut(123);
   Wire._clearClockSetCount();
+  Wire._clearTimeoutSetCount();
   uint8_t buf[2] = {0x00, 0x00};
   Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, &Wire);
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._clockSetCount());
+  // The bus timeout is bus-manager policy: the callback must not touch it.
+  TEST_ASSERT_EQUAL_UINT32(0u, Wire._timeoutSetCount());
   TEST_ASSERT_TRUE(Wire._lastStopWasTrue());
 
   gMillis = 0;
@@ -2083,10 +2094,12 @@ void test_wire_adapter_drains_partial_read() {
   Wire.setTimeOut(123);
   Wire._setRequestFromResult(2);
   Wire._clearReadCallCount();
+  Wire._clearTimeoutSetCount();
   uint8_t buf[6] = {};
   Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
   TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(0u, Wire._timeoutSetCount());
   TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());
   Wire._clearRequestFromOverride();
 
@@ -3884,7 +3897,8 @@ void test_ensure_idle_status_read_admitted_before_deadline_is_retained() {
   JobRequest request;
   request.requestId = 416u;
   request.hasDeadline = true;
-  request.deadlineMs = 105u;
+  // Must land after the status-read callback is admitted and before it returns.
+  request.deadlineMs = 107u;
   st = device.requestEnsureIdle(request);
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
 
@@ -4010,7 +4024,7 @@ void test_request_ensure_idle_is_staged_and_one_callback_bounded() {
   TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
   TEST_ASSERT_EQUAL_UINT32(1u, ctx.writes + ctx.reads);
 
-  advancePreciseTimeMs(ctx, 1);
+  advancePreciseTimeToJobWake(ctx, device);
   st = device.pollJob(ctx.nowMs, 8, result);
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
   TEST_ASSERT_EQUAL(JobPhase::ENSURE_BREAK_WAIT, result.phase);
@@ -4030,7 +4044,7 @@ void test_request_ensure_idle_is_staged_and_one_callback_bounded() {
   TEST_ASSERT_EQUAL_UINT8(0u, result.instructionsUsed);
   TEST_ASSERT_EQUAL_UINT32(2u, ctx.writes + ctx.reads);
 
-  advancePreciseTimeMs(ctx, 2);
+  advancePreciseTimeToJobWake(ctx, device);
   st = device.pollJob(ctx.nowMs, 8, result);
   TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
   TEST_ASSERT_EQUAL(JobPhase::ENSURE_RESET_WAIT, result.phase);
@@ -4191,7 +4205,7 @@ void test_ensure_idle_stage_failures_report_phase_and_effect() {
     PollJobResult result;
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-    advancePreciseTimeMs(ctx, 1);
+    advancePreciseTimeToJobWake(ctx, device);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
     ctx.failCommand = cmd::CMD_SOFT_RESET;
@@ -4222,12 +4236,12 @@ void test_ensure_idle_stage_failures_report_phase_and_effect() {
     PollJobResult result;
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-    advancePreciseTimeMs(ctx, 1);
+    advancePreciseTimeToJobWake(ctx, device);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-    advancePreciseTimeMs(ctx, 2);
+    advancePreciseTimeToJobWake(ctx, device);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
     ctx.failCommand = cmd::CMD_READ_STATUS;
@@ -4257,12 +4271,12 @@ void test_ensure_idle_stage_failures_report_phase_and_effect() {
     PollJobResult result;
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-    advancePreciseTimeMs(ctx, 1);
+    advancePreciseTimeToJobWake(ctx, device);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
-    advancePreciseTimeMs(ctx, 2);
+    advancePreciseTimeToJobWake(ctx, device);
     st = device.pollJob(ctx.nowMs, 1, result);
     TEST_ASSERT_EQUAL(Err::IN_PROGRESS, st.code);
     st = device.pollJob(ctx.nowMs, 1, result);
@@ -5053,6 +5067,37 @@ void test_recover_unknown_state_requires_reset_proof() {
   }
 }
 
+void test_set_mode_to_current_mode_commits_restore_plan() {
+  FrameScriptTransport ctx;
+  SHT3xDevice device;
+  Config cfg = makeFrameConfig(ctx);
+  Status st = device.begin(cfg);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  st = device.startPeriodic(PeriodicRate::MPS_1, Repeatability::HIGH_REPEATABILITY);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device.getCachedSettings().mode);
+
+  // recover() establishes a safe single-shot baseline but deliberately leaves
+  // the restore plan alone, so the cache still names PERIODIC here.
+  st = device.recover();
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  Mode live = Mode::ART;
+  TEST_ASSERT_TRUE(device.getMode(live).ok());
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, live);
+  TEST_ASSERT_EQUAL(Mode::PERIODIC, device.getCachedSettings().mode);
+
+  // Asking for the mode the driver is already in performs no I2C, but it is an
+  // explicit caller decision and must commit the restore plan; otherwise a later
+  // resetAndRestore() would restart the acquisition the caller just turned off.
+  clearFrameLog(ctx);
+  st = device.setMode(Mode::SINGLE_SHOT);
+  TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT32(0u, ctx.reads);
+  TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device.getCachedSettings().mode);
+  TEST_ASSERT_TRUE(device.hasCachedSettings());
+}
+
 void test_recover_periodic_requires_break_before_success() {
   FrameScriptTransport ctx;
   SHT3xDevice device;
@@ -5072,12 +5117,14 @@ void test_recover_periodic_requires_break_before_success() {
   TEST_ASSERT_TRUE_MESSAGE(st.ok(), st.msg);
   TEST_ASSERT_FALSE(device.isPeriodicActive());
   TEST_ASSERT_EQUAL(Mode::SINGLE_SHOT, device._mode);
-  TEST_ASSERT_EQUAL(4u, ctx.commandCount);
-  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[0]);
-  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[1]);
-  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_SOFT_RESET, ctx.commands[2]);
-  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[3]);
-  TEST_ASSERT_EQUAL_UINT32(2u, ctx.reads);
+  // No Read Status is issued while acquisition is still running: Fetch Data is
+  // the only documented readout in that mode, and the answer could not be
+  // accepted before Break anyway. Break comes first, then reset, then the probe.
+  TEST_ASSERT_EQUAL(3u, ctx.commandCount);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_BREAK, ctx.commands[0]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_SOFT_RESET, ctx.commands[1]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CMD_READ_STATUS, ctx.commands[2]);
+  TEST_ASSERT_EQUAL_UINT32(1u, ctx.reads);
 }
 
 void test_stop_periodic_waits_after_break() {
@@ -5734,6 +5781,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_disable_alerts_second_write_failure_exposes_partial_cache);
   RUN_TEST(test_public_recover_bus_reset_failure_preserves_precise_status);
   RUN_TEST(test_recover_unknown_state_requires_reset_proof);
+  RUN_TEST(test_set_mode_to_current_mode_commits_restore_plan);
   RUN_TEST(test_recover_periodic_requires_break_before_success);
   RUN_TEST(test_stop_periodic_waits_after_break);
   RUN_TEST(test_reset_and_restore_partial_alert_restore_failure_preserves_desired_cache);

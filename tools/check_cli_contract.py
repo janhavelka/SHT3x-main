@@ -234,7 +234,9 @@ def main() -> int:
         "saturatingAdd",
         "transferStats",
     ):
-        require(idf_transport_text + idf_text + shared_text, token, "native ESP-IDF transport")
+        # Search the IDF adapter/example only. Including shared_text made this
+        # gate vacuous: the shared CLI defines most of these tokens itself.
+        require(idf_transport_text + idf_text, token, "native ESP-IDF transport")
 
     print(f"CLI contract PASSED ({len(COMMAND_SPECS)} authoritative help rows)")
     return 0

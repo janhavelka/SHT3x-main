@@ -408,9 +408,12 @@ public:
   bool isPeriodicActive() const { return _periodicActive; }
 
   /// True only after typed reconciliation established a known acquisition baseline.
-  /// Raw/advanced command access, ambiguous transport failures, and incomplete
-  /// ensure-idle mutations invalidate it. Cancelling a measurement whose result
-  /// may still become pending does not invalidate the acquisition mode.
+  /// Raw/advanced command access, any failed tracked transport callback, and
+  /// incomplete ensure-idle mutations invalidate it. Cancelling a measurement
+  /// whose result may still become pending does not invalidate the acquisition
+  /// mode. Nothing on the success path restores it: once invalidated, only
+  /// requestEnsureIdle(), begin(), softReset(), generalCallReset(), recover(),
+  /// resetToDefaults() or resetAndRestore() can re-establish it.
   /// @return true when the driver has verified its acquisition-state baseline.
   bool hardwareStateValid() const { return _hardwareStateValid; }
 
@@ -543,24 +546,29 @@ public:
 
   /// Get last captured raw measurement values.
   /// @param[out] out Last cached raw temperature/humidity words
-  /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
+  /// @return Status::Ok() on success, NOT_INITIALIZED before binding, otherwise
+  ///         the current measurementStatus() while no sample has been captured
   Status getRawSample(RawSample& out) const;
 
   /// Get last captured fixed-point converted values.
   /// @param[out] out Last cached fixed-point sample
-  /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
+  /// @return Status::Ok() on success, NOT_INITIALIZED before binding, otherwise
+  ///         the current measurementStatus() while no sample has been captured
   Status getCompensatedSample(CompensatedSample& out) const;
 
   /// Get the last captured measurement in signed milli-units.
   /// @param[out] out Last cached temperature in milli-degrees Celsius and
   ///                 humidity in milli-percent relative humidity
-  /// @return Status::Ok() on success, MEASUREMENT_NOT_READY until a sample has been captured
+  /// @return Status::Ok() on success, NOT_INITIALIZED before binding, otherwise
+  ///         the current measurementStatus() while no sample has been captured
   Status getMeasurementMilli(MeasurementMilli& out) const;
 
   /// Get the last captured measurement using an explicit milli-unit rounding policy.
   /// @param[out] out Last cached temperature and humidity in milli-units
   /// @param rounding Integer conversion rounding policy
-  /// @return Status::Ok() on success, INVALID_PARAM for an unknown policy, or MEASUREMENT_NOT_READY
+  /// @return Status::Ok() on success, INVALID_PARAM for an unknown policy,
+  ///         NOT_INITIALIZED before binding, otherwise the current
+  ///         measurementStatus() while no sample has been captured
   Status getMeasurementMilli(MeasurementMilli& out, MilliRounding rounding) const;
 
   // =========================================================================
@@ -668,8 +676,12 @@ public:
   /// @return OK when initialized, otherwise NOT_INITIALIZED.
   Status getRepeatability(Repeatability& out) const;
 
-  /// Set clock stretching mode for single-shot measurement and serial-number reads.
-  /// @note Periodic/ART modes use Fetch Data and do not use this setting.
+  /// Set clock stretching mode for single-shot measurement commands.
+  /// @note Periodic/ART modes cannot select stretching and use Fetch Data.
+  ///       readSerialNumber() takes its own explicit stretch argument and
+  ///       ignores this setting. The driver always waits the estimated
+  ///       conversion time before reading, so this selects the command family
+  ///       only and does not change driver timing.
   /// @param stretch Requested clock-stretching policy.
   /// @return OK when applied, or a parameter/precondition error.
   Status setClockStretching(ClockStretching stretch);
@@ -806,8 +818,9 @@ public:
   ///       It is disabled by default and is used by recover() only when that
   ///       explicit opt-in is set. On success, local measurement state is
   ///       cleared and mode is set to SINGLE_SHOT.
-  /// @return OK when the broadcast succeeds, UNSUPPORTED when disabled, or a
-  ///         precondition/transport error.
+  /// @return OK when the broadcast succeeds, INVALID_CONFIG when
+  ///         Config::allowGeneralCallReset is false, or a precondition/transport
+  ///         error.
   Status generalCallReset();
 
   // =========================================================================
@@ -1117,7 +1130,6 @@ private:
 
   RawSample _rawSample;
   CompensatedSample _compSample;
-  MeasurementMilli _milliSample;
   Mode _mode = Mode::SINGLE_SHOT;
   bool _periodicActive = false;
   bool _hardwareStateValid = false;

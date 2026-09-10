@@ -1078,7 +1078,7 @@ def parse_command_output(command: str, text: str) -> dict[str, Any]:
                 "restored": int(restore.group(5)),
             }
         for label in ("result", "stopStatus", "statusReadStatus", "restoreStatus"):
-            match = re.search(rf"{label}:\s*(OK|ERR|IN_PROGRESS)\s+code=(\d+)", plain)
+            match = re.search(rf"{label}:\s*(\w+)\s+code=(\d+)", plain)
             if match:
                 parsed.setdefault("status_restore_statuses", {})[label] = {
                     "kind": match.group(1),

@@ -18,7 +18,6 @@ namespace {
 static constexpr size_t MAX_STRING_LEN = 160U;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 static constexpr uint32_t I2C_SOAK_MAX_SECONDS = 24UL * 60UL * 60UL;
-static constexpr uint32_t MEASUREMENT_JOB_TIMEOUT_MS = 500U;
 static constexpr uint32_t MANUAL_JOB_TIMEOUT_MS = 5000U;
 static constexpr size_t MAX_CLI_ARGS = 8U;
 
@@ -1137,7 +1136,7 @@ SHT3x::Status readTerminalMeasurementMilli(const SHT3x::PollJobResult& result,
 
 SHT3x::Status performMeasurementMilliBlocking(SHT3x::MeasurementMilli& out,
                                                uint32_t timeoutMs =
-                                                   MEASUREMENT_JOB_TIMEOUT_MS) {
+                                                   MANUAL_JOB_TIMEOUT_MS) {
   const uint32_t startMs = millis();
   const uint32_t requestId = allocateRequestId();
   SHT3x::JobRequest request;
@@ -1177,7 +1176,7 @@ SHT3x::Status performMeasurementMilliBlocking(SHT3x::MeasurementMilli& out,
 
 SHT3x::Status performMeasurementBlocking(
     SHT3x::Measurement& out,
-    uint32_t timeoutMs = MEASUREMENT_JOB_TIMEOUT_MS) {
+    uint32_t timeoutMs = MANUAL_JOB_TIMEOUT_MS) {
   SHT3x::MeasurementMilli milli;
   const SHT3x::Status st = performMeasurementMilliBlocking(milli, timeoutMs);
   if (!st.ok()) {
@@ -1189,7 +1188,7 @@ SHT3x::Status performMeasurementBlocking(
 }
 
 SHT3x::Status performNoStretchMeasurementBlocking(SHT3x::Measurement& out,
-                                                  uint32_t timeoutMs = 500) {
+                                                  uint32_t timeoutMs = MANUAL_JOB_TIMEOUT_MS) {
   SHT3x::Status st =
       deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
   if (!st.ok()) {
@@ -1239,15 +1238,13 @@ void runI2cSoak(uint32_t durationS) {
   float minHumidity = 0.0f;
   float maxHumidity = 0.0f;
 
-  SHT3x::Status st = deviceInstance.setMode(SHT3x::Mode::SINGLE_SHOT);
-  if (!st.ok()) {
-    failCount++;
+  SHT3x::Status setup = deviceInstance.setMode(SHT3x::Mode::SINGLE_SHOT);
+  if (setup.ok()) {
+    setup = deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
   }
-  if (st.ok()) {
-    st = deviceInstance.setClockStretching(SHT3x::ClockStretching::STRETCH_DISABLED);
-    if (!st.ok()) {
-      failCount++;
-    }
+  if (!setup.ok()) {
+    printLabeledStatus("i2c_soak setup", setup);
+    return;
   }
 
   const uint32_t startMs = millis();
@@ -1258,9 +1255,11 @@ void runI2cSoak(uint32_t durationS) {
   const uint32_t protocolFailBefore = deviceInstance.protocolFailures();
   const uint32_t notReadyBefore = deviceInstance.totalNotReady();
 
-  while (st.ok() && (millis() - startMs) < durationMs) {
+  // A failed sample is counted, not fatal: the soak runs for the requested
+  // duration so its failure counters mean what the summary says they mean.
+  while ((millis() - startMs) < durationMs) {
     SHT3x::Measurement measurement;
-    st = performMeasurementBlocking(measurement);
+    const SHT3x::Status st = performMeasurementBlocking(measurement);
     if (st.ok()) {
       okCount++;
       if (!hasSample) {
@@ -1616,8 +1615,7 @@ SHT3x::Status scheduleMeasurement(bool manual = false) {
   const uint32_t requestId = allocateRequestId();
   SHT3x::JobRequest request;
   request.requestId = requestId;
-  request.deadlineMs =
-      startMs + (manual ? MANUAL_JOB_TIMEOUT_MS : MEASUREMENT_JOB_TIMEOUT_MS);
+  request.deadlineMs = startMs + MANUAL_JOB_TIMEOUT_MS;
   request.hasDeadline = true;
   SHT3x::Status st = deviceInstance.requestMeasurement(request);
   if (st.code == SHT3x::Err::IN_PROGRESS) {
@@ -1811,12 +1809,22 @@ bool parseFiniteFloat(const CliString& token, float& out) {
   return true;
 }
 
+void printHeaterState() {
+  bool enabled = false;
+  const SHT3x::Status st = deviceInstance.readHeaterStatus(enabled);
+  if (!st.ok()) {
+    printStatus(st);
+    return;
+  }
+  output.printf("Heater: %s\n", enabled ? "ON" : "OFF");
+}
+
 void printAlertLimit(SHT3x::AlertLimitKind kind) {
   SHT3x::AlertLimit limit;
   const SHT3x::Status st = deviceInstance.readAlertLimit(kind, limit);
   printLabeledStatus("alert read", st);
   if (st.ok()) {
-    output.printf("alert %s: raw=0x%04X T=%.2fC RH=%.2f%%\n",
+    output.printf("Alert %s: raw=0x%04X T=%.2fC RH=%.2f%%\n",
                   alertKindToStr(kind),
                   static_cast<unsigned>(limit.raw),
                   static_cast<double>(limit.temperatureC),
@@ -2472,13 +2480,7 @@ void processCommandString(const CliString& cmdLine) {
   }
 
   if (cmd == "heater") {
-    bool enabled = false;
-    SHT3x::Status st = deviceInstance.readHeaterStatus(enabled);
-    if (!st.ok()) {
-      printStatus(st);
-      return;
-    }
-    output.printf("Heater: %s\n", enabled ? "ON" : "OFF");
+    printHeaterState();
     return;
   }
 
@@ -2491,13 +2493,7 @@ void processCommandString(const CliString& cmdLine) {
     } else if (arg == "off") {
       enable = false;
     } else if (arg == "status") {
-      bool enabled = false;
-      SHT3x::Status st = deviceInstance.readHeaterStatus(enabled);
-      if (!st.ok()) {
-        printStatus(st);
-        return;
-      }
-      output.printf("Heater: %s\n", enabled ? "ON" : "OFF");
+      printHeaterState();
       return;
     } else {
       logWarn("Usage: heater on|off|status");
@@ -2556,16 +2552,7 @@ void processCommandString(const CliString& cmdLine) {
         logWarn("Usage: alert read <hs|hc|lc|ls>");
         return;
       }
-      SHT3x::AlertLimit limit;
-      SHT3x::Status st = deviceInstance.readAlertLimit(kind, limit);
-      if (!st.ok()) {
-        printStatus(st);
-        return;
-      }
-      output.printf("Alert %s: raw=0x%04X T=%.2fC RH=%.2f%%\n",
-                    alertKindToStr(kind), limit.raw,
-                    static_cast<double>(limit.temperatureC),
-                    static_cast<double>(limit.humidityPct));
+      printAlertLimit(kind);
       return;
     }
 
@@ -3130,12 +3117,8 @@ void tick() {
         printJobResult("job terminal", st, result);
         printLabeledStatus(terminalLabel, result.status);
       }
-    } else if (st.code != SHT3x::Err::IN_PROGRESS) {
-      clearPendingOwner();
-      printStatus(st);
     }
   }
-
 }
 
 static SHT3x::Status cancelPending() {
