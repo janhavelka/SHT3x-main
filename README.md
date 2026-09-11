@@ -828,6 +828,19 @@ contract and refuses unknown or unconfirmed mutation-like commands. Raw
 `command read` words receive the same heater, alert-write, and high-periodic-rate
 opt-ins and cleanup policies as raw writes.
 
+An opt-in Arduino bench diagnostic can be built with
+`-DSHT3X_EXAMPLE_READ_FAULT=1`. Only that build accepts `fault_read arm`,
+`fault_read status`, and `fault_read clear`. Arming substitutes one `I2C_BUS`
+result after the next successful single-shot measurement receive. Status and
+serial-number reads do not consume it; a failed physical receive keeps it armed.
+The received bytes and physical transfer counters retain their actual results,
+while `fault_read status` separately reports the injection count. Subsequent
+reads use the real adapter normally. Clear the arm before unrelated diagnostics.
+This tests software error handling on a connected sensor; it does not simulate
+an electrical disconnect or qualify recovery from one. The extra commands are
+outside the shared normal CLI/HIL command contract and require a dedicated
+capture plan. Ordinary Arduino and ESP-IDF builds have no injection hook.
+
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - release history

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added an opt-in Arduino single-shot read-fault diagnostic. It substitutes one
+  labelled software error after a successful physical receive, keeping physical
+  transfer and injection counters separate; normal builds remain unchanged.
 - Added `docs/open-issues.md`, a maintained backlog of confirmed defects and
   simplifications with a concrete proposal for each, replacing the finished
   `docs/CODE_AUDIT.md` / `docs/CODE_AUDIT_REMEDIATION.md` report pair.

@@ -82,6 +82,23 @@ void arduinoResetTransferStats(void*) {
   transport::resetTransferStats();
 }
 
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+bool handleReadFaultCommand(const char* line) {
+  if (strcmp(line, "fault_read arm") == 0) {
+    transport::armReadFaultOnce();
+  } else if (strcmp(line, "fault_read clear") == 0) {
+    transport::disarmReadFault();
+  } else if (strcmp(line, "fault_read status") != 0) {
+    return false;
+  }
+  const transport::ReadFaultState state = transport::readFaultStatus();
+  sht3x_cli::logInfo(
+      "fault_read: armed=%u injected=%lu source=software_after_successful_receive",
+      state.armed ? 1U : 0U, static_cast<unsigned long>(state.injected));
+  return true;
+}
+#endif
+
 void readSerialInput() {
   static char input[INPUT_BUFFER_LEN] = {};
   static size_t len = 0;
@@ -109,7 +126,13 @@ void readSerialInput() {
       }
       if (len > 0U) {
         input[len] = '\0';
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+        if (!handleReadFaultCommand(input)) {
+          sht3x_cli::processCommand(input);
+        }
+#else
         sht3x_cli::processCommand(input);
+#endif
         len = 0;
         input[0] = '\0';
         sht3x_cli::printPrompt();
@@ -157,6 +180,9 @@ void setup() {
   sht3x_cli::setPlatform(cliPlatform);
 
   sht3x_cli::logInfo("=== SHT3x Bringup Example ===");
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  sht3x_cli::logWarn("Software read-fault diagnostic enabled: fault_read arm|status|clear");
+#endif
 
   if (!board::initI2c()) {
     sht3x_cli::logError("Failed to initialize I2C");

@@ -157,6 +157,9 @@ void setUp() {
   gMicrosStep = 1000;
   Wire = TwoWire{};
   transport::resetTransferStats();
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  transport::readFaultStorage() = transport::ReadFaultState{};
+#endif
 }
 void tearDown() {}
 
@@ -2136,6 +2139,79 @@ void test_wire_adapter_rejects_invalid_buffers_and_timeout() {
   st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 0, &Wire);
   TEST_ASSERT_EQUAL(Err::INVALID_PARAM, st.code);
 }
+
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+static Status writeDiagnosticCommand(uint16_t command) {
+  const uint8_t bytes[] = {static_cast<uint8_t>(command >> 8U),
+                           static_cast<uint8_t>(command)};
+  return transport::wireWrite(0x44, bytes, sizeof(bytes), 50U, &Wire);
+}
+
+void test_example_read_fault_preserves_physical_counters_and_fires_once() {
+  gMillisStep = 0;
+  const uint8_t payload[] = {0x66, 0x66, 0x93, 0x80, 0x00, 0xA2};
+  uint8_t received[sizeof(payload)] = {};
+  Wire._setReadData(payload, sizeof(payload));
+  transport::armReadFaultOnce();
+
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_READ_STATUS).ok());
+  TEST_ASSERT_TRUE(transport::wireWriteRead(
+      0x44, nullptr, 0, received, 3U, 50U, &Wire).ok());
+  TEST_ASSERT_TRUE(transport::readFaultStatus().armed);
+  // Another six-byte read (serial number) must not consume the measurement fault.
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_SERIAL_STRETCH).ok());
+  TEST_ASSERT_TRUE(transport::wireWriteRead(
+      0x44, nullptr, 0, received, sizeof(received), 50U, &Wire).ok());
+  TEST_ASSERT_TRUE(transport::readFaultStatus().armed);
+
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH).ok());
+  Wire._setRequestFromResult(0U);
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, transport::wireWriteRead(
+      0x44, nullptr, 0, received, sizeof(received), 50U, &Wire).code);
+  TEST_ASSERT_TRUE(transport::readFaultStatus().armed);
+  TEST_ASSERT_EQUAL_UINT32(0U, transport::readFaultStatus().injected);
+  Wire._clearRequestFromOverride();
+
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH).ok());
+  const auto before = transport::transferStats();
+  const uint32_t physicalReadsBefore = Wire._readCallCount();
+  const Status injected = transport::wireWriteRead(
+      0x44, nullptr, 0, received, sizeof(received), 50U, &Wire);
+  TEST_ASSERT_EQUAL(Err::I2C_BUS, injected.code);
+  TEST_ASSERT_EQUAL_INT32(1, injected.detail);
+  TEST_ASSERT_EQUAL_MEMORY(payload, received, sizeof(payload));
+  TEST_ASSERT_EQUAL_UINT32(physicalReadsBefore + sizeof(payload), Wire._readCallCount());
+  TEST_ASSERT_EQUAL_UINT32(before.successes + 1U, transport::transferStats().successes);
+  TEST_ASSERT_EQUAL_UINT32(before.failures, transport::transferStats().failures);
+  TEST_ASSERT_FALSE(transport::readFaultStatus().armed);
+  TEST_ASSERT_EQUAL_UINT32(1U, transport::readFaultStatus().injected);
+
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH).ok());
+  TEST_ASSERT_TRUE(transport::wireWriteRead(
+      0x44, nullptr, 0, received, sizeof(received), 50U, &Wire).ok());
+  TEST_ASSERT_EQUAL_UINT32(1U, transport::readFaultStatus().injected);
+}
+
+void test_example_read_fault_disarm_and_failed_write_cannot_fake_measurement() {
+  gMillisStep = 0;
+  uint8_t received[6] = {};
+  transport::armReadFaultOnce();
+  transport::disarmReadFault();
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH).ok());
+  TEST_ASSERT_TRUE(transport::wireWriteRead(
+      0x44, nullptr, 0, received, sizeof(received), 50U, &Wire).ok());
+  TEST_ASSERT_EQUAL_UINT32(0U, transport::readFaultStatus().injected);
+
+  transport::armReadFaultOnce();
+  TEST_ASSERT_TRUE(writeDiagnosticCommand(cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH).ok());
+  TEST_ASSERT_EQUAL(Err::INVALID_PARAM,
+                    transport::wireWrite(0x44, nullptr, 2U, 50U, &Wire).code);
+  TEST_ASSERT_TRUE(transport::wireWriteRead(
+      0x44, nullptr, 0, received, sizeof(received), 50U, &Wire).ok());
+  TEST_ASSERT_TRUE(transport::readFaultStatus().armed);
+  TEST_ASSERT_EQUAL_UINT32(0U, transport::readFaultStatus().injected);
+}
+#endif
 
 void test_wire_adapter_initialization_reports_begin_failure() {
   Wire.setClock(100000U);
@@ -5713,6 +5789,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_drains_partial_read);
   RUN_TEST(test_wire_adapter_rejects_invalid_buffers_and_timeout);
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  RUN_TEST(test_example_read_fault_preserves_physical_counters_and_fires_once);
+  RUN_TEST(test_example_read_fault_disarm_and_failed_write_cannot_fake_measurement);
+#endif
   RUN_TEST(test_wire_adapter_initialization_reports_begin_failure);
   RUN_TEST(test_i2c_scanner_restores_timeout);
   RUN_TEST(test_cache_updates_only_on_success);

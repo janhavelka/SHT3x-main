@@ -8,6 +8,9 @@
 #include <Wire.h>
 #include "SHT3x/Status.h"
 #include "TransferStats.h"
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+#include "SHT3x/CommandTable.h"
+#endif
 
 namespace transport {
 
@@ -15,6 +18,46 @@ using SHT3x::Status;
 using SHT3x::Err;
 
 using TransferStats = sht3x_example::TransferStats;
+
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+/// Opt-in Arduino bench diagnostic; the core and ordinary builds have no hook.
+struct ReadFaultState {
+  bool armed = false;
+  uint32_t injected = 0;
+  uint16_t lastCommand = 0;
+};
+
+inline ReadFaultState& readFaultStorage() {
+  static ReadFaultState state;
+  return state;
+}
+
+inline void armReadFaultOnce() { readFaultStorage().armed = true; }
+inline void disarmReadFault() { readFaultStorage().armed = false; }
+inline ReadFaultState readFaultStatus() { return readFaultStorage(); }
+
+inline Status finishSuccessfulRead(size_t rxLen) {
+  ReadFaultState& state = readFaultStorage();
+  const uint16_t command = state.lastCommand;
+  state.lastCommand = 0;
+  const bool singleShot =
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_STRETCH_HIGH ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_STRETCH_MED ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_STRETCH_LOW ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_NO_STRETCH_MED ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_NO_STRETCH_LOW;
+  if (!state.armed || !singleShot || rxLen != SHT3x::cmd::MEASUREMENT_DATA_LEN) {
+    return Status::Ok();
+  }
+  state.armed = false;
+  if (state.injected < std::numeric_limits<uint32_t>::max()) {
+    ++state.injected;
+  }
+  return Status::Error(Err::I2C_BUS,
+                       "Software fault after successful measurement receive", 1);
+}
+#endif
 
 inline TransferStats& transferStatsStorage() {
   static TransferStats stats;
@@ -83,6 +126,9 @@ inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
 /// @return Status indicating success or failure
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  readFaultStorage().lastCommand = 0;
+#endif
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return recordTransfer(Status::Error(Err::INVALID_CONFIG, "Wire instance is null"),
@@ -130,6 +176,12 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                           false, written, 0U);
   }
 
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  if (len == 2U) {
+    readFaultStorage().lastCommand = static_cast<uint16_t>(
+        (static_cast<uint16_t>(data[0]) << 8U) | data[1]);
+  }
+#endif
   return recordTransfer(Status::Ok(), false, written, 0U);
 }
 
@@ -199,7 +251,13 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     rxData[i] = wire->read();
   }
 
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  // Count the actual receive honestly; a software substitution is not a bus fault.
+  (void)recordTransfer(Status::Ok(), true, txLen, rxLen);
+  return finishSuccessfulRead(rxLen);
+#else
   return recordTransfer(Status::Ok(), true, txLen, rxLen);
+#endif
 }
 
 } // namespace transport
