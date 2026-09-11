@@ -1522,8 +1522,10 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
     last_async_nudge = start
     reason = "timeout"
     try:
-        ser.write((spec.command + "\n").encode("utf-8"))
-        ser.flush()
+        payload = (spec.command + "\n").encode("utf-8")
+        written = ser.write(payload)
+        if written != len(payload):
+            raise OSError(f"short serial write: {written!r}/{len(payload)} bytes")
     except Exception as exc:
         return result_row(
             spec,
@@ -1589,8 +1591,11 @@ def run_serial(ser: object, spec: CommandSpec, idle_s: float, args: argparse.Nam
             and now - last_async_nudge >= ASYNC_SAMPLE_NUDGE_INTERVAL_S
         ):
             try:
-                ser.write(ASYNC_SAMPLE_NUDGE_COMMAND)
-                ser.flush()
+                written = ser.write(ASYNC_SAMPLE_NUDGE_COMMAND)
+                if written != len(ASYNC_SAMPLE_NUDGE_COMMAND):
+                    raise OSError(
+                        f"short serial nudge write: {written!r}/{len(ASYNC_SAMPLE_NUDGE_COMMAND)} bytes"
+                    )
             except Exception as exc:
                 output = "".join(parts)
                 parsed = parse_command_output(spec.command, output)
@@ -2165,12 +2170,27 @@ def main(argv: list[str]) -> int:
     else:
         ser = open_serial(args)
         firmware_identity_ok = True
+        transport_framed = False
+        pending_cleanup = cleanup_specs_for_plan(args, specs)
         try:
-            initial_output = drain_initial_output(ser, args.idle)
-            for spec in specs:
+            try:
+                initial_output = drain_initial_output(ser, args.idle)
+                transport_framed = True
+            except Exception as exc:
+                row = result_row(
+                    CommandSpec("initial serial output", "Capture initial serial output.", send=False),
+                    RESULT_FAIL, f"initial serial read exception: {exc!r}",
+                    0.0, "", "serial-exception", {},
+                )
+                results.append(row)
+                append_progress(args, row)
+            for spec in specs if transport_framed else []:
                 row = run_serial(ser, spec, args.idle, args)
                 results.append(row)
                 append_progress(args, row)
+                if row["completion_reason"] in {"serial-exception", "timeout"}:
+                    transport_framed = False
+                    break
                 if spec.command == "version" and row["result"] != RESULT_PASS:
                     firmware_identity_ok = False
                     break
@@ -2179,15 +2199,40 @@ def main(argv: list[str]) -> int:
                     recovery_row = run_serial(ser, recovery, args.idle, args)
                     results.append(recovery_row)
                     append_progress(args, recovery_row)
-            if firmware_identity_ok and args.include_soak and args.soak_duration_s > 0.0 and RESULT_FAIL not in {str(row["result"]) for row in results}:
-                results.extend(run_duration_soak(ser, args))
+                    if recovery_row["completion_reason"] in {"serial-exception", "timeout"}:
+                        transport_framed = False
+                        break
+            if firmware_identity_ok and transport_framed and args.include_soak and args.soak_duration_s > 0.0 and RESULT_FAIL not in {str(row["result"]) for row in results}:
+                soak_rows = run_duration_soak(ser, args)
+                results.extend(soak_rows)
+                transport_framed = not any(
+                    row["completion_reason"] in {"serial-exception", "timeout"}
+                    for row in soak_rows
+                )
         finally:
-            if firmware_identity_ok:
-                for spec in cleanup_specs_for_plan(args, specs):
-                    row = run_serial(ser, spec, args.idle, args)
-                    results.append(row)
-                    append_progress(args, row)
-            ser.close()
+            try:
+                if firmware_identity_ok and transport_framed:
+                    while pending_cleanup:
+                        spec = pending_cleanup[0]
+                        row = run_serial(ser, spec, args.idle, args)
+                        results.append(row)
+                        append_progress(args, row)
+                        if row["completion_reason"] in {"serial-exception", "timeout"}:
+                            transport_framed = False
+                            break
+                        pending_cleanup = pending_cleanup[1:]
+                if not transport_framed:
+                    for spec in pending_cleanup:
+                        row = result_row(
+                            spec, RESULT_FAIL,
+                            "Not sent: serial framing was lost. Restoration is unproved; "
+                            "operator must establish framing and verify pending cleanup.",
+                            0.0, "", "cleanup-deferred-lost-framing", {},
+                        )
+                        results.append(row)
+                        append_progress(args, row)
+            finally:
+                ser.close()
 
     state = git_state()
     final = verdict(results, args.dry_run)

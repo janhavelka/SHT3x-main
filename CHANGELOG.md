@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Diagnostic health percentages widen the two session counters before adding,
+  so their sum cannot wrap when successes and failures together exceed 32 bits.
+- The host HIL runner checks complete command and asynchronous-nudge writes and
+  avoids an unbounded serial drain. A serial exception or response timeout
+  stops later plan, recovery, soak and cleanup writes; pending cleanup is
+  recorded explicitly for the operator without claiming restoration.
 - The Arduino example adapter now rejects a callback budget shorter than the
   owner-configured Wire timeout before any bus access. It preserves the owner's
   timeout; elapsed-time checks detect overruns rather than preventing them.

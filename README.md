@@ -654,6 +654,7 @@ Host tests (requires a native compiler like `g++`):
 
 ```bash
 pio test -e native
+python tools/test_cli_health_rate.py
 ```
 
 Host HIL parser/contract checks (stdlib Python; no pytest required):
