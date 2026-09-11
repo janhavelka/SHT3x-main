@@ -836,6 +836,8 @@ serial-number reads do not consume it; a failed physical receive keeps it armed.
 The received bytes and physical transfer counters retain their actual results,
 while `fault_read status` separately reports the injection count. Subsequent
 reads use the real adapter normally. Clear the arm before unrelated diagnostics.
+In this diagnostic build, `drv` exposes `hardware_state_valid` and the driver
+transport/protocol counters; `result` retains the terminal provenance of `read`.
 This tests software error handling on a connected sensor; it does not simulate
 an electrical disconnect or qualify recovery from one. The extra commands are
 outside the shared normal CLI/HIL command contract and require a dedicated
