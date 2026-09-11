@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The Arduino example adapter now rejects a callback budget shorter than the
+  owner-configured Wire timeout before any bus access. It preserves the owner's
+  timeout; elapsed-time checks detect overruns rather than preventing them.
+
 ### Added
 - Added an opt-in Arduino single-shot read-fault diagnostic. It substitutes one
   labelled software error after a successful physical receive, keeping physical

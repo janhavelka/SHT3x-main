@@ -22,7 +22,7 @@ public:
   uint32_t _timeoutSetCount() const { return _timeoutSetCalls; }
   void _clearTimeoutSetCount() { _timeoutSetCalls = 0; }
   
-  void beginTransmission(uint8_t addr) { _addr = addr; _txLen = 0; }
+  void beginTransmission(uint8_t addr) { _busCalls++; _addr = addr; _txLen = 0; }
   size_t write(uint8_t data) { _txBuf[_txLen++] = data; return 1; }
   size_t write(const uint8_t* data, size_t len) { 
     for (size_t i = 0; i < len && _txLen < sizeof(_txBuf); i++) {
@@ -31,6 +31,8 @@ public:
     return len;
   }
   uint8_t endTransmission(bool stop = true) {
+    _busCalls++;
+    if (_transferHook != nullptr) _transferHook(_timeoutMs);
     _lastStop = stop;
     if (_useAckAddress) {
       return _addr == _ackAddress ? 0U : 2U;
@@ -39,6 +41,8 @@ public:
   }
   
   size_t requestFrom(uint8_t addr, size_t len) { 
+    _busCalls++;
+    if (_transferHook != nullptr) _transferHook(_timeoutMs);
     (void)addr;
     const size_t result = _useRequestFromOverride ? _requestFromResult : len;
     _rxLen = result;
@@ -82,6 +86,8 @@ public:
   bool _lastStopWasTrue() const { return _lastStop; }
   uint32_t _readCallCount() const { return _readCalls; }
   void _clearReadCallCount() { _readCalls = 0; }
+  uint32_t _busCallCount() const { return _busCalls; }
+  void _setTransferHook(void (*hook)(uint32_t)) { _transferHook = hook; }
 
 private:
   uint8_t _addr = 0;
@@ -96,6 +102,8 @@ private:
   uint32_t _timeoutSetCalls = 0;
   bool _lastStop = true;
   uint32_t _readCalls = 0;
+  uint32_t _busCalls = 0;
+  void (*_transferHook)(uint32_t) = nullptr;
   bool _useRequestFromOverride = false;
   size_t _requestFromResult = 0;
   bool _beginResult = true;

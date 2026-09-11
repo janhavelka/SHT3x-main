@@ -143,8 +143,14 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                           false, 0U, 0U);
   }
 
-  // The bus owner owns Wire's timeout; initWire() sets it once. This callback
-  // enforces the driver's requested bound by measuring the transfer instead.
+  // The bus owner owns Wire's timeout; initWire() sets it once. Reject an
+  // incompatible callback budget before entering a potentially blocking call.
+  // Measuring elapsed time below detects an overrun; it cannot prevent one.
+  if (wire->getTimeOut() > timeoutMs) {
+    return recordTransfer(Status::Error(Err::INVALID_CONFIG,
+                                        "Wire timeout exceeds callback budget"),
+                          false, 0U, 0U);
+  }
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   // SHT3x requires STOP between command write and read header.
@@ -221,7 +227,12 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                           true, txLen, 0U);
   }
 
-  // Read phase. As above, Wire's own timeout stays owned by the bus manager.
+  // Read phase. Keep the same owner-configured bound and preflight rule.
+  if (wire->getTimeOut() > timeoutMs) {
+    return recordTransfer(Status::Error(Err::INVALID_CONFIG,
+                                        "Wire timeout exceeds callback budget"),
+                          true, 0U, 0U);
+  }
   const uint32_t startMs = millis();
   size_t received = wire->requestFrom(addr, rxLen);
   const uint32_t elapsedMs = millis() - startMs;

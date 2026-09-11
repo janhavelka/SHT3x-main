@@ -2070,13 +2070,13 @@ void test_example_adapter_ambiguous_zero_bytes() {
 void test_wire_adapter_timeout_and_stop() {
   gMillis = 0;
   gMillisStep = 0;
-  Wire.setTimeOut(123);
+  Wire.setTimeOut(33);
   Wire._clearClockSetCount();
   Wire._clearTimeoutSetCount();
   uint8_t buf[2] = {0x00, 0x00};
   Status st = transport::wireWrite(0x44, buf, sizeof(buf), 33, &Wire);
   TEST_ASSERT_TRUE(st.ok());
-  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(33u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._clockSetCount());
   // The bus timeout is bus-manager policy: the callback must not touch it.
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._timeoutSetCount());
@@ -2084,24 +2084,68 @@ void test_wire_adapter_timeout_and_stop() {
 
   gMillis = 0;
   gMillisStep = 20;
+  Wire.setTimeOut(10);
   st = transport::wireWrite(0x44, buf, sizeof(buf), 10, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
   TEST_ASSERT_EQUAL_INT32(20, st.detail);
-  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(10u, Wire.getTimeOut());
   gMillisStep = 0;
+}
+
+void test_wire_adapter_rejects_timeout_mismatch_before_io() {
+  gMillisStep = 0;
+  Wire.setTimeOut(50U);
+  Wire._clearTimeoutSetCount();
+  Wire._setTransferHook([](uint32_t timeoutMs) { gMillis += timeoutMs; });
+  uint8_t data[2] = {0x24U, 0x00U};
+  for (const bool read : {false, true}) {
+    const auto before = transport::transferStats();
+    const auto status = read
+        ? transport::wireWriteRead(0x44U, nullptr, 0U, data, sizeof(data), 5U, &Wire)
+        : transport::wireWrite(0x44U, data, sizeof(data), 5U, &Wire);
+    TEST_ASSERT_EQUAL(Err::INVALID_CONFIG, status.code);
+    TEST_ASSERT_EQUAL_UINT32(0U, gMillis);
+    TEST_ASSERT_EQUAL_UINT32(0U, Wire._busCallCount());
+    TEST_ASSERT_EQUAL_UINT32(0U, Wire._timeoutSetCount());
+    TEST_ASSERT_EQUAL_UINT32(50U, Wire.getTimeOut());
+    TEST_ASSERT_EQUAL_UINT32(before.txBytes, transport::transferStats().txBytes);
+    TEST_ASSERT_EQUAL_UINT32(before.rxBytes, transport::transferStats().rxBytes);
+    TEST_ASSERT_EQUAL_UINT32(before.failures + 1U, transport::transferStats().failures);
+  }
+}
+
+void test_wire_adapter_accepts_owner_timeout_within_budget() {
+  gMillisStep = 0;
+  uint8_t data[2] = {0x24U, 0x00U};
+  Wire._setTransferHook([](uint32_t timeoutMs) { gMillis += timeoutMs; });
+  for (const uint32_t ownerTimeout : {5U, 10U}) {
+    Wire.setTimeOut(ownerTimeout);
+    Wire._clearTimeoutSetCount();
+    const uint32_t beforeWrite = gMillis;
+    auto status = transport::wireWrite(0x44U, data, sizeof(data), 10U, &Wire);
+    TEST_ASSERT_TRUE(status.ok());
+    TEST_ASSERT_EQUAL_UINT32(ownerTimeout, gMillis - beforeWrite);
+    const uint32_t beforeRead = gMillis;
+    status = transport::wireWriteRead(0x44U, nullptr, 0U, data, sizeof(data), 10U, &Wire);
+    TEST_ASSERT_TRUE(status.ok());
+    TEST_ASSERT_EQUAL_UINT32(ownerTimeout, gMillis - beforeRead);
+    TEST_ASSERT_EQUAL_UINT32(ownerTimeout, Wire.getTimeOut());
+    TEST_ASSERT_EQUAL_UINT32(0U, Wire._timeoutSetCount());
+    TEST_ASSERT_TRUE(Wire._lastStopWasTrue());
+  }
 }
 
 void test_wire_adapter_drains_partial_read() {
   gMillis = 0;
   gMillisStep = 0;
-  Wire.setTimeOut(123);
+  Wire.setTimeOut(20);
   Wire._setRequestFromResult(2);
   Wire._clearReadCallCount();
   Wire._clearTimeoutSetCount();
   uint8_t buf[6] = {};
   Status st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_ERROR, st.code);
-  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(20u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(0u, Wire._timeoutSetCount());
   TEST_ASSERT_EQUAL_UINT32(2u, Wire._readCallCount());
   Wire._clearRequestFromOverride();
@@ -2113,7 +2157,7 @@ void test_wire_adapter_drains_partial_read() {
   st = transport::wireWriteRead(0x44, nullptr, 0, buf, sizeof(buf), 20, &Wire);
   TEST_ASSERT_EQUAL(Err::I2C_TIMEOUT, st.code);
   TEST_ASSERT_EQUAL_INT32(30, st.detail);
-  TEST_ASSERT_EQUAL_UINT32(123u, Wire.getTimeOut());
+  TEST_ASSERT_EQUAL_UINT32(20u, Wire.getTimeOut());
   TEST_ASSERT_EQUAL_UINT32(sizeof(buf), Wire._readCallCount());
   Wire._clearRequestFromOverride();
   gMillisStep = 0;
@@ -5787,6 +5831,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_periodic_fetch_expected_nack_no_failure);
   RUN_TEST(test_example_adapter_ambiguous_zero_bytes);
   RUN_TEST(test_wire_adapter_timeout_and_stop);
+  RUN_TEST(test_wire_adapter_rejects_timeout_mismatch_before_io);
+  RUN_TEST(test_wire_adapter_accepts_owner_timeout_within_budget);
   RUN_TEST(test_wire_adapter_drains_partial_read);
   RUN_TEST(test_wire_adapter_rejects_invalid_buffers_and_timeout);
 #if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT

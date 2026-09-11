@@ -773,6 +773,12 @@ cover callbacks through the injected driver adapter, not direct application
 bus operations such as `scan`. Other commands reject an active owner job rather
 than cancelling it implicitly.
 
+The Arduino example leaves Wire timing under the application's ownership.
+Configure its Wire timeout no larger than `Config::i2cTimeoutMs`; a shorter
+callback budget is rejected with `INVALID_CONFIG` before bus access. The
+adapter never changes that owner setting, and its elapsed-time check detects
+an overrun after a transfer rather than imposing a separate blocking deadline.
+
 Hardware mutations require a literal final `confirm`. General-call reset is
 disabled by the example transports/configuration by default and additionally
 requires `greset arm` immediately followed by `greset confirm`; an intervening
