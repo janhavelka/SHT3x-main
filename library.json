@@ -1,6 +1,6 @@
 {
   "name": "SHT3x",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Deterministic, framework-neutral C++17 SHT3x temperature/humidity sensor driver.",
   "keywords": [
     "sht3x",

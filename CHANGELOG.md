@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-09-12
+
 ### Added
 - Added an opt-in Arduino single-shot read-fault diagnostic. It substitutes one
   labelled software error after a successful physical receive, keeping physical
@@ -528,7 +530,8 @@ notes did not correspond to separate published GitHub releases.
 - Health tracking updated for general-call reset and bus activity
 - Periodic fetch no longer masks non-NACK errors as not-ready
 
-[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SHT3x-main/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/janhavelka/SHT3x-main/compare/v1.6.0...v1.6.1
