@@ -33,11 +33,12 @@ class FakeSerial:
         self._chunks = [chunk.encode("utf-8") for chunk in chunks]
         self.writes: list[bytes] = []
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes) -> int:
         self.writes.append(data)
+        return len(data)
 
     def flush(self) -> None:
-        pass
+        raise AssertionError("serial drain is not bounded by write_timeout")
 
     def read(self, _size: int) -> bytes:
         return self._chunks.pop(0) if self._chunks else b""
@@ -49,11 +50,12 @@ class AsyncSampleSerial:
         self._scheduled_sent = False
         self._sample_sent = False
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes) -> int:
         self.writes.append(data)
+        return len(data)
 
     def flush(self) -> None:
-        pass
+        raise AssertionError("serial drain is not bounded by write_timeout")
 
     def read(self, _size: int) -> bytes:
         if not self._scheduled_sent:
@@ -69,11 +71,12 @@ class ReadErrorSerial:
     def __init__(self) -> None:
         self.writes: list[bytes] = []
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes) -> int:
         self.writes.append(data)
+        return len(data)
 
     def flush(self) -> None:
-        pass
+        raise AssertionError("serial drain is not bounded by write_timeout")
 
     def read(self, _size: int) -> bytes:
         raise OSError("synthetic serial read failure")
@@ -1371,6 +1374,177 @@ def test_custom_mutation_plan_gets_deterministic_final_cleanup() -> None:
         "drv",
         "settings",
     ]
+
+
+
+def test_short_command_write_fails_without_reading_or_retry() -> None:
+    class ShortWriteSerial(FakeSerial):
+        def write(self, data: bytes) -> int:
+            super().write(data)
+            return len(data) - 1
+
+        def read(self, _size: int) -> bytes:
+            raise AssertionError("must stop after a short command write")
+
+    ser = ShortWriteSerial()
+    spec = hil.CommandSpec("drv", "health", expected_any=("Driver Health",))
+    row = hil.run_serial(ser, spec, idle_s=0.0, args=fake_args())
+    assert row["result"] == hil.RESULT_FAIL
+    assert row["completion_reason"] == "serial-exception"
+    assert "short serial write: 3/4 bytes" in row["notes"]
+    assert ser.writes == [b"drv\n"]
+    assert row["output"] == ""
+
+
+def test_short_async_nudge_stops_and_retains_received_output() -> None:
+    class ShortNudgeSerial(AsyncSampleSerial):
+        def write(self, data: bytes) -> int:
+            super().write(data)
+            return len(data) if len(self.writes) == 1 else len(data) - 1
+
+        def read(self, size: int) -> bytes:
+            assert len(self.writes) <= 1, "must stop after a short nudge"
+            return super().read(size)
+
+    ser = ShortNudgeSerial()
+    spec = hil.CommandSpec("periodic fetch", "async sample", expected_any=("Temp:",),
+                           validators=("measurement_plausible",), timeout_s=1.0)
+    row = hil.run_serial(ser, spec, idle_s=0.0, args=fake_args())
+    assert row["result"] == hil.RESULT_FAIL
+    assert row["completion_reason"] == "serial-exception"
+    assert "short serial nudge write: 6/7 bytes" in row["notes"]
+    assert ser.writes == [b"periodic fetch\n", b"online\n"]
+    assert "Measurement scheduled" in row["output"]
+
+
+def test_command_write_exception_is_retained_without_retry() -> None:
+    class WriteErrorSerial(FakeSerial):
+        def write(self, data: bytes) -> int:
+            super().write(data)
+            raise TimeoutError("bounded synthetic write timeout")
+
+    ser = WriteErrorSerial()
+    spec = hil.CommandSpec("drv", "health", expected_any=("Driver Health",))
+    row = hil.run_serial(ser, spec, idle_s=0.0, args=fake_args())
+    assert row["result"] == hil.RESULT_FAIL
+    assert "bounded synthetic write timeout" in row["notes"]
+    assert ser.writes == [b"drv\n"]
+
+
+
+def check_main_stops_after_framing_loss(stage: str, timeout: bool = False) -> None:
+    from contextlib import ExitStack, redirect_stdout
+    from io import StringIO
+    from unittest.mock import patch
+
+    fault_command = {"plan": "operation", "recovery": "periodic stop",
+                     "soak": "i2c_soak 1", "cleanup": "heater off"}.get(stage)
+
+    class CampaignSerial(FakeSerial):
+        closed = False
+
+        def write(self, data: bytes) -> int:
+            self.writes.append(data)
+            if data.decode().strip() == fault_command:
+                return len(data) if timeout else len(data) - 1
+            self._chunks.append(data.rstrip() + b": OK\n> ")
+            return len(data)
+
+        def close(self) -> None:
+            self.closed = True
+
+    ser = CampaignSerial()
+    plan = [hil.CommandSpec("operation", "first operation", expected_any=("OK",),
+                            timeout_s=0.03, recovery_command="periodic stop"),
+            hil.CommandSpec("later", "later plan command", expected_any=("OK",), timeout_s=0.03)]
+    cleanup = [hil.CommandSpec(name, "restore state", expected_any=("OK",), timeout_s=0.03)
+               for name in ("heater off", "cleanup later")]
+    original_run = hil.run_serial
+
+    def capture_initial(*_args):
+        if stage == "startup":
+            raise OSError("synthetic initial serial read failure")
+        return ""
+
+    def run_with_semantic_failure(serial, spec, idle_s, args):
+        row = original_run(serial, spec, idle_s, args)
+        # Exercise the unchanged complete-frame semantic-failure policy separately.
+        if spec.command == "operation" and stage in {"recovery", "semantic"}:
+            assert row["completion_reason"] == "completion-token+idle"
+            row["result"] = hil.RESULT_FAIL
+            row["notes"] = "synthetic complete-frame semantic failure"
+        return row
+
+    with tempfile.TemporaryDirectory(prefix="sht-main-framing-") as folder, ExitStack() as stack:
+        for name, replacement in (
+            ("open_serial", lambda _args: ser),
+            ("drain_initial_output", capture_initial),
+            ("build_plan", lambda _args: (plan, [])),
+            ("cleanup_specs_for_plan", lambda *_args: list(cleanup)),
+            ("git_value", lambda *_args: ""),
+            ("run_serial", run_with_semantic_failure),
+        ):
+            stack.enter_context(patch.object(hil, name, replacement))
+        argv = ["--port", "FAKE", "--expect-library-version", "1.8.0",
+                "--expect-library-commit", "123456789abc", "--out", folder, "--idle", "0"]
+        if stage == "soak":
+            argv += ["--include-soak", "--soak-duration-s", "1"]
+        with redirect_stdout(StringIO()):
+            result = hil.main(argv)
+        summaries = list(Path(folder).rglob("summary.json"))
+        assert len(summaries) == 1
+        summary = json.loads(summaries[0].read_text(encoding="utf-8"))
+        rows = summary["commands"]
+    assert ser.closed
+    assert result == 1
+    commands = [wire.decode().strip() for wire in ser.writes]
+    expected = {
+        "startup": [],
+        "plan": ["operation"],
+        "recovery": ["operation", "periodic stop"],
+        "soak": ["operation", "later", "i2c_soak 1"],
+        "cleanup": ["operation", "later", "heater off"],
+        "semantic": ["operation", "periodic stop", "later", "heater off", "cleanup later"],
+    }[stage]
+    assert commands == expected, commands
+    deferred = [row for row in rows if row["completion_reason"] == "cleanup-deferred-lost-framing"]
+    if stage == "semantic":
+        assert not deferred
+    else:
+        assert [row["command"] for row in deferred] == ["heater off", "cleanup later"]
+        assert all(row["result"] == hil.RESULT_FAIL and "Restoration is unproved" in row["notes"] for row in deferred)
+        failures = [row for row in rows if row["completion_reason"] in {"serial-exception", "timeout"}]
+        assert len(failures) == 1
+        assert failures[0]["command"] == ("initial serial output" if stage == "startup" else fault_command)
+
+
+def test_main_short_plan_write_defers_cleanup_without_further_writes() -> None:
+    check_main_stops_after_framing_loss("plan")
+
+
+def test_main_response_timeout_defers_cleanup_without_further_writes() -> None:
+    check_main_stops_after_framing_loss("plan", timeout=True)
+
+
+def test_main_recovery_short_write_stops_plan_and_cleanup() -> None:
+    check_main_stops_after_framing_loss("recovery")
+
+
+def test_main_soak_short_write_stops_cleanup() -> None:
+    check_main_stops_after_framing_loss("soak")
+
+
+def test_main_cleanup_short_write_retains_unproved_cleanup() -> None:
+    check_main_stops_after_framing_loss("cleanup")
+
+
+def test_main_complete_semantic_failure_keeps_existing_policy() -> None:
+    check_main_stops_after_framing_loss("semantic")
+
+
+
+def test_main_initial_read_exception_sends_no_cleanup() -> None:
+    check_main_stops_after_framing_loss("startup")
 
 
 def main() -> int:

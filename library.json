@@ -56,7 +56,6 @@
       "docs/hardware.md",
       "docs/esp-idf.md",
       "docs/integration.md",
-      "docs/open-issues.md",
       "docs/reference/README.md",
       "docs/reference/sht3x-chip-notes.md",
       "tools/run_sht3x_hil.py",

@@ -1,9 +1,7 @@
 # Integrating SHT3x Into A Larger Firmware
 
 This guide is for firmware that already owns an I2C bus and a scheduler, and
-wants to add SHT3x as one device among several. It is product-neutral; the
-reference consumer is a TunnelMonitor-style node with a dedicated I2C task, but
-nothing here is specific to it.
+wants to add SHT3x as one device among several.
 
 If you only want to bring up a sensor on the bench, use the diagnostic CLI
 examples instead — see [hardware.md](hardware.md).
@@ -109,6 +107,15 @@ Rules that matter in practice:
   `Err::I2C_ERROR`.
 - Callbacks must return within `timeoutMs`, must not block unbounded, and must
   not call back into the same driver instance.
+- Before starting bus I/O, the adapter must ensure the backend's effective
+  timeout is no longer than the supplied `timeoutMs`. For a shared Arduino
+  `Wire` instance, configure its timeout once in the bus owner and reject an
+  incompatible callback budget before bus access. Measuring elapsed time can
+  detect an overrun, but cannot prevent one.
+- Once bus I/O has started, report failures with the transport error family
+  above. Reserve `INVALID_CONFIG` and `INVALID_PARAM` for checks that reject the
+  callback before bus access; the driver intentionally excludes those codes
+  from transport-health accounting.
 - Callbacks must not own or reconfigure bus pins, the reset pin, global bus
   timeouts, or any other bus-manager policy.
 

@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   PLATFORMIO_VERSION: "6.1.19"
@@ -73,6 +74,9 @@ jobs:
 
       - name: Run native tests
         run: pio test -e native
+
+      - name: Run CLI health-rate boundary tests
+        run: python tools/test_cli_health_rate.py
 
   validate-library:
     runs-on: ubuntu-latest

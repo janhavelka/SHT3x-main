@@ -94,7 +94,7 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
   // and carry the raw code in Status::detail.
   switch (result) {
     case 0: return SHT3x::Status::Ok();
-    case 1: return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "Write too long", result);
+    case 1: return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write too long", result);
     case 2: return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_ADDR, msg, result);
     case 3: return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_DATA, msg, result);
     case 4: return SHT3x::Status::Error(SHT3x::Err::I2C_BUS, msg, result);
@@ -105,14 +105,23 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
 
 SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                        uint32_t timeoutMs, void* user) {
-  (void)timeoutMs;  // Manager-owned in shared buses
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG, "Wire instance is null");
   }
+  // ESP32 Wire has a shared, owner-configured timeout. Never start a transfer
+  // whose effective bound is longer than the callback budget.
+  if (timeoutMs == 0 || wire->getTimeOut() > timeoutMs) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG,
+                                "Wire timeout exceeds callback budget");
+  }
   wire->beginTransmission(addr);
-  wire->write(data, len);
+  size_t written = wire->write(data, len);
   uint8_t result = wire->endTransmission(true);
+  if (written != len) {
+    return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write incomplete",
+                                static_cast<int32_t>(written));
+  }
   return mapWireError(result, "Write failed");
 }
 
@@ -125,10 +134,13 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
   if (rxLen == 0) {
     return SHT3x::Status::Ok();
   }
-  (void)timeoutMs;  // Manager-owned in shared buses
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG, "Wire instance is null");
+  }
+  if (timeoutMs == 0 || wire->getTimeOut() > timeoutMs) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG,
+                                "Wire timeout exceeds callback budget");
   }
   size_t received = wire->requestFrom(addr, rxLen);
   if (received != rxLen) {
@@ -654,6 +666,7 @@ Host tests (requires a native compiler like `g++`):
 
 ```bash
 pio test -e native
+python tools/test_cli_health_rate.py
 ```
 
 Host HIL parser/contract checks (stdlib Python; no pytest required):
@@ -773,6 +786,12 @@ cover callbacks through the injected driver adapter, not direct application
 bus operations such as `scan`. Other commands reject an active owner job rather
 than cancelling it implicitly.
 
+The Arduino example leaves Wire timing under the application's ownership.
+Configure its Wire timeout no larger than `Config::i2cTimeoutMs`; a shorter
+callback budget is rejected with `INVALID_CONFIG` before bus access. The
+adapter never changes that owner setting, and its elapsed-time check detects
+an overrun after a transfer rather than imposing a separate blocking deadline.
+
 Hardware mutations require a literal final `confirm`. General-call reset is
 disabled by the example transports/configuration by default and additionally
 requires `greset arm` immediately followed by `greset confirm`; an intervening
@@ -822,11 +841,20 @@ single-shot/no-stretch/high-repeatability cleanup and verification. `FAIL`,
 `--allow-incomplete` is available for planning workflows that intentionally
 leave fixture/operator rows open.
 
+A short serial write, serial exception, or response timeout ends the remaining
+plan. Once framing is uncertain, the runner sends no further recovery, soak, or
+cleanup commands; it records every cleanup step not confirmed complete as failed
+so the operator knows that restoration still has to be established manually.
+
 Custom `--commands` plans must start with exact `version`, before any other
 command can run. The runner classifies every line against the authoritative CLI
 contract and refuses unknown or unconfirmed mutation-like commands. Raw
 `command read` words receive the same heater, alert-write, and high-periodic-rate
 opt-ins and cleanup policies as raw writes.
+
+The Arduino example also has an opt-in, one-shot software receive-fault
+diagnostic. Build instructions, commands, counter semantics, and strict
+limitations are in [docs/hardware.md](docs/hardware.md#software-read-fault-diagnostic).
 
 ## Documentation
 
@@ -837,7 +865,6 @@ opt-ins and cleanup policies as raw writes.
 - [docs/hardware.md](docs/hardware.md) - hardware coverage and the HIL runbook
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component and example notes
 - [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - datasheet facts, with the known vendor inconsistencies
-- [docs/open-issues.md](docs/open-issues.md) - confirmed defects and simplifications not yet fixed
 - `docs/reference/vendor/` - the Sensirion PDFs and alert spreadsheet (repository only)
 
 Public API Doxygen comments live in `include/SHT3x/`. In a full repository

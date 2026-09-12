@@ -12,6 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 DISALLOWED_PARTS = {".doxygen", ".pio", "__pycache__", "hil_logs", "prompts"}
+DISALLOWED_DOC_PARTS = {"archive", "audits", "hil", "prompts", "reports"}
+DISALLOWED_DOC_NAMES = {"backlog.md", "open-issues.md", "todo.md"}
+DISALLOWED_DOC_NAME_RE = re.compile(
+    r"(?:^|[-_])(audit|prompt|report|review|snapshot)(?:[-_.]|$)", re.IGNORECASE
+)
 DISALLOWED_NAMES = {
     "progress.jsonl",
     "serial_transcript.txt",
@@ -44,10 +49,25 @@ def maintained_files() -> list[Path]:
 def check_leftovers(paths: list[Path]) -> list[str]:
     errors: list[str] = []
     for path in paths:
+        if not (ROOT / path).exists():
+            # `git ls-files --cached` includes tracked files deleted in the
+            # working tree. A deliberate deletion is not a retained artifact.
+            continue
         lowered_parts = {part.lower() for part in path.parts}
         lowered_name = path.name.lower()
         if lowered_parts.intersection(DISALLOWED_PARTS):
             errors.append(f"working-artifact path is not ignored: {path.as_posix()}")
+        elif (
+            path.suffix.lower() == ".md"
+            and path.parts
+            and path.parts[0].lower() == "docs"
+            and (
+                lowered_parts.intersection(DISALLOWED_DOC_PARTS)
+                or lowered_name in DISALLOWED_DOC_NAMES
+                or DISALLOWED_DOC_NAME_RE.search(lowered_name)
+            )
+        ):
+            errors.append(f"working document is not allowed in docs/: {path.as_posix()}")
         elif lowered_name in DISALLOWED_NAMES:
             errors.append(f"generated HIL artifact is not ignored: {path.as_posix()}")
         elif path.suffix.lower() in DISALLOWED_SUFFIXES:

@@ -7,8 +7,7 @@
 | [integration.md](integration.md) | Embedding the driver in a larger firmware: ownership boundary, cooperative flow, transport contract, presence and health. |
 | [hardware.md](hardware.md) | Hardware validation coverage and the serial HIL runbook. |
 | [esp-idf.md](esp-idf.md) | ESP-IDF component and example boundary, adapter contract, validation commands. |
-| [reference/README.md](reference/README.md) | Vendor source documents and the working chip notes. |
-| [open-issues.md](open-issues.md) | Confirmed defects and simplifications not yet fixed, with a concrete proposal for each. |
+| [reference/README.md](reference/README.md) | Vendor source documents and maintained chip notes. |
 
 The root [README](../README.md) covers installation, the API surface, and usage.
 
@@ -29,25 +28,16 @@ the build.
 links, tracked build/run scratch artifacts, and weakened strict-Doxygen
 settings.
 
-## What Belongs Here
+## Repository And Package Boundary
 
-Evergreen guides only. Generated HIL run directories, serial transcripts, run
-summaries, and dated validation reports are disposable local output — they are
-git-ignored and archived outside the checkout if they are worth keeping.
-[hardware.md](hardware.md) records which behaviours a run moved from "not run"
-to "covered"; it does not accumulate run artifacts.
+The tracked documentation is limited to maintained usage, integration,
+hardware-validation, and protocol-reference material. Generated Doxygen,
+PlatformIO, ESP-IDF, and HIL output stays ignored. Serial transcripts, run
+summaries, review notes, prompts, audits, and dated reports are working artifacts,
+not maintained documentation. Archive accepted evidence outside the checkout;
+[hardware.md](hardware.md) records only the resulting coverage boundary.
 
-[open-issues.md](open-issues.md) is the one exception, and it is a *live*
-backlog rather than a report: entries are deleted as they are fixed, and the fix
-is recorded in the changelog. A review write-up that only describes finished work
-does not belong here — archive it outside the checkout or leave it in the pull
-request that did the work.
-
-## Package Boundary
-
-The published PlatformIO package is library-focused. It contains the source,
-public headers, examples, README/changelog, component metadata, the
-package-facing guides, the chip notes, and the host-side HIL runner with its CLI
-contract module. The open-issues backlog ships with it, so a
-consumer pinning a commit can see that commit's known defects. It excludes local run output, build output, Doxygen output, and
-the bulky vendor PDFs and spreadsheet, which are maintainer source material.
+The original Sensirion PDFs and alert spreadsheet remain under
+`reference/vendor/` as maintainer source material. They are intentionally
+excluded from the published PlatformIO package, which includes the maintained
+guides and chip notes alongside the library, examples, and HIL tooling.

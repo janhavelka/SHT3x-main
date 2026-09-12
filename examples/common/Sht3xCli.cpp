@@ -685,7 +685,7 @@ template <typename DriverT>
 void printHealthView(const DriverT& driver) {
   HealthSnapshot<DriverT> snap;
   snap.capture(driver);
-  const uint32_t total = snap.totalSuccess + snap.totalFailures;
+  const uint64_t total = static_cast<uint64_t>(snap.totalSuccess) + snap.totalFailures;
   const float pct = (total > 0U)
                         ? (100.0f * static_cast<float>(snap.totalSuccess) /
                            static_cast<float>(total))
@@ -1154,6 +1154,9 @@ SHT3x::Status performMeasurementMilliBlocking(SHT3x::MeasurementMilli& out,
     SHT3x::PollJobResult result;
     st = deviceInstance.pollJob(nowMs, 1, result);
     if (result.terminal) {
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+      rememberJobResult(st, result);
+#endif
       return readTerminalMeasurementMilli(result, requestId, out);
     }
     if (st.code != SHT3x::Err::IN_PROGRESS) {
@@ -1164,6 +1167,9 @@ SHT3x::Status performMeasurementMilliBlocking(SHT3x::MeasurementMilli& out,
       const SHT3x::Status cancelStatus =
           deviceInstance.cancelJob(SHT3x::CancelReason::DEADLINE_EXPIRED,
                                    cancelled);
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+      rememberJobResult(cancelStatus, cancelled);
+#endif
       if (!isExpectedMeasurementTerminal(cancelled, requestId)) {
         return SHT3x::Status::Error(SHT3x::Err::BUSY,
                                     "Unexpected cancelled job identity");
@@ -3034,7 +3040,7 @@ void printDriverHealth() {
   const uint32_t now = millis();
   const uint32_t totalOk = deviceInstance.totalSuccess();
   const uint32_t totalFail = deviceInstance.totalFailures();
-  const uint32_t total = totalOk + totalFail;
+  const uint64_t total = static_cast<uint64_t>(totalOk) + totalFail;
   const float successRate = (total > 0U)
                                 ? (100.0f * static_cast<float>(totalOk) / static_cast<float>(total))
                                 : 0.0f;
@@ -3043,6 +3049,14 @@ void printDriverHealth() {
   const bool online = deviceInstance.isOnline();
 
   output.println("=== Driver Health ===");
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  output.printf("  Acquisition: hardware_state_valid=%u\n",
+                deviceInstance.hardwareStateValid() ? 1U : 0U);
+  output.printf("  Counters: transport_ok=%lu transport_fail=%lu protocol_fail=%lu\n",
+                static_cast<unsigned long>(deviceInstance.transportSuccess()),
+                static_cast<unsigned long>(deviceInstance.transportFailures()),
+                static_cast<unsigned long>(deviceInstance.protocolFailures()));
+#endif
   output.printf("  State: %s%s%s\n",
                 stateColor(st, online, deviceInstance.consecutiveFailures()),
                 stateToStr(st),

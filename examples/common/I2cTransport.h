@@ -8,6 +8,9 @@
 #include <Wire.h>
 #include "SHT3x/Status.h"
 #include "TransferStats.h"
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+#include "SHT3x/CommandTable.h"
+#endif
 
 namespace transport {
 
@@ -15,6 +18,46 @@ using SHT3x::Status;
 using SHT3x::Err;
 
 using TransferStats = sht3x_example::TransferStats;
+
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+/// Opt-in Arduino bench diagnostic; the core and ordinary builds have no hook.
+struct ReadFaultState {
+  bool armed = false;
+  uint32_t injected = 0;
+  uint16_t lastCommand = 0;
+};
+
+inline ReadFaultState& readFaultStorage() {
+  static ReadFaultState state;
+  return state;
+}
+
+inline void armReadFaultOnce() { readFaultStorage().armed = true; }
+inline void disarmReadFault() { readFaultStorage().armed = false; }
+inline ReadFaultState readFaultStatus() { return readFaultStorage(); }
+
+inline Status finishSuccessfulRead(size_t rxLen) {
+  ReadFaultState& state = readFaultStorage();
+  const uint16_t command = state.lastCommand;
+  state.lastCommand = 0;
+  const bool singleShot =
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_STRETCH_HIGH ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_STRETCH_MED ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_STRETCH_LOW ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_NO_STRETCH_HIGH ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_NO_STRETCH_MED ||
+      command == SHT3x::cmd::CMD_SINGLE_SHOT_NO_STRETCH_LOW;
+  if (!state.armed || !singleShot || rxLen != SHT3x::cmd::MEASUREMENT_DATA_LEN) {
+    return Status::Ok();
+  }
+  state.armed = false;
+  if (state.injected < std::numeric_limits<uint32_t>::max()) {
+    ++state.injected;
+  }
+  return Status::Error(Err::I2C_BUS,
+                       "Software fault after successful measurement receive", 1);
+}
+#endif
 
 inline TransferStats& transferStatsStorage() {
   static TransferStats stats;
@@ -83,6 +126,9 @@ inline bool initWire(int sda, int scl, uint32_t freqHz, uint32_t timeoutMs) {
 /// @return Status indicating success or failure
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  readFaultStorage().lastCommand = 0;
+#endif
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return recordTransfer(Status::Error(Err::INVALID_CONFIG, "Wire instance is null"),
@@ -97,8 +143,14 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                           false, 0U, 0U);
   }
 
-  // The bus owner owns Wire's timeout; initWire() sets it once. This callback
-  // enforces the driver's requested bound by measuring the transfer instead.
+  // The bus owner owns Wire's timeout; initWire() sets it once. Reject an
+  // incompatible callback budget before entering a potentially blocking call.
+  // Measuring elapsed time below detects an overrun; it cannot prevent one.
+  if (wire->getTimeOut() > timeoutMs) {
+    return recordTransfer(Status::Error(Err::INVALID_CONFIG,
+                                        "Wire timeout exceeds callback budget"),
+                          false, 0U, 0U);
+  }
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   // SHT3x requires STOP between command write and read header.
@@ -116,7 +168,12 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
     // Arduino Wire error codes (core-dependent): 1=data too long, 2=NACK addr, 3=NACK data,
     // 4=other, 5=timeout (ESP32 Arduino core).
     switch (result) {
-      case 1: return recordTransfer(Status::Error(Err::INVALID_PARAM, "I2C write too long", result), false, written, 0U);
+      // The callback has already entered Wire. Keep every reported bus outcome
+      // in the transport error family so driver health accounting can see it.
+      case 1:
+        return recordTransfer(
+            Status::Error(Err::I2C_ERROR, "I2C write too long", result),
+            false, written, 0U);
       case 2: return recordTransfer(Status::Error(Err::I2C_NACK_ADDR, "I2C NACK addr", result), false, written, 0U);
       case 3: return recordTransfer(Status::Error(Err::I2C_NACK_DATA, "I2C NACK data", result), false, written, 0U);
       case 4: return recordTransfer(Status::Error(Err::I2C_BUS, "I2C bus error", result), false, written, 0U);
@@ -130,6 +187,12 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                           false, written, 0U);
   }
 
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  if (len == 2U) {
+    readFaultStorage().lastCommand = static_cast<uint16_t>(
+        (static_cast<uint16_t>(data[0]) << 8U) | data[1]);
+  }
+#endif
   return recordTransfer(Status::Ok(), false, written, 0U);
 }
 
@@ -169,7 +232,12 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                           true, txLen, 0U);
   }
 
-  // Read phase. As above, Wire's own timeout stays owned by the bus manager.
+  // Read phase. Keep the same owner-configured bound and preflight rule.
+  if (wire->getTimeOut() > timeoutMs) {
+    return recordTransfer(Status::Error(Err::INVALID_CONFIG,
+                                        "Wire timeout exceeds callback budget"),
+                          true, 0U, 0U);
+  }
   const uint32_t startMs = millis();
   size_t received = wire->requestFrom(addr, rxLen);
   const uint32_t elapsedMs = millis() - startMs;
@@ -199,7 +267,13 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     rxData[i] = wire->read();
   }
 
+#if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT
+  // Count the actual receive honestly; a software substitution is not a bus fault.
+  (void)recordTransfer(Status::Ok(), true, txLen, rxLen);
+  return finishSuccessfulRead(rxLen);
+#else
   return recordTransfer(Status::Ok(), true, txLen, rxLen);
+#endif
 }
 
 } // namespace transport
