@@ -2135,6 +2135,24 @@ void test_wire_adapter_accepts_owner_timeout_within_budget() {
   }
 }
 
+void test_wire_adapter_maps_post_transfer_errors_to_transport_family() {
+  gMillisStep = 0;
+  Wire.setTimeOut(10U);
+  Wire._setEndTransmissionResult(1U);
+  uint8_t data[2] = {0x24U, 0x00U};
+  const auto before = transport::transferStats();
+
+  const Status status =
+      transport::wireWrite(0x44U, data, sizeof(data), 10U, &Wire);
+
+  TEST_ASSERT_EQUAL(Err::I2C_ERROR, status.code);
+  TEST_ASSERT_EQUAL_INT32(1, status.detail);
+  TEST_ASSERT_EQUAL_UINT32(before.failures + 1U,
+                           transport::transferStats().failures);
+  TEST_ASSERT_EQUAL_UINT32(before.txBytes + sizeof(data),
+                           transport::transferStats().txBytes);
+}
+
 void test_wire_adapter_drains_partial_read() {
   gMillis = 0;
   gMillisStep = 0;
@@ -5833,6 +5851,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_wire_adapter_timeout_and_stop);
   RUN_TEST(test_wire_adapter_rejects_timeout_mismatch_before_io);
   RUN_TEST(test_wire_adapter_accepts_owner_timeout_within_budget);
+  RUN_TEST(test_wire_adapter_maps_post_transfer_errors_to_transport_family);
   RUN_TEST(test_wire_adapter_drains_partial_read);
   RUN_TEST(test_wire_adapter_rejects_invalid_buffers_and_timeout);
 #if defined(SHT3X_EXAMPLE_READ_FAULT) && SHT3X_EXAMPLE_READ_FAULT

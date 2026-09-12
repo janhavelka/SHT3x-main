@@ -37,7 +37,7 @@ public:
     if (_useAckAddress) {
       return _addr == _ackAddress ? 0U : 2U;
     }
-    return 0U;
+    return _endTransmissionResult;
   }
   
   size_t requestFrom(uint8_t addr, size_t len) { 
@@ -77,6 +77,9 @@ public:
   }
 
   void _setBeginResult(bool result) { _beginResult = result; }
+  void _setEndTransmissionResult(uint8_t result) {
+    _endTransmissionResult = result;
+  }
 
   void _setAckAddress(uint8_t address) {
     _useAckAddress = true;
@@ -107,6 +110,7 @@ private:
   bool _useRequestFromOverride = false;
   size_t _requestFromResult = 0;
   bool _beginResult = true;
+  uint8_t _endTransmissionResult = 0;
   bool _useAckAddress = false;
   uint8_t _ackAddress = 0;
 };

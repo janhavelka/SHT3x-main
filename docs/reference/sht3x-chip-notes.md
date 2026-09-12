@@ -320,7 +320,7 @@ Operating and validation notes:
   degrees depending on conditions, has 3.6 mW to 33 mW power depending on
   supply, and is disabled after reset. Source: datasheet, pp. 6, 12-13.
 
-## Variants And Open Questions
+## Variants And Reference Scope
 
 | Variant / option | Driver-visible facts | Source |
 | --- | --- | --- |
@@ -337,7 +337,7 @@ Revision notes:
 - Membrane option source is Version 4.1, March 2025. Source: membrane
   datasheet, p. 1.
 
-Open implementation questions:
+Reference scope:
 
 - These compact notes do not encode all package/tape dimensions; inspect the
   PDF drawings for footprint or production tooling. Source: datasheet,

@@ -94,7 +94,7 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
   // and carry the raw code in Status::detail.
   switch (result) {
     case 0: return SHT3x::Status::Ok();
-    case 1: return SHT3x::Status::Error(SHT3x::Err::INVALID_PARAM, "Write too long", result);
+    case 1: return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write too long", result);
     case 2: return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_ADDR, msg, result);
     case 3: return SHT3x::Status::Error(SHT3x::Err::I2C_NACK_DATA, msg, result);
     case 4: return SHT3x::Status::Error(SHT3x::Err::I2C_BUS, msg, result);
@@ -105,14 +105,23 @@ static SHT3x::Status mapWireError(uint8_t result, const char* msg) {
 
 SHT3x::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                        uint32_t timeoutMs, void* user) {
-  (void)timeoutMs;  // Manager-owned in shared buses
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG, "Wire instance is null");
   }
+  // ESP32 Wire has a shared, owner-configured timeout. Never start a transfer
+  // whose effective bound is longer than the callback budget.
+  if (timeoutMs == 0 || wire->getTimeOut() > timeoutMs) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG,
+                                "Wire timeout exceeds callback budget");
+  }
   wire->beginTransmission(addr);
-  wire->write(data, len);
+  size_t written = wire->write(data, len);
   uint8_t result = wire->endTransmission(true);
+  if (written != len) {
+    return SHT3x::Status::Error(SHT3x::Err::I2C_ERROR, "Write incomplete",
+                                static_cast<int32_t>(written));
+  }
   return mapWireError(result, "Write failed");
 }
 
@@ -125,10 +134,13 @@ SHT3x::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
   if (rxLen == 0) {
     return SHT3x::Status::Ok();
   }
-  (void)timeoutMs;  // Manager-owned in shared buses
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG, "Wire instance is null");
+  }
+  if (timeoutMs == 0 || wire->getTimeOut() > timeoutMs) {
+    return SHT3x::Status::Error(SHT3x::Err::INVALID_CONFIG,
+                                "Wire timeout exceeds callback budget");
   }
   size_t received = wire->requestFrom(addr, rxLen);
   if (received != rxLen) {
@@ -829,26 +841,20 @@ single-shot/no-stretch/high-repeatability cleanup and verification. `FAIL`,
 `--allow-incomplete` is available for planning workflows that intentionally
 leave fixture/operator rows open.
 
+A short serial write, serial exception, or response timeout ends the remaining
+plan. Once framing is uncertain, the runner sends no further recovery, soak, or
+cleanup commands; it records every cleanup step not confirmed complete as failed
+so the operator knows that restoration still has to be established manually.
+
 Custom `--commands` plans must start with exact `version`, before any other
 command can run. The runner classifies every line against the authoritative CLI
 contract and refuses unknown or unconfirmed mutation-like commands. Raw
 `command read` words receive the same heater, alert-write, and high-periodic-rate
 opt-ins and cleanup policies as raw writes.
 
-An opt-in Arduino bench diagnostic can be built with
-`-DSHT3X_EXAMPLE_READ_FAULT=1`. Only that build accepts `fault_read arm`,
-`fault_read status`, and `fault_read clear`. Arming substitutes one `I2C_BUS`
-result after the next successful single-shot measurement receive. Status and
-serial-number reads do not consume it; a failed physical receive keeps it armed.
-The received bytes and physical transfer counters retain their actual results,
-while `fault_read status` separately reports the injection count. Subsequent
-reads use the real adapter normally. Clear the arm before unrelated diagnostics.
-In this diagnostic build, `drv` exposes `hardware_state_valid` and the driver
-transport/protocol counters; `result` retains the terminal provenance of `read`.
-This tests software error handling on a connected sensor; it does not simulate
-an electrical disconnect or qualify recovery from one. The extra commands are
-outside the shared normal CLI/HIL command contract and require a dedicated
-capture plan. Ordinary Arduino and ESP-IDF builds have no injection hook.
+The Arduino example also has an opt-in, one-shot software receive-fault
+diagnostic. Build instructions, commands, counter semantics, and strict
+limitations are in [docs/hardware.md](docs/hardware.md#software-read-fault-diagnostic).
 
 ## Documentation
 
@@ -859,7 +865,6 @@ capture plan. Ordinary Arduino and ESP-IDF builds have no injection hook.
 - [docs/hardware.md](docs/hardware.md) - hardware coverage and the HIL runbook
 - [docs/esp-idf.md](docs/esp-idf.md) - ESP-IDF component and example notes
 - [docs/reference/sht3x-chip-notes.md](docs/reference/sht3x-chip-notes.md) - datasheet facts, with the known vendor inconsistencies
-- [docs/open-issues.md](docs/open-issues.md) - confirmed defects and simplifications not yet fixed
 - `docs/reference/vendor/` - the Sensirion PDFs and alert spreadsheet (repository only)
 
 Public API Doxygen comments live in `include/SHT3x/`. In a full repository

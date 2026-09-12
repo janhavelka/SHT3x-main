@@ -2225,8 +2225,9 @@ def main(argv: list[str]) -> int:
                     for spec in pending_cleanup:
                         row = result_row(
                             spec, RESULT_FAIL,
-                            "Not sent: serial framing was lost. Restoration is unproved; "
-                            "operator must establish framing and verify pending cleanup.",
+                            "Cleanup not confirmed: serial framing was lost. "
+                            "Restoration is unproved; operator must establish framing "
+                            "and verify pending cleanup.",
                             0.0, "", "cleanup-deferred-lost-framing", {},
                         )
                         results.append(row)

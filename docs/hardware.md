@@ -38,7 +38,7 @@ Update a row only when a transcript backs it.
 | General-call reset | Arm gate only | An isolated bus and an application-supplied bus-wide transport |
 | ESP32-S2 hardware | Not run | ESP32-S2 serial log |
 | Pure ESP-IDF hardware | Not run | Serial log from an `idf.py` image |
-| Fault injection | Not run | Safe jig, interposer, or bus emulator |
+| Electrical/bus fault injection | Not run | Safe jig, interposer, or bus emulator |
 | Long soak | One uninterrupted hour, zero failure deltas | Multi-day run |
 | Calibrated humidity accuracy | Not run | Reference fixture report |
 
@@ -80,6 +80,13 @@ Each run creates `hil_logs/sht3x_<UTC_TIMESTAMP>/` containing
 also produce `operator_notes.md`, `alert_gpio_capture.csv`,
 `logic_analyzer_reference.txt`, and an evidence manifest. `hil_logs/` is ignored
 by git; it is scratch output, not project content.
+
+Serial writes use the port's finite write timeout and are checked for complete
+delivery. A short write, serial exception, or response timeout stops the
+remaining plan. Because command framing is then uncertain, the runner sends no
+later recovery, soak, or cleanup commands. Each cleanup step not confirmed
+complete is recorded as failed with `cleanup-deferred-lost-framing`; reconnect
+or re-establish the serial session and perform the restore procedure manually.
 
 ## Default Command Sequence
 
@@ -197,6 +204,51 @@ sample succeeded, logical and transport counts agree, protocol/not-ready/
 transport failures are zero, extrema stay plausible, and the final driver state
 is `READY`. `xfer_assert` covers the injected driver transport only; it does not
 count application-owned bus traffic such as the separate scanner.
+
+## Software Read-Fault Diagnostic
+
+The Arduino example has an opt-in diagnostic for testing application handling
+after a physically successful single-shot receive. Add
+`-DSHT3X_EXAMPLE_READ_FAULT=1` to the selected Arduino environment's
+`build_flags`, then rebuild and flash. Remove the flag for ordinary firmware.
+The native ESP-IDF example has no equivalent hook.
+
+Only the diagnostic build accepts:
+
+```text
+fault_read arm
+fault_read status
+fault_read clear
+```
+
+`fault_read arm` substitutes one labelled `I2C_BUS` result after the next
+successful six-byte single-shot measurement receive. It does not alter the
+received bytes or the example transport's physical success counter. Status and
+serial-number reads do not consume the arm, and a failed physical receive leaves
+it armed. The next matching successful receive consumes it once. The `drv`
+command exposes the driver's acquisition-validity and transport/protocol
+counters in this build, `result` retains the terminal job provenance, and
+`fault_read status` reports the separate injection count.
+
+A minimal manual sequence is:
+
+```text
+mode single
+fault_read clear
+fault_read arm
+read
+result
+drv
+fault_read status
+fault_read clear
+```
+
+Wait for the scheduled `read` to finish before requesting `result`. These extra
+commands are deliberately outside the shared CLI and HIL-runner command
+contract, so capture them manually or with a dedicated external plan. This is a
+software result substitution on a connected sensor: it does not reproduce an
+electrical disconnect, NACK, stuck bus, corrupt frame, or reset, and it does not
+advance the real-hardware fault-injection coverage row above.
 
 ## What To Record
 

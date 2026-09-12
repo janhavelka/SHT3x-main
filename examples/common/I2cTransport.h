@@ -168,7 +168,12 @@ inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
     // Arduino Wire error codes (core-dependent): 1=data too long, 2=NACK addr, 3=NACK data,
     // 4=other, 5=timeout (ESP32 Arduino core).
     switch (result) {
-      case 1: return recordTransfer(Status::Error(Err::INVALID_PARAM, "I2C write too long", result), false, written, 0U);
+      // The callback has already entered Wire. Keep every reported bus outcome
+      // in the transport error family so driver health accounting can see it.
+      case 1:
+        return recordTransfer(
+            Status::Error(Err::I2C_ERROR, "I2C write too long", result),
+            false, written, 0U);
       case 2: return recordTransfer(Status::Error(Err::I2C_NACK_ADDR, "I2C NACK addr", result), false, written, 0U);
       case 3: return recordTransfer(Status::Error(Err::I2C_NACK_DATA, "I2C NACK data", result), false, written, 0U);
       case 4: return recordTransfer(Status::Error(Err::I2C_BUS, "I2C bus error", result), false, written, 0U);

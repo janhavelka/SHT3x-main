@@ -7,28 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- CI now runs the full matrix on every branch push and supports manual runs.
-- Diagnostic health percentages widen the two session counters before adding,
-  so their sum cannot wrap when successes and failures together exceed 32 bits.
-- The host HIL runner checks complete command and asynchronous-nudge writes and
-  avoids an unbounded serial drain. A serial exception or response timeout
-  stops later plan, recovery, soak and cleanup writes; pending cleanup is
-  recorded explicitly for the operator without claiming restoration.
-- The Arduino example adapter now rejects a callback budget shorter than the
-  owner-configured Wire timeout before any bus access. It preserves the owner's
-  timeout; elapsed-time checks detect overruns rather than preventing them.
-
 ### Added
 - Added an opt-in Arduino single-shot read-fault diagnostic. It substitutes one
   labelled software error after a successful physical receive, keeping physical
   transfer and injection counters separate; normal builds remain unchanged.
-- Added `docs/open-issues.md`, a maintained backlog of confirmed defects and
-  simplifications with a concrete proposal for each, replacing the finished
-  `docs/CODE_AUDIT.md` / `docs/CODE_AUDIT_REMEDIATION.md` report pair.
 - Added a regression for `setMode()` committing the restore plan when the
   requested mode already matches, and coverage that the Arduino transport
-  callbacks never touch the shared `Wire` timeout.
+  callbacks never touch the shared `Wire` timeout or hide a post-transfer Wire
+  error behind a precondition status.
 - Added separate saturating diagnostics for proven periodic read-header NACKs
   and bounded no-data observations inferred from ambiguous transports.
 - Added focused native regressions for periodic no-data bounds/re-arming,
@@ -39,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scanner ACKs, public alert-limit readback, and heater-status readback.
 
 ### Changed
+- CI now runs the full validation matrix on every branch push, supports manual
+  runs, and executes the CLI health-rate boundary regression.
+- Consolidated `docs/` to maintained guides, hardware coverage, chip notes, and
+  original vendor sources. The documentation guard now rejects tracked prompts,
+  audits, reports, snapshots, backlogs, and other workflow-only artifacts.
 - Reset and Break settle waits now carry a one-millisecond clock-quantization
   allowance (`RESET_DELAY_MS` 3 ms, `BREAK_DELAY_MS` 2 ms), because a wait of N ms
   anchored on a truncated millisecond timestamp only guarantees more than
@@ -76,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   obsolete alternate-output branches from the unified-CLI HIL runner.
 
 ### Fixed
+- Diagnostic health percentages widen the two session counters before adding,
+  so their sum cannot wrap when successes and failures together exceed 32 bits.
+- The host HIL runner checks complete command and asynchronous-nudge writes and
+  avoids an unbounded serial drain. A serial exception or response timeout
+  stops later plan, recovery, soak and cleanup writes; pending cleanup is
+  recorded explicitly for the operator without claiming restoration.
+- The Arduino example adapter now rejects a callback budget shorter than the
+  owner-configured Wire timeout before any bus access. It preserves the owner's
+  timeout; elapsed-time checks detect overruns rather than preventing them, and
+  post-transfer Wire errors remain visible to driver health accounting.
 - Fixed the native ESP-IDF example adapter mapping every unrecognized `esp_err_t`
   to `Err::I2C_BUS`. That claimed a bus/arbitration fault the adapter cannot
   prove, and it excluded a normal periodic Fetch Data NACK from the driver's
@@ -386,8 +387,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Doxyfile project metadata now matches `library.json` and references the
   maintained docs tree instead of removed template files.
-- Reference documentation now uses human-readable vendor PDF names; after later
-  cleanup, maintained extracts live under `docs/reference/extracted/`.
+- Reference documentation now uses human-readable vendor PDF names, with the
+  original source documents retained under `docs/reference/vendor/`.
 - Explicit recovery/reset bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - `readCommand()` now validates read buffers and rejects responses larger than the largest documented SHT3x frame before sending the command.
 - `getRawSample()` and `getCompensatedSample()` now remain available after `getMeasurement()` consumes `measurementReady()`, with cache validity reported by `hasSample`.
@@ -395,7 +396,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Active periodic/ART repeatability and rate setters now update cached configuration only after the required restart succeeds.
 - Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
 
-### Changed
 - Command-delay and reset/break timing guards now return visible `IN_PROGRESS`/`TIMEOUT` statuses instead of spinning/yielding internally.
 - Package exports now exclude docs, tests, CI, tooling, and local build/editor directories by default.
 
@@ -473,7 +473,7 @@ notes did not correspond to separate published GitHub releases.
 
 - resetToDefaults() and resetAndRestore() APIs with RAM-only settings restore
 - Cached settings tracking for mode/repeatability/periodic rate/heater/alert limits
-- Manager-owned Wire policy and consolidated report
+- Manager-owned Wire policy and consolidated diagnostics
 - Additional native tests covering restore behavior and adapter rules
 
 - Transport capability flags and Wire-safe NACK gating
