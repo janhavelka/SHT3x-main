@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- CI now runs the full matrix on every branch push and supports manual runs.
 - Diagnostic health percentages widen the two session counters before adding,
   so their sum cannot wrap when successes and failures together exceed 32 bits.
 - The host HIL runner checks complete command and asynchronous-nudge writes and
