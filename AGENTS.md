@@ -1,5 +1,7 @@
 # SHT3x Engineering Guidelines
 
+Always synchronize Git with the intended upstream branch before starting work by fetching and fast-forwarding safely, preserving existing local changes and reporting any divergence, conflict, or synchronization failure.
+
 Binding conventions for changes to this repository. They apply to human and
 automated contributors alike. Workflow, commit format, and the release
 procedure live in [CONTRIBUTING.md](CONTRIBUTING.md).
