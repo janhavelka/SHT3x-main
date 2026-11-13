@@ -33,7 +33,7 @@
     "url": "https://github.com/janhavelka/SHT3x-main.git"
   },
   "license": "MIT",
-  "homepage": "https://www.thymos.cz",
+  "homepage": "https://github.com/janhavelka/SHT3x-main",
   "headers": [
     "SHT3x/SHT3x.h"
   ],
