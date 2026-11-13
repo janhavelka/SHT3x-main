@@ -3,6 +3,8 @@ description: "Deterministic, framework-neutral C++17 SHT3x temperature/humidity 
 url: "https://github.com/janhavelka/SHT3x-main"
 repository: "https://github.com/janhavelka/SHT3x-main.git"
 license: "MIT"
+maintainers:
+  - "Jan Havelka (THYMOS Solution s.r.o.) <info@thymos.cz>"
 dependencies:
   idf: ">=5.4"
 files:
